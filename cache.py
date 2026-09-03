@@ -418,7 +418,13 @@ def _composite_expiry(cache_key: str, cached_at: float) -> float:
 
 
 def get_cached_final_poster(cache_key: str) -> bytes | None:
-    """Return cached JPEG bytes for a fully composited poster, or None on miss/expiry.
+    """Return cached JPEG bytes for a fully composited poster, or None on miss/expiry."""
+    entry = get_cached_final_poster_entry(cache_key)
+    return None if entry is None else entry[0]
+
+
+def get_cached_final_poster_entry(cache_key: str) -> "tuple[bytes, int] | None":
+    """Return (jpeg_bytes, expires_at) for a composited poster, or None on miss.
 
     Checks the in-memory LRU (L1) first; falls through to SQLite (L2) on miss
     and promotes the result to L1 so the next hit is served entirely from RAM.
@@ -433,7 +439,7 @@ def get_cached_final_poster(cache_key: str) -> bytes | None:
                 expires_at, data = entry
                 if now <= expires_at:
                     _composite_l1.move_to_end(cache_key)
-                    return data
+                    return data, int(expires_at)
                 # Nothing sweeps L1 on a timer, so an aged-out entry is dropped
                 # on the read that finds it and the L2 check below takes over.
                 del _composite_l1[cache_key]
@@ -468,13 +474,13 @@ def get_cached_final_poster(cache_key: str) -> bytes | None:
                 _composite_l1.move_to_end(cache_key)
                 while len(_composite_l1) > COMPOSITE_MEM_ENTRIES:
                     _composite_l1.popitem(last=False)
-        return data
+        return data, int(expires_at)
     except Exception as exc:
         logger.error(f"Final poster cache read error: {exc}")
         return None
 
 
-def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: str = None, ttl_override: int = None) -> None:
+def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: str = None, ttl_override: int = None) -> int:
     """Store a fully composited JPEG poster into L1 (RAM) and L2 (SQLite).
 
     *ttl_override* caps the lifetime, in seconds, for a render that depends on
@@ -482,6 +488,8 @@ def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: s
     release status.  It is a cap on the jittered TTL rather than a value added
     to it, so a one-day override really means one day and not one day plus up
     to COMPOSITE_CACHE_TTL_JITTER.
+
+    Returns the unix time this composite expires.
     """
     now = int(time.time())
     ttl = COMPOSITE_CACHE_TTL + _ttl_jitter(cache_key, COMPOSITE_CACHE_TTL_JITTER)
@@ -524,6 +532,9 @@ def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: s
             get_db().commit()
     except Exception as exc:
         logger.error(f"Final poster cache write error: {exc}")
+
+    return expires_at
+
 
 def delete_cached_final_poster(cache_key: str) -> None:
     """Remove a composited poster from both L1 (RAM) and L2 (SQLite) caches."""
