@@ -130,6 +130,12 @@
 
 ### Metadata And Caching
 
+- Poster responses now advertise the composite's own expiry, so a caching client
+  keeps a trending-sashed poster for a day and a settled title for the full
+  `COMPOSITE_CACHE_TTL`. A configured `CDN_CACHE_TTL` acts as a ceiling the
+  deadline can lower, `CDN_CACHE_TTL=auto` drops the ceiling, and `0` still
+  sends no `Cache-Control`. `304` responses carry the same freshness.
+
 - IMDb ids are now optional. `tmdb_id` is the required identity — it selects the
   artwork and metadata — and `imdb_id` is optional enrichment. Titles TMDB has no
   IMDb link for previously returned an error and, through AIOMetadata, lost their

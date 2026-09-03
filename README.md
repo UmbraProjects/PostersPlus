@@ -165,7 +165,7 @@ All configuration is done via environment variables. Copy `.env.example` to `.en
 | `QUALITY_OLD_CACHE_DURATION` | `90` | Days to cache quality data for titles older than 2 weeks |
 | `QUALITY_BG_CONCURRENCY` | `5` | Max concurrent background quality fetches |
 | `QUALITY_WAIT_TIMEOUT` | `30` | Maximum seconds to wait when a request enables synchronous quality fetching |
-| `CDN_CACHE_TTL` | `0` | Adds `Cache-Control: public, max-age=N` to poster responses. Set to `0` to disable |
+| `CDN_CACHE_TTL` | `0` | Adds `Cache-Control: public, max-age=N` to poster responses, capped at the composite's remaining life. `auto` advertises that remaining life with no fixed ceiling, so a trending poster expires in a day and a settled title lasts the full `COMPOSITE_CACHE_TTL`. Set to `0` to disable |
 | `IMAGE_FORMAT` | `webp` | Output format for composited posters: `webp` or `jpeg`. WebP gives smaller files at equivalent quality |
 | `JPEG_QUALITY` | `85` | JPEG output quality for composited posters (70–95), used when `IMAGE_FORMAT=jpeg`. Raise to `92` for higher fidelity; lower to reduce file size |
 | `WEBP_QUALITY` | `85` | WebP output quality for composited posters (70–95), used when `IMAGE_FORMAT=webp` (the default) |

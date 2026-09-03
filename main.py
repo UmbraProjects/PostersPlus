@@ -566,7 +566,7 @@ from i18n import load_languages, translate_genre, translate_sash
 from cache import (
     get_cached_quality,
     get_cached_rating,
-    get_cached_final_poster,
+    get_cached_final_poster_entry,
     set_cached_final_poster,
     delete_cached_final_poster,
     get_cached_tmdb_poster,
@@ -4722,7 +4722,10 @@ async def get_logo(
 # ---------------------------------------------------------------------------
 
 def _apply_poster_cache_headers(
-    response: Response, final_cache_key: str | None, provisional: bool
+    response: Response,
+    final_cache_key: str | None,
+    provisional: bool,
+    expires_at: int | None = None,
 ) -> None:
     """Attach the validator and freshness headers a poster response has earned.
 
@@ -4737,6 +4740,9 @@ def _apply_poster_cache_headers(
     to arrive until a setting change rewrote the URL and minted a new key.
 
     A provisional render therefore ships no validator and asks not to be stored.
+
+    *expires_at* is the composite's own deadline, which caps the advertised
+    max-age so a cached copy never outlives the facts baked into it.
     """
     if provisional:
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
@@ -4748,8 +4754,23 @@ def _apply_poster_cache_headers(
     if _cfg.DISABLE_COMPOSITE_CACHE:
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         response.headers["Pragma"] = "no-cache"
+        return
+
+    remaining = None
+    if expires_at is not None:
+        remaining = max(0, int(expires_at) - int(time.time()))
+
+    if _cfg.CDN_CACHE_TTL_AUTO:
+        max_age = remaining
     elif _cfg.CDN_CACHE_TTL > 0:
-        response.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
+        max_age = _cfg.CDN_CACHE_TTL if remaining is None else min(_cfg.CDN_CACHE_TTL, remaining)
+    else:
+        max_age = None
+
+    if max_age:
+        response.headers["Cache-Control"] = f"public, max-age={max_age}"
+    elif max_age == 0:
+        response.headers["Cache-Control"] = "public, max-age=0, must-revalidate"
 
 
 @app.get("/poster")
@@ -5052,18 +5073,21 @@ async def get_poster(
             if is_anime
             else f"{canonical_id}:{tmdb_id}:{type}:{_params_hash}"
         )
-        cached_jpeg = None if _force_refresh else get_cached_final_poster(final_cache_key)
+        _cached_entry = None if _force_refresh else get_cached_final_poster_entry(final_cache_key)
         if _force_refresh:
             logger.info(f"Force refresh (nocache) for {final_cache_key} — bypassing cache read")
-        if cached_jpeg is not None:
+        if _cached_entry is not None:
+            cached_jpeg, _cached_expires_at = _cached_entry
             logger.info(f"Final poster cache hit for {final_cache_key}")
             etag = f'"{final_cache_key}"'
             if request.headers.get("if-none-match") == etag:
-                return Response(status_code=304)
+                _304 = Response(status_code=304)
+                _apply_poster_cache_headers(_304, final_cache_key, False, _cached_expires_at)
+                return _304
             _hit_resp = Response(content=cached_jpeg, media_type=f"image/{_cfg.IMAGE_FORMAT}")
             # Only a finished render is ever written to the composite cache, so
             # a cache hit is never provisional.
-            _apply_poster_cache_headers(_hit_resp, final_cache_key, False)
+            _apply_poster_cache_headers(_hit_resp, final_cache_key, False, _cached_expires_at)
             return _hit_resp
     else:
         final_cache_key = None
@@ -5074,7 +5098,7 @@ async def get_poster(
     # the pipeline.  Quality-override requests (final_cache_key=None) are
     # always rendered independently.
     # ------------------------------------------------------------------
-    _render_fut: "asyncio.Future[tuple[bytes, bool]] | None" = None
+    _render_fut: "asyncio.Future[tuple[bytes, bool, int | None]] | None" = None
     if final_cache_key is not None:
         _existing_fut = _render_inflight.get(final_cache_key)
         if _existing_fut is not None:
@@ -5083,9 +5107,11 @@ async def get_poster(
                 # The render we rode on decides our headers too: riding on a
                 # provisional one and then stamping an ETag would cache exactly
                 # the poster it was withheld to avoid.
-                _coal_bytes, _coal_provisional = await _existing_fut
+                _coal_bytes, _coal_provisional, _coal_expires_at = await _existing_fut
                 _coal_resp = Response(content=_coal_bytes, media_type=f"image/{_cfg.IMAGE_FORMAT}")
-                _apply_poster_cache_headers(_coal_resp, final_cache_key, _coal_provisional)
+                _apply_poster_cache_headers(
+                    _coal_resp, final_cache_key, _coal_provisional, _coal_expires_at
+                )
                 return _coal_resp
             except Exception:
                 # The in-flight render failed; fall through and try ourselves.
@@ -6386,6 +6412,7 @@ async def get_poster(
             quality_pending or _detection_deferred or rating_failed
             or _rating_backoff_active or _anime_art_missing
         )
+        _composite_expires_at: int | None = None
         if final_cache_key is not None and not _render_provisional:
             # A composite must not outlive the facts baked into it.  Trending
             # rank turns over daily; release status has its own tier (Cinema and
@@ -6405,7 +6432,7 @@ async def get_poster(
                     else min(_ttl_override, _status_ttl)
                 )
 
-            set_cached_final_poster(
+            _composite_expires_at = set_cached_final_poster(
                 final_cache_key,
                 img_bytes,
                 request_params=_sanitize_request_params(request.url.query),
@@ -6414,10 +6441,12 @@ async def get_poster(
             logger.info(f"Final poster cached for {final_cache_key}")
 
         if _render_fut is not None:
-            _render_fut.set_result((img_bytes, _render_provisional))
+            _render_fut.set_result((img_bytes, _render_provisional, _composite_expires_at))
 
         response = Response(content=img_bytes, media_type=f"image/{_cfg.IMAGE_FORMAT}")
-        _apply_poster_cache_headers(response, final_cache_key, _render_provisional)
+        _apply_poster_cache_headers(
+            response, final_cache_key, _render_provisional, _composite_expires_at
+        )
         return response
 
     except ValueError as exc:

@@ -145,10 +145,12 @@ KITSU_API_BASE        = os.environ.get("KITSU_API_BASE", "https://kitsu.io/api/e
 SERVER_MDBLIST_KEYS: list[str] = [k for k in [SERVER_MDBLIST_KEY, SERVER_MDBLIST_KEY_2] if k]
 
 # Workers
-# CDN cache TTL (seconds). When > 0, poster responses include a
-# Cache-Control: public header so Cloudflare (or any CDN) caches them at the
-# edge. Set to 0 to disable (e.g. when running without a CDN).
-CDN_CACHE_TTL         = int(os.environ.get("CDN_CACHE_TTL", "0"))
+# CDN cache TTL. When > 0, poster responses include a Cache-Control: public
+# header, capped at the composite's remaining lifetime. "auto" advertises that
+# remaining lifetime with no fixed ceiling. Set to 0 to send no Cache-Control.
+_CDN_CACHE_TTL_RAW    = os.environ.get("CDN_CACHE_TTL", "0").strip().lower()
+CDN_CACHE_TTL_AUTO    = _CDN_CACHE_TTL_RAW == "auto"
+CDN_CACHE_TTL         = 0 if CDN_CACHE_TTL_AUTO else int(_CDN_CACHE_TTL_RAW or "0")
 # Image format for composited posters (webp or jpeg). webp is recommended.
 IMAGE_FORMAT          = os.environ.get("IMAGE_FORMAT", "webp").lower()
 # Normalise the common "jpg" alias to the canonical "jpeg" that PIL's save()

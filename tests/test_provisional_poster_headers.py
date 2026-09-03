@@ -11,6 +11,7 @@ provisionally before any tokens exist.
 """
 
 import asyncio
+import time
 import unittest
 
 from fastapi import Response
@@ -23,12 +24,15 @@ class ProvisionalHeaderTests(unittest.TestCase):
     def setUp(self):
         self.disable_composite = main._cfg.DISABLE_COMPOSITE_CACHE
         self.cdn_ttl = main._cfg.CDN_CACHE_TTL
+        self.cdn_auto = main._cfg.CDN_CACHE_TTL_AUTO
         main._cfg.DISABLE_COMPOSITE_CACHE = False
         main._cfg.CDN_CACHE_TTL = 0
+        main._cfg.CDN_CACHE_TTL_AUTO = False
 
     def tearDown(self):
         main._cfg.DISABLE_COMPOSITE_CACHE = self.disable_composite
         main._cfg.CDN_CACHE_TTL = self.cdn_ttl
+        main._cfg.CDN_CACHE_TTL_AUTO = self.cdn_auto
 
     def _headers(self, provisional, key="tt0087332:620:movie:abc123"):
         resp = Response(content=b"")
@@ -84,7 +88,7 @@ class CoalescedRenderTests(unittest.TestCase):
         self.access_key = main._cfg.ACCESS_KEY
         self.tmdb_key = main._cfg.SERVER_TMDB_KEY
         self.disable_composite = main._cfg.DISABLE_COMPOSITE_CACHE
-        self.real_get_cached = main.get_cached_final_poster
+        self.real_get_cached = main.get_cached_final_poster_entry
         main._cfg.ACCESS_KEY = ""
         main._cfg.SERVER_TMDB_KEY = "test-key"
         main._cfg.DISABLE_COMPOSITE_CACHE = False
@@ -93,7 +97,7 @@ class CoalescedRenderTests(unittest.TestCase):
         main._cfg.ACCESS_KEY = self.access_key
         main._cfg.SERVER_TMDB_KEY = self.tmdb_key
         main._cfg.DISABLE_COMPOSITE_CACHE = self.disable_composite
-        main.get_cached_final_poster = self.real_get_cached
+        main.get_cached_final_poster_entry = self.real_get_cached
         main._render_inflight.clear()
 
     def _coalesced_response(self, payload, provisional):
@@ -108,15 +112,17 @@ class CoalescedRenderTests(unittest.TestCase):
         """
         seen = []
         with TestClient(main.app) as client:
-            main.get_cached_final_poster = lambda key: (seen.append(key), b"jpeg")[1]
+            main.get_cached_final_poster_entry = lambda key: (
+                seen.append(key), (b"jpeg", int(time.time()) + 3600)
+            )[1]
             self.assertEqual(client.get("/poster", params=self.PARAMS).status_code, 200)
             key = seen[0]
 
-            main.get_cached_final_poster = lambda _key: None
+            main.get_cached_final_poster_entry = lambda _key: None
 
             async def _seed():
                 fut = asyncio.get_running_loop().create_future()
-                fut.set_result((payload, provisional))
+                fut.set_result((payload, provisional, None))
                 main._render_inflight[key] = fut
 
             # The future is awaited on the app's loop, so seed it from there.
