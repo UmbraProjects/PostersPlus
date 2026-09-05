@@ -4721,20 +4721,33 @@ async def get_logo(
 # Poster endpoint
 # ---------------------------------------------------------------------------
 
+def _poster_etag(body: bytes) -> str:
+    """Derive a poster's validator from the bytes actually being served.
+
+    This used to be the composite cache key, which is a pure function of the
+    ids, the render params and the server signature — nothing in it describes
+    the *content*.  Trending rank, release status and the sash they drive all
+    turn over without touching any of those, so a re-render stored under the
+    same key inherited the same validator: the client revalidated, matched,
+    took a 304 and kept the superseded poster for as long as it kept asking.
+    A validator has to be a function of what it validates.
+    """
+    return f'"{hashlib.blake2b(body, digest_size=16).hexdigest()}"'
+
+
 def _apply_poster_cache_headers(
-    response: Response, final_cache_key: str | None, provisional: bool
+    response: Response, provisional: bool, etag: str | None = None
 ) -> None:
     """Attach the validator and freshness headers a poster response has earned.
 
     *provisional* marks a render the pipeline itself declined to keep: quality
     is still being fetched, OCR is queued, MDBlist just failed.  Leaving those
-    out of the composite cache only helps if the *client* comes back for the
-    finished render — and with an ETag attached it doesn't.  The composite key
-    is built from ids and render params alone, so the badge-less bytes and the
-    finished poster validate against the same value: a client that cached the
-    provisional one revalidates, gets a 304 off the now-complete composite, and
-    keeps the badge-less image indefinitely.  That is why quality appeared never
-    to arrive until a setting change rewrote the URL and minted a new key.
+    out of the composite cache only helps if the render is not held anywhere
+    else either.  A content-derived validator no longer lets a client revalidate
+    its badge-less copy against the finished composite and keep it — the two
+    hash differently — but nothing stops a CDN from storing the provisional
+    bytes and serving them to everyone for the full TTL, which is the worse half
+    of the same bug.
 
     A provisional render therefore ships no validator and asks not to be stored.
     """
@@ -4743,13 +4756,42 @@ def _apply_poster_cache_headers(
         response.headers["Pragma"] = "no-cache"
         return
 
-    if final_cache_key is not None:
-        response.headers["ETag"] = f'"{final_cache_key}"'
+    if etag is not None:
+        response.headers["ETag"] = etag
     if _cfg.DISABLE_COMPOSITE_CACHE:
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         response.headers["Pragma"] = "no-cache"
     elif _cfg.CDN_CACHE_TTL > 0:
         response.headers["Cache-Control"] = f"public, max-age={_cfg.CDN_CACHE_TTL}"
+
+
+def _poster_response(
+    request: Request, body: bytes, final_cache_key: str | None, provisional: bool
+) -> Response:
+    """Return the 200 — or the 304 — a finished poster body has earned.
+
+    Every path that hands poster bytes back goes through here (composite hit,
+    coalesced render, fresh render) so the validator is computed one way and the
+    conditional request is answered one way.  *final_cache_key* only gates
+    whether a validator is offered at all: a quality= override is a one-off that
+    never enters the composite cache and has nothing to revalidate against.
+
+    The 304 carries the same headers as the 200 it stands in for.  A bare 304
+    leaves the client's stored freshness untouched (RFC 9111 §4.3.4 updates the
+    stored headers from whatever the 304 carries), so the poster would keep
+    whatever max-age it was first served with no matter how the TTL moved on.
+    """
+    etag = None
+    if final_cache_key is not None and not provisional:
+        etag = _poster_etag(body)
+        if request.headers.get("if-none-match") == etag:
+            not_modified = Response(status_code=304)
+            _apply_poster_cache_headers(not_modified, provisional, etag=etag)
+            return not_modified
+
+    response = Response(content=body, media_type=f"image/{_cfg.IMAGE_FORMAT}")
+    _apply_poster_cache_headers(response, provisional, etag=etag)
+    return response
 
 
 @app.get("/poster")
@@ -5057,14 +5099,9 @@ async def get_poster(
             logger.info(f"Force refresh (nocache) for {final_cache_key} — bypassing cache read")
         if cached_jpeg is not None:
             logger.info(f"Final poster cache hit for {final_cache_key}")
-            etag = f'"{final_cache_key}"'
-            if request.headers.get("if-none-match") == etag:
-                return Response(status_code=304)
-            _hit_resp = Response(content=cached_jpeg, media_type=f"image/{_cfg.IMAGE_FORMAT}")
             # Only a finished render is ever written to the composite cache, so
             # a cache hit is never provisional.
-            _apply_poster_cache_headers(_hit_resp, final_cache_key, False)
-            return _hit_resp
+            return _poster_response(request, cached_jpeg, final_cache_key, False)
     else:
         final_cache_key = None
 
@@ -5084,9 +5121,9 @@ async def get_poster(
                 # provisional one and then stamping an ETag would cache exactly
                 # the poster it was withheld to avoid.
                 _coal_bytes, _coal_provisional = await _existing_fut
-                _coal_resp = Response(content=_coal_bytes, media_type=f"image/{_cfg.IMAGE_FORMAT}")
-                _apply_poster_cache_headers(_coal_resp, final_cache_key, _coal_provisional)
-                return _coal_resp
+                return _poster_response(
+                    request, _coal_bytes, final_cache_key, _coal_provisional
+                )
             except Exception:
                 # The in-flight render failed; fall through and try ourselves.
                 pass
@@ -6416,9 +6453,7 @@ async def get_poster(
         if _render_fut is not None:
             _render_fut.set_result((img_bytes, _render_provisional))
 
-        response = Response(content=img_bytes, media_type=f"image/{_cfg.IMAGE_FORMAT}")
-        _apply_poster_cache_headers(response, final_cache_key, _render_provisional)
-        return response
+        return _poster_response(request, img_bytes, final_cache_key, _render_provisional)
 
     except ValueError as exc:
         if _render_fut is not None and not _render_fut.done():
