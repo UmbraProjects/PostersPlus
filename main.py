@@ -5027,6 +5027,21 @@ async def _trending_catalog_meta(
     """One catalog item.  An IMDb id where we have one, since every client and
     metadata addon understands it; otherwise the namespaced TMDB or AniList id."""
     detail = details.get(entry_id) or {}
+    if endpoint != "anime" and not detail.get("name") and _cfg.SERVER_TMDB_KEY:
+        # A snapshot written before details were stored (or a source whose
+        # rows carry no title) has only ids.  Replacing it early would move
+        # ranks under posters already cached, so fill the gaps from the TMDB
+        # metadata the poster renders cache anyway.
+        async with sem:
+            try:
+                (_g, _t, _l, year, title, poster_path, _b, _d) = await _coalesced_fetch_poster_metadata(
+                    client, entry_id, _cfg.SERVER_TMDB_KEY, endpoint, _cfg.DEFAULT_LOGO_LANGUAGE,
+                )
+                detail = {**detail, **{k: v for k, v in {
+                    "name": title, "year": year, "poster": poster_path,
+                }.items() if v}}
+            except Exception as exc:
+                logger.warning(f"Trending catalog: no TMDB details for {endpoint} {entry_id}: {exc}")
     if endpoint == "anime":
         meta_id = entry_id
     else:

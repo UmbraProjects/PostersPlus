@@ -92,6 +92,27 @@ class CatalogTests(_AddonTest):
         max_age = int(resp.headers["cache-control"].split("max-age=")[1])
         self.assertAlmostEqual(max_age, 86400, delta=5)
 
+    def test_a_snapshot_without_details_is_filled_from_tmdb(self):
+        # Snapshots written before details were stored carry ids only; Nuvio
+        # showed those rows as blank tiles named by IMDb id.
+        cache.set_cached_trending_snapshot("movie", {"11": 1}, "tmdb")
+        calls = []
+
+        async def _meta(client, tmdb_id, key, media_type, lang, secondary=""):
+            calls.append((tmdb_id, media_type))
+            return ([], False, [], "2026", "Heart of the Beast", "/h.jpg", None, {})
+
+        async def _resolve(client, tmdb_id, media_type, key):
+            return "tt7526136"
+
+        with mock.patch.object(main, "_coalesced_fetch_poster_metadata", side_effect=_meta), \
+             mock.patch.object(main, "resolve_tmdb_to_imdb", side_effect=_resolve):
+            metas = self.client.get("/trending/sekrit/catalog/movie/pp.trending.movie.json").json()["metas"]
+        self.assertEqual(calls, [("11", "movie")])
+        self.assertEqual(metas[0]["name"], "Heart of the Beast")
+        self.assertEqual(metas[0]["poster"], "https://image.tmdb.org/t/p/w500/h.jpg")
+        self.assertEqual(metas[0]["releaseInfo"], "2026")
+
     def test_skip_returns_the_rest_of_the_list(self):
         self._store_with_details("tv", ["1", "2", "3"], {
             k: {"imdb_id": f"tt000000{k}"} for k in ("1", "2", "3")
