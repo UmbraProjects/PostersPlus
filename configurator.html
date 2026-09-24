@@ -2251,7 +2251,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
             <!-- Shown when the operator has TRENDING_CATALOGS_ENABLED on. -->
             <div class="field callout" id="trending-catalogs-field" style="display:none;">
-              <label class="field-label" data-tip="Import this manifest into AIOMetadata as a custom manifest and set its cache time to 0. The rows then follow the same list as the Trending sashes, so each poster's &quot;#N Today&quot; matches its place in the row.">Trending Catalogs Addon</label>
+              <label class="field-label" data-tip="Install this in your client, or import it into AIOMetadata as a custom manifest with its cache time set to 0. The rows follow the same list as the Trending sashes, so each poster's &quot;#N Today&quot; matches its place in the row. The URL carries your current poster settings, so installed directly its posters are drawn with them; copy it again after changing settings.">Trending Catalogs Addon</label>
               <input type="text" id="trending-catalogs-url" readonly onclick="this.select()">
             </div>
             <div class="cfg-sep">
@@ -4746,7 +4746,27 @@ function syncSecondaryLangVisibility() {
 
 // The trending catalogs addon's manifest, on the same address and access key
 // as the poster URL (so on a LAN it is the postersplus hostname AIOMetadata
-// reaches).  The key goes in the path; see _trending_catalog in main.py.
+// reaches).  The key goes in the path, and so do the current poster settings,
+// as one "cfg-<base64url>" segment: a client that installs the addon directly
+// then gets its rows drawn by Posters+ with these settings.  A query string
+// would not survive, since clients build page URLs by editing the path's end.
+// See trending_addon in main.py.
+const _ADDON_CFG_IDENTITY = ['tmdb_id', 'imdb_id', 'type', 'stremio_id', 'anilist_id',
+                             'kitsu_id', 'access_key', 'shape'];
+function trendingAddonConfigSegment() {
+  // The full build carries portrait settings whichever view is showing; the
+  // catalogs are portrait rows, so the landscape-only settings are dropped.
+  const full = buildBaseParams({ usePlaceholders: false, full: true });
+  const qIdx = full.indexOf('?');
+  if (qIdx < 0) return '';
+  const p = new URLSearchParams(full.slice(qIdx + 1));
+  _ADDON_CFG_IDENTITY.forEach(k => p.delete(k));
+  for (const k of [...p.keys()]) if (k.startsWith('landscape_') || k === 'badge_pos') p.delete(k);
+  const query = omitServerDefaults(p).toString();
+  if (!query) return '';
+  return 'cfg-' + btoa(query).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 function updateTrendingCatalogsField() {
   const field = document.getElementById('trending-catalogs-field');
   if (!field) return;
@@ -4755,8 +4775,9 @@ function updateTrendingCatalogsField() {
   if (!on) return;
   const domain = (vEl('cfg-domain') || window.location.origin).replace(/\/$/, '');
   const ak = vEl('cfg-access-key');
+  const cfg = trendingAddonConfigSegment();
   document.getElementById('trending-catalogs-url').value =
-    `${domain}/trending/${ak ? encodeURIComponent(ak) + '/' : ''}manifest.json`;
+    `${domain}/trending/${ak ? encodeURIComponent(ak) + '/' : ''}${cfg ? cfg + '/' : ''}manifest.json`;
 }
 
 function build() {

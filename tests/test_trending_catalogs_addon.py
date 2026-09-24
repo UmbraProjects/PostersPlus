@@ -148,6 +148,81 @@ class CatalogTests(_AddonTest):
         self.assertEqual(self.client.get("/trending/catalog/movie/pp.trending.movie.json").status_code, 403)
 
 
+def _cfg_segment(query: str) -> str:
+    import base64
+    return "cfg-" + base64.urlsafe_b64encode(query.encode()).decode().rstrip("=")
+
+
+class AddonConfigTests(_AddonTest):
+    """The addon URL can carry the configurator's poster settings, so a client
+    that installs it directly gets its rows drawn by Posters+."""
+
+    def setUp(self):
+        super().setUp()
+        self._store_with_details("movie", ["11"], {"11": {"name": "A", "imdb_id": "tt0000011"}}, "tmdb")
+        self._store_with_details("anime", ["anilist:5"], {"anilist:5": {"name": "Five"}}, "anilist")
+
+    def _metas(self, path, **headers):
+        resp = self.client.get(path, headers=headers)
+        self.assertEqual(resp.status_code, 200, resp.text)
+        return resp.json()["metas"]
+
+    def test_posters_are_rendered_with_the_carried_settings(self):
+        seg = _cfg_segment("badge_display_mode=6&tmdb_id=999&access_key=leak&shape=landscape")
+        metas = self._metas(f"/trending/sekrit/{seg}/catalog/movie/pp.trending.movie.json",
+                            **{"x-forwarded-proto": "https", "x-forwarded-host": "posters.example"})
+        poster = metas[0]["poster"]
+        self.assertTrue(poster.startswith("https://posters.example/poster?"), poster)
+        from urllib.parse import parse_qs, urlsplit
+        q = parse_qs(urlsplit(poster).query)
+        self.assertEqual(q["tmdb_id"], ["11"])
+        self.assertEqual(q["imdb_id"], ["tt0000011"])
+        self.assertEqual(q["type"], ["movie"])
+        self.assertEqual(q["access_key"], ["sekrit"])
+        self.assertEqual(q["badge_display_mode"], ["6"])
+        # Identity from the settings never overrides the item's own.
+        self.assertNotIn("shape", q)
+        self.assertEqual(len(q["tmdb_id"]), 1)
+
+    def test_anime_posters_are_requested_by_anilist_id(self):
+        seg = _cfg_segment("badge_display_mode=4")
+        metas = self._metas(f"/trending/sekrit/{seg}/catalog/series/pp.trending.anime.json")
+        self.assertIn("stremio_id=anilist%3A5", metas[0]["poster"])
+        self.assertIn("type=series", metas[0]["poster"])
+        self.assertTrue(metas[0]["poster"].startswith("http://testserver/poster?"))
+
+    def test_settings_segment_works_on_manifest_and_paged_urls(self):
+        seg = _cfg_segment("badge_display_mode=4")
+        self.assertEqual(self.client.get(f"/trending/sekrit/{seg}/manifest.json").status_code, 200)
+        self.assertEqual(
+            self._metas(f"/trending/sekrit/{seg}/catalog/movie/pp.trending.movie/skip=1.json"), [])
+
+    def test_without_settings_posters_stay_tmdb_art(self):
+        metas = self._metas("/trending/sekrit/catalog/series/pp.trending.anime.json")
+        self.assertNotIn("poster", metas[0])  # no stored art for this one
+
+    def test_settings_without_an_access_key(self):
+        main._cfg.ACCESS_KEY = ""
+        seg = _cfg_segment("badge_display_mode=4")
+        metas = self._metas(f"/trending/{seg}/catalog/movie/pp.trending.movie.json")
+        self.assertNotIn("access_key", metas[0]["poster"])
+        self.assertEqual(self.client.get(f"/trending/{seg}/manifest.json").status_code, 200)
+
+    def test_settings_do_not_bypass_the_key(self):
+        seg = _cfg_segment("badge_display_mode=4")
+        self.assertEqual(self.client.get(f"/trending/{seg}/manifest.json").status_code, 403)
+
+    def test_unreadable_settings_are_rejected(self):
+        resp = self.client.get("/trending/sekrit/cfg-%%%/catalog/movie/pp.trending.movie.json")
+        self.assertEqual(resp.status_code, 400)
+        resp = self.client.get("/trending/sekrit/cfg-" + "A" * 9000 + "/catalog/movie/pp.trending.movie.json")
+        self.assertEqual(resp.status_code, 414)
+
+    def test_unexpected_paths_are_not_found(self):
+        self.assertEqual(self.client.get("/trending/sekrit/extra/manifest.json").status_code, 404)
+        self.assertEqual(self.client.get("/trending/sekrit/catalog/movie.json").status_code, 404)
+
+
 class _Resp:
     def __init__(self, payload, status=200):
         self._payload = payload

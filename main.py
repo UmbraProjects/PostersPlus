@@ -2,6 +2,7 @@
 import asyncio
 import dataclasses
 import hashlib
+import base64
 import hmac
 import io
 import logging
@@ -5020,12 +5021,70 @@ def _trending_addon_manifest() -> dict:
     }
 
 
+# Poster settings travel in the addon URL as one "cfg-<base64url query>" path
+# segment, so a client that installs the addon directly gets posters rendered
+# with its own settings.  These are identity, not settings: each item supplies
+# its own, and the access key has its own segment.
+_ADDON_CFG_PREFIX = "cfg-"
+_ADDON_CFG_MAX = 8192
+_ADDON_CFG_IDENTITY = frozenset({
+    "tmdb_id", "imdb_id", "type", "stremio_id", "anilist_id", "kitsu_id",
+    "access_key", "shape",
+})
+
+
+def _decode_addon_cfg(segment: str) -> list[tuple[str, str]]:
+    """The poster settings a "cfg-" segment carries, identity params dropped."""
+    raw = segment[len(_ADDON_CFG_PREFIX):]
+    if len(raw) > _ADDON_CFG_MAX:
+        raise HTTPException(status_code=414, detail="Addon config too long")
+    try:
+        query = base64.b64decode(
+            raw + "=" * (-len(raw) % 4), altchars=b"-_", validate=True,
+        ).decode("ascii")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Unreadable addon config")
+    return [(k, v) for k, v in parse_qsl(query, keep_blank_values=True)
+            if k not in _ADDON_CFG_IDENTITY]
+
+
+def _public_base(request: Request) -> str:
+    """The address the client reached us on, for poster URLs handed back to it.
+
+    Behind a reverse proxy the request itself looks like plain http on an
+    internal host.  The forwarded headers are trusted only for this: the URLs
+    go back to whoever sent them, so a forged header misleads nobody else.
+    """
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme).split(",")[0].strip()
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host")
+            or request.url.netloc).split(",")[0].strip()
+    return f"{proto}://{host}"
+
+
+def _addon_poster_url(
+    base: str, cfg: list[tuple[str, str]], key: str | None,
+    endpoint: str, ctype: str, entry_id: str, imdb_id: str | None,
+) -> str:
+    if endpoint == "anime":
+        ids = [("stremio_id", entry_id)]
+    else:
+        ids = [("tmdb_id", entry_id)] + ([("imdb_id", imdb_id)] if imdb_id else [])
+    ids.append(("type", ctype))
+    if key:
+        ids.append(("access_key", key))
+    return f"{base}/poster?{urlencode(ids + cfg)}"
+
+
 async def _trending_catalog_meta(
     client: httpx.AsyncClient, entry_id: str, ctype: str, endpoint: str,
     details: dict, sem: asyncio.Semaphore,
+    poster_cfg: "tuple[str, list, str | None] | None" = None,
 ) -> dict:
     """One catalog item.  An IMDb id where we have one, since every client and
-    metadata addon understands it; otherwise the namespaced TMDB or AniList id."""
+    metadata addon understands it; otherwise the namespaced TMDB or AniList id.
+
+    *poster_cfg* is (base, settings, access key) when the addon URL carried
+    poster settings: the item's poster is then a Posters+ render of it."""
     detail = details.get(entry_id) or {}
     if endpoint != "anime" and not detail.get("name") and _cfg.SERVER_TMDB_KEY:
         # A snapshot written before details were stored (or a source whose
@@ -5042,6 +5101,7 @@ async def _trending_catalog_meta(
                 }.items() if v}}
             except Exception as exc:
                 logger.warning(f"Trending catalog: no TMDB details for {endpoint} {entry_id}: {exc}")
+    imdb_id = None
     if endpoint == "anime":
         meta_id = entry_id
     else:
@@ -5053,9 +5113,13 @@ async def _trending_catalog_meta(
                 except IdResolveError:
                     imdb_id = None
         meta_id = imdb_id or f"tmdb:{entry_id}"
-    poster = detail.get("poster")
-    if poster and poster.startswith("/"):
-        poster = _TMDB_POSTER_BASE + poster
+    if poster_cfg is not None:
+        base, settings, key = poster_cfg
+        poster = _addon_poster_url(base, settings, key, endpoint, ctype, entry_id, imdb_id)
+    else:
+        poster = detail.get("poster")
+        if poster and poster.startswith("/"):
+            poster = _TMDB_POSTER_BASE + poster
     meta = {
         "id": meta_id,
         "type": ctype,
@@ -5067,8 +5131,10 @@ async def _trending_catalog_meta(
     return {k: v for k, v in meta.items() if v}
 
 
-async def _trending_catalog(key: str | None, ctype: str, cid: str, extra: str | None) -> JSONResponse:
-    _trending_addon_guard(key)
+async def _trending_catalog(
+    key: str | None, ctype: str, cid: str, extra: str | None,
+    poster_cfg: "tuple[str, list, str | None] | None" = None,
+) -> JSONResponse:
     spec = next((c for c in _TRENDING_CATALOGS if c[0] == cid and c[1] == ctype), None)
     if spec is None:
         raise HTTPException(status_code=404, detail="Unknown catalog")
@@ -5094,7 +5160,7 @@ async def _trending_catalog(key: str | None, ctype: str, cid: str, extra: str | 
     details = get_cached_trending_details(endpoint)
     sem = asyncio.Semaphore(8)
     metas = await asyncio.gather(*(
-        _trending_catalog_meta(_HTTP_CLIENT, entry_id, ctype, endpoint, details, sem)
+        _trending_catalog_meta(_HTTP_CLIENT, entry_id, ctype, endpoint, details, sem, poster_cfg)
         for entry_id in ordered
     ))
     # Cached no longer than the snapshot, like the posters that print its ranks.
@@ -5105,36 +5171,44 @@ async def _trending_catalog(key: str | None, ctype: str, cid: str, extra: str | 
     )
 
 
-@app.get("/trending/manifest.json")
-async def trending_manifest():
-    _trending_addon_guard(None)
-    return JSONResponse(_trending_addon_manifest(), headers=_ADDON_HEADERS)
+@app.get("/trending/{rest:path}")
+async def trending_addon(rest: str, request: Request):
+    """Every addon path: an optional access key segment and an optional
+    "cfg-" settings segment, then manifest.json or catalog/<type>/<id>[/<extra>].json.
+    Parsed by hand because either leading segment may be absent."""
+    segs = rest.split("/")
+    if segs[-1] == "manifest.json":
+        prefix, tail = segs[:-1], None
+    elif "catalog" in segs[:3]:
+        at = segs.index("catalog")
+        prefix, tail = segs[:at], segs[at + 1:]
+    else:
+        raise HTTPException(status_code=404, detail="Not Found")
 
-
-@app.get("/trending/{key}/manifest.json")
-async def trending_manifest_keyed(key: str):
+    key = cfg_seg = None
+    for seg in prefix:
+        if seg.startswith(_ADDON_CFG_PREFIX) and cfg_seg is None:
+            cfg_seg = seg
+        elif key is None and seg and not seg.startswith(_ADDON_CFG_PREFIX):
+            key = seg
+        else:
+            raise HTTPException(status_code=404, detail="Not Found")
     _trending_addon_guard(key)
-    return JSONResponse(_trending_addon_manifest(), headers=_ADDON_HEADERS)
 
+    if tail is None:
+        return JSONResponse(_trending_addon_manifest(), headers=_ADDON_HEADERS)
 
-@app.get("/trending/catalog/{ctype}/{cid}.json")
-async def trending_catalog(ctype: str, cid: str):
-    return await _trending_catalog(None, ctype, cid, None)
+    if len(tail) == 2 and tail[1].endswith(".json"):
+        ctype, cid, extra = tail[0], tail[1][:-5], None
+    elif len(tail) == 3 and tail[2].endswith(".json"):
+        ctype, cid, extra = tail[0], tail[1], tail[2][:-5]
+    else:
+        raise HTTPException(status_code=404, detail="Not Found")
 
-
-@app.get("/trending/catalog/{ctype}/{cid}/{extra}.json")
-async def trending_catalog_extra(ctype: str, cid: str, extra: str):
-    return await _trending_catalog(None, ctype, cid, extra)
-
-
-@app.get("/trending/{key}/catalog/{ctype}/{cid}.json")
-async def trending_catalog_keyed(key: str, ctype: str, cid: str):
-    return await _trending_catalog(key, ctype, cid, None)
-
-
-@app.get("/trending/{key}/catalog/{ctype}/{cid}/{extra}.json")
-async def trending_catalog_keyed_extra(key: str, ctype: str, cid: str, extra: str):
-    return await _trending_catalog(key, ctype, cid, extra)
+    poster_cfg = None
+    if cfg_seg is not None:
+        poster_cfg = (_public_base(request), _decode_addon_cfg(cfg_seg), key)
+    return await _trending_catalog(key, ctype, cid, extra, poster_cfg)
 
 
 @app.get("/server-caps")
