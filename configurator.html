@@ -2251,7 +2251,16 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
             <!-- Shown when the operator has TRENDING_CATALOGS_ENABLED on. -->
             <div class="field callout" id="trending-catalogs-field" style="display:none;">
-              <label class="field-label" data-tip="Install this in your client, or import it into AIOMetadata as a custom manifest with its cache time set to 0. The rows follow the same list as the Trending sashes, so each poster's &quot;#N Today&quot; matches its place in the row. The URL carries your current poster settings for both shapes, so installed directly its posters (and landscape posters, for clients that show landscape rows) are drawn with them; copy it again after changing settings.">Trending Catalogs Addon</label>
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:var(--gap-label);">
+                <label class="field-label" style="margin-bottom:0;" data-tip="Install this in your client, or import it into AIOMetadata as a custom manifest with its cache time set to 0. The rows follow the same list as the Trending sashes, so each poster's &quot;#N Today&quot; matches its place in the row. The URL carries your current poster settings for both shapes, so installed directly its posters (and landscape posters, for clients that show landscape rows) are drawn with them; copy it again after changing settings.">Trending Catalogs Addon</label>
+                <div class="toggle-row" style="margin:0; gap:8px;">
+                  <span class="toggle-label" data-tip="On: posters in these catalogs show only their Trending rank, whatever your sash list says. Off: they use your sash list, like your other posters.">Trending Only</span>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="tog-trending-only" checked onchange="saveTrendingOnly(); updateTrendingCatalogsField()">
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
+                </div>
+              </div>
               <input type="text" id="trending-catalogs-url" readonly onclick="this.select()">
             </div>
             <div class="cfg-sep">
@@ -4766,9 +4775,29 @@ function trendingAddonConfigSegment() {
   const p = new URLSearchParams(url.slice(qIdx + 1));
   _ADDON_CFG_IDENTITY.forEach(k => p.delete(k));
   for (const [k, v] of [...p]) if (v.includes('{')) p.delete(k);
+  if (c('tog-trending-only')) {
+    // Only the rank: the catalog lists ranks 1 to the broad count, so both
+    // Trending slots.  A hidden sash would leave nothing to show it on, so
+    // that shape gets the default diagonal sash; a notch stays a notch.
+    p.set('sash_priority', 'trending,trending_broad');
+    for (const k of ['sash_mode', 'landscape_sash_mode']) {
+      if (p.get(k) === 'hidden') p.set(k, 'sash');
+    }
+  }
   const query = p.toString();
   if (!query) return '';
   return 'cfg-' + btoa(query).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// Addon-only, so kept apart from the poster settings and never in their URL.
+const TRENDING_ONLY_KEY = 'postersplus_trending_only';
+function saveTrendingOnly() {
+  try { localStorage.setItem(TRENDING_ONLY_KEY, c('tog-trending-only') ? '1' : '0'); } catch (e) {}
+}
+function restoreTrendingOnly() {
+  let v = null;
+  try { v = localStorage.getItem(TRENDING_ONLY_KEY); } catch (e) {}
+  if (v !== null) document.getElementById('tog-trending-only').checked = v === '1';
 }
 
 function updateTrendingCatalogsField() {
@@ -7315,6 +7344,7 @@ if (!localStorage.getItem('postersplus_selection')) applyDefaultSelection();
 // (Core Config — keys / language / selection — is left untouched).
 _loadShapeStash();
 restoreSettings();
+restoreTrendingOnly();
 // After restore, so the buttons paint the persisted value straight away.
 initSegmented();
 syncSecondaryLangVisibility();
