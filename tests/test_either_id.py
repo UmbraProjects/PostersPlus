@@ -312,7 +312,11 @@ class ResolverTests(unittest.IsolatedAsyncioTestCase):
             again = await tmdb.resolve_imdb_to_tmdb(client, "tt0111161", "movie", "k")
             self.assertEqual(again, result)
             self.assertEqual(len(client.calls), 1)
-            self.assertEqual(len(cache.store), 1)
+            # The forward answer, and the reverse link /find just proved.
+            self.assertEqual(
+                sorted(cache.store),
+                ["idmap:v1:imdb:tt0111161:movie", "idmap:v1:tmdb:movie:278"],
+            )
 
     async def test_keyed_lookup_corrects_the_media_type(self):
         with _MemoryJsonCache(tmdb, cinemeta):
@@ -386,6 +390,33 @@ class ResolverTests(unittest.IsolatedAsyncioTestCase):
             client = _FakeClient(_FakeResponse(503))
             await tmdb.resolve_imdb_to_tmdb(client, "tt13207736", "tv", None)
             self.assertTrue(client.calls[0][0].startswith("https://v3-cinemeta.strem.io/"))
+
+    async def test_reverse_lookup_reads_external_ids_and_is_cached(self):
+        with _MemoryJsonCache(tmdb, cinemeta) as cache:
+            client = _FakeClient(_FakeResponse(200, {"imdb_id": "tt0111161"}))
+            self.assertEqual(await tmdb.resolve_tmdb_to_imdb(client, "278", "movie", "k"), "tt0111161")
+            self.assertEqual(await tmdb.resolve_tmdb_to_imdb(client, "278", "movie", "k"), "tt0111161")
+            self.assertEqual([u for u, _ in client.calls], ["https://api.themoviedb.org/3/movie/278/external_ids"])
+            self.assertEqual(list(cache.store), ["idmap:v1:tmdb:movie:278"])
+
+    async def test_reverse_lookup_of_an_unlinked_installment_is_none(self):
+        # Monster: Ed Gein's own show on TMDB links no IMDb id.
+        with _MemoryJsonCache(tmdb, cinemeta):
+            client = _FakeClient(_FakeResponse(200, {"imdb_id": None}))
+            self.assertIsNone(await tmdb.resolve_tmdb_to_imdb(client, "286801", "series", "k"))
+            self.assertEqual(client.calls[0][0], "https://api.themoviedb.org/3/tv/286801/external_ids")
+
+    async def test_reverse_lookup_failure_raises_and_is_not_cached(self):
+        with _MemoryJsonCache(tmdb, cinemeta) as cache:
+            with self.assertRaises(tmdb.IdResolveError):
+                await tmdb.resolve_tmdb_to_imdb(_FakeClient(_FakeResponse(503)), "278", "movie", "k")
+            self.assertEqual(cache.store, {})
+
+    async def test_find_seeds_the_reverse_map(self):
+        with _MemoryJsonCache(tmdb, cinemeta):
+            await tmdb.resolve_imdb_to_tmdb(_FakeClient(self.FOUND), "tt0111161", "movie", "k")
+            client = _FakeClient(RuntimeError("must not be called"))
+            self.assertEqual(await tmdb.resolve_tmdb_to_imdb(client, "278", "movie", "k"), "tt0111161")
 
     async def test_concurrent_lookups_share_one_request(self):
         release = asyncio.Event()
@@ -518,6 +549,51 @@ class TitleIdentityTests(unittest.IsolatedAsyncioTestCase):
 # Routes
 # ---------------------------------------------------------------------------
 
+class ImdbUnderTmdbTests(unittest.IsolatedAsyncioTestCase):
+    """Once a TMDB id decides the title, the IMDb id survives only if TMDB links it."""
+
+    def setUp(self):
+        self._client = main._HTTP_CLIENT
+        self._reverse = main.resolve_tmdb_to_imdb
+        main._HTTP_CLIENT = object()
+
+    def tearDown(self):
+        main._HTTP_CLIENT = self._client
+        main.resolve_tmdb_to_imdb = self._reverse
+
+    def _stub(self, outcome):
+        async def _reverse(client, tmdb_id, media_type, key):
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+        main.resolve_tmdb_to_imdb = _reverse
+
+    async def _kept(self, tmdb_id="286801", imdb_id="tt13207736", key="k", use_cinemeta=False):
+        return await main._imdb_id_under_tmdb(tmdb_id, imdb_id, "series", key, use_cinemeta)
+
+    async def test_linked_imdb_id_is_kept(self):
+        self._stub("tt0111161")
+        self.assertEqual(await self._kept(tmdb_id="278", imdb_id="tt0111161"), "tt0111161")
+
+    async def test_anthology_imdb_id_beside_an_installment_is_dropped(self):
+        self._stub(None)
+        self.assertEqual(await self._kept(), "")
+
+    async def test_imdb_id_linked_elsewhere_is_dropped(self):
+        self._stub("tt9999999")
+        self.assertEqual(await self._kept(), "")
+
+    async def test_failed_lookup_drops_the_imdb_id(self):
+        self._stub(tmdb.IdResolveError("down"))
+        self.assertEqual(await self._kept(), "")
+
+    async def test_cinemeta_spine_and_keyless_requests_keep_it(self):
+        self._stub(RuntimeError("must not be called"))
+        self.assertEqual(await self._kept(use_cinemeta=True), "tt13207736")
+        self.assertEqual(await self._kept(key=None), "tt13207736")
+        self.assertEqual(await self._kept(tmdb_id="tt13207736"), "tt13207736")
+
+
 class RouteBoundaryTests(unittest.TestCase):
     def setUp(self):
         self._saved = {
@@ -574,7 +650,8 @@ class RenderPathTests(unittest.IsolatedAsyncioTestCase):
         }
         self._stubs = {
             name: getattr(main, name) for name in (
-                "_HTTP_CLIENT", "resolve_imdb_to_tmdb", "_coalesced_fetch_poster_metadata",
+                "_HTTP_CLIENT", "resolve_imdb_to_tmdb", "resolve_tmdb_to_imdb",
+                "_coalesced_fetch_poster_metadata",
                 "fetch_backdrop_image", "fetch_poster_image", "fetch_logo",
                 "_fetch_metahub_logo",
             )
@@ -603,6 +680,10 @@ class RenderPathTests(unittest.IsolatedAsyncioTestCase):
         async def _no_logo(*args, **kwargs):
             return None
 
+        async def _linked(client, tmdb_id, media_type, key):
+            return "tt0111161"
+
+        main.resolve_tmdb_to_imdb = _linked
         main.fetch_backdrop_image = _backdrop
         main.fetch_poster_image = _poster
         main.fetch_logo = _no_logo
@@ -681,6 +762,30 @@ class RenderPathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(seen), 2)
         self.assertEqual(seen[0], seen[1])
         self.assertTrue(seen[0].startswith("tt0111161:278:movie:"))
+
+    async def test_unlinked_imdb_id_beside_a_tmdb_id_keys_like_tmdb_only(self):
+        main._cfg.SERVER_TMDB_KEY = "k"
+        main._cfg.DISABLE_COMPOSITE_CACHE = False
+        self._stub_tmdb_metadata()
+
+        async def _unlinked(client, tmdb_id, media_type, key):
+            return None
+        main.resolve_tmdb_to_imdb = _unlinked
+        seen: list[str] = []
+        real_lookup = main.get_cached_final_poster_entry
+
+        def _spy(key):
+            seen.append(key)
+            return None
+        main.get_cached_final_poster_entry = _spy
+        try:
+            await self._get(imdb_id="tt13207736", tmdb_id="286801", type="series", cb="either3")
+            await self._get(tmdb_id="286801", type="series", cb="either3")
+        finally:
+            main.get_cached_final_poster_entry = real_lookup
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(seen[0], seen[1])
+        self.assertTrue(seen[0].startswith("tmdb:286801:"))
 
     async def test_no_key_renders_from_cinemeta_via_the_backdrop_fallback(self):
         main._cfg.SERVER_TMDB_KEY = ""

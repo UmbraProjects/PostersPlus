@@ -9,6 +9,11 @@
   resolve and the metadata provider's plain poster showed instead. Monster
   now renders as its newest story that has premiered: Ed Gein today, and
   Lizzie Borden from the day it airs.
+- A TMDB id now decides the title. An IMDb id sent beside it is kept only
+  when TMDB links that TMDB id to it, so a Monster story asked for by its
+  TMDB id gets its own rating, sash and quality, not the whole anthology's.
+  An IMDb-only request for Monster renders exactly like its newest story's
+  TMDB id. Ordinary titles are unaffected.
 
 ### Importing a URL keeps you on this instance
 

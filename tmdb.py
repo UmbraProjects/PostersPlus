@@ -1993,6 +1993,61 @@ async def resolve_imdb_to_tmdb(
 _idmap_inflight: "dict[str, asyncio.Future]" = {}
 
 
+def _reverse_idmap_key(tmdb_id: str, media_type: str) -> str:
+    kind = "tv" if media_type in ("tv", "series") else "movie"
+    return f"idmap:{_IDMAP_VERSION}:tmdb:{kind}:{tmdb_id}"
+
+
+async def resolve_tmdb_to_imdb(
+    client: httpx.AsyncClient,
+    tmdb_id: str,
+    media_type: str,
+    tmdb_key: str,
+) -> str | None:
+    """The IMDb id TMDB links *tmdb_id* to, cached; None when it links none.
+
+    What a request keeps as its IMDb id once a TMDB id is in charge: an
+    anthology's installments are shows of their own on TMDB with no IMDb link
+    (IMDb has one id for the whole anthology), so an IMDb id sent alongside one
+    of them describes a different title and must not feed ratings, sashes or
+    quality. Raises ``IdResolveError`` when the lookup itself failed.
+    """
+    key = _reverse_idmap_key(tmdb_id, media_type)
+    cached = get_cached_tvdb_json(key)
+    if cached is not None:
+        return cached.get("imdb_id") or None
+
+    inflight = _idmap_inflight.get(key)
+    if inflight is not None:
+        return await inflight
+    fut: "asyncio.Future[str | None]" = asyncio.get_running_loop().create_future()
+    _idmap_inflight[key] = fut
+    try:
+        kind = "tv" if media_type in ("tv", "series") else "movie"
+        try:
+            resp = await client.get(
+                f"https://api.themoviedb.org/3/{kind}/{tmdb_id}/external_ids",
+                params={"api_key": tmdb_key},
+            )
+            resp.raise_for_status()
+            imdb_id = (resp.json().get("imdb_id") or "").strip() or None
+        except Exception as exc:
+            raise IdResolveError(f"TMDB external_ids failed for {kind}/{tmdb_id}: {exc}") from exc
+        # A link TMDB adds later should be picked up, so "none" is kept only a day.
+        set_cached_tvdb_json(
+            key, {"imdb_id": imdb_id or ""},
+            _IDMAP_TTL_SECONDS if imdb_id else _IDMAP_MISS_TTL_SECONDS,
+        )
+    except BaseException as exc:
+        fut.set_exception(exc)
+        raise
+    else:
+        fut.set_result(imdb_id)
+        return imdb_id
+    finally:
+        _idmap_inflight.pop(key, None)
+
+
 async def _resolve_imdb_to_tmdb_uncached(
     client: httpx.AsyncClient,
     imdb_id: str,
@@ -2010,6 +2065,10 @@ async def _resolve_imdb_to_tmdb_uncached(
             return None
         logger.info(
             f"Resolved {imdb_id} -> TMDB {result['media_type']}/{result['tmdb_id']} via /find"
+        )
+        set_cached_tvdb_json(
+            _reverse_idmap_key(result["tmdb_id"], result["media_type"]),
+            {"imdb_id": imdb_id}, _IDMAP_TTL_SECONDS,
         )
     else:
         cm_tmdb_id = await cinemeta.resolve_tmdb_id(client, imdb_id, media_type)

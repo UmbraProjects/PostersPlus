@@ -166,7 +166,14 @@ class CoalescedRenderTests(unittest.TestCase):
         self.tmdb_key = main._cfg.SERVER_TMDB_KEY
         self.disable_composite = main._cfg.DISABLE_COMPOSITE_CACHE
         self.real_get_cached = main.get_cached_final_poster_entry
+        self.real_reverse = main.resolve_tmdb_to_imdb
         main._cfg.ACCESS_KEY = ""
+
+        # TMDB links 620 back to the IMDb id sent beside it, so both are kept
+        # and nothing leaves the process to find that out.
+        async def _linked(client, tmdb_id, media_type, key):
+            return "tt0087332"
+        main.resolve_tmdb_to_imdb = _linked
         main._cfg.SERVER_TMDB_KEY = "test-key"
         main._cfg.DISABLE_COMPOSITE_CACHE = False
 
@@ -175,6 +182,7 @@ class CoalescedRenderTests(unittest.TestCase):
         main._cfg.SERVER_TMDB_KEY = self.tmdb_key
         main._cfg.DISABLE_COMPOSITE_CACHE = self.disable_composite
         main.get_cached_final_poster_entry = self.real_get_cached
+        main.resolve_tmdb_to_imdb = self.real_reverse
         main._render_inflight.clear()
 
     def _coalesced_response(self, payload, provisional):

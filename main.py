@@ -748,7 +748,7 @@ from ratings import (
     _score_color_alt,
     _score_color_metal,
 )
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, TEXT_FORWARD_PRIORITIES as _TEXT_FORWARD_LOGO_PRIORITIES, resolve_imdb_to_tmdb, IdResolveError, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, TEXT_FORWARD_PRIORITIES as _TEXT_FORWARD_LOGO_PRIORITIES, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, IdResolveError, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date
 
 # Logo priorities that consult the secondary preferred language ("custom").
 # Elsewhere the secondary language is inert and must be kept out of the image
@@ -1204,6 +1204,40 @@ async def _resolve_title_identity(
             "Send tmdb_id directly if you have one."
         ),
     )
+
+
+async def _imdb_id_under_tmdb(
+    tmdb_id: str, imdb_id: str, media_type: str, tmdb_key: str | None, use_cinemeta: bool,
+) -> str:
+    """The IMDb id a TMDB-spined request keeps: the one TMDB links its id to.
+
+    Once a TMDB id is in charge — sent, or resolved from the IMDb id — it
+    decides the title, and an IMDb id TMDB doesn't link to it names something
+    else. The case that matters is an anthology: IMDb files Monster as one
+    series with a season per story, TMDB as three shows, so tt13207736 beside
+    TMDB's Ed Gein show would give Ed Gein the anthology's ratings, sash and
+    stream quality. Dropped then, the IMDb id TMDB links (if any) is picked up
+    after metadata as usual. An ordinary title keeps its IMDb id unchanged, so
+    its cache keys don't move.
+
+    A Cinemeta-spined request keeps its IMDb id: that is what it renders from.
+    """
+    if not imdb_id or use_cinemeta or not tmdb_key or not _TMDB_ID_RE.match(tmdb_id):
+        return imdb_id
+    if _HTTP_CLIENT is None:
+        raise HTTPException(status_code=503, detail="Service unavailable")
+    try:
+        linked = await resolve_tmdb_to_imdb(_HTTP_CLIENT, tmdb_id, media_type, tmdb_key)
+    except IdResolveError as exc:
+        logger.warning(f"{exc} — dropping {imdb_id}, TMDB {tmdb_id} decides the title")
+        return ""
+    if linked == imdb_id:
+        return imdb_id
+    logger.info(
+        f"Dropping {imdb_id}: TMDB {media_type}/{tmdb_id} links "
+        f"{linked or 'no IMDb id'}, and the TMDB id decides the title"
+    )
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -5460,6 +5494,7 @@ async def get_logo(
     tmdb_id, type, use_cinemeta = await _resolve_title_identity(
         tmdb_id, imdb_id, type, effective_tmdb_key
     )
+    imdb_id = await _imdb_id_under_tmdb(tmdb_id, imdb_id, type, effective_tmdb_key, use_cinemeta)
     media_type = "tv" if type in ("tv", "series") else "movie"
     effective_lang = (lang or "en").strip() or "en"
 
@@ -5744,7 +5779,8 @@ async def get_poster(
         # (TMDB's /find with a key, Cinemeta's moviedb_id without) before
         # anything else looks at it, so the rest of the pipeline — and the
         # composite cache key — sees the same identity a client sending both
-        # would have produced. imdb_id alongside tmdb_id is optional enrichment.
+        # would have produced. imdb_id alongside tmdb_id is kept only when TMDB
+        # links that TMDB id to it (_imdb_id_under_tmdb).
         #
         # Missing both is the one thing that can't render, and the 400 names
         # both so a template author knows either would do. Handing the empty
@@ -5767,6 +5803,9 @@ async def get_poster(
             )
         tmdb_id, type, use_cinemeta = await _resolve_title_identity(
             tmdb_id, imdb_id, type, _resolve_tmdb_key(tmdb_key)
+        )
+        imdb_id = await _imdb_id_under_tmdb(
+            tmdb_id, imdb_id, type, _resolve_tmdb_key(tmdb_key), use_cinemeta
         )
         has_tmdb_id = _TMDB_ID_RE.match(tmdb_id) is not None
 
