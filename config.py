@@ -301,7 +301,7 @@ DAYS_CONSIDERED_NEW          = 14
 NEW_CACHE_DURATION           = 1
 OLD_CACHE_DURATION           = 14
 TRENDING_CACHE_DURATION      = 1
-TRENDING_FETCH_TIME          = _env('TRENDING_FETCH_TIME', "", group='Trending', kind='text', label='Trending fetch time', help='Local time of day (e.g. 04:00) to refresh the trending list used by the Trending sashes. Blank refreshes on a rolling 24-hour interval from startup instead.', placeholder='04:00').strip()
+TRENDING_FETCH_TIME          = _env('TRENDING_FETCH_TIME', "", group='Trending', kind='text', label='Trending fetch time', help='Local time of day (e.g. 04:00) to refresh the trending list used by the Trending sashes. Every poster showing a rank is cached until then, so the ranks all change at once. Blank refreshes 24 hours after the previous refresh instead.', placeholder='04:00').strip()
 TRENDING_FETCH_TIMEZONE      = _env('TRENDING_FETCH_TIMEZONE', "UTC", group='Trending', kind='text', label='Trending fetch timezone', help='IANA timezone for the fetch time, e.g. America/New_York.', placeholder='UTC').strip()
 TRENDING_FETCH_COUNT         = int(_env('TRENDING_FETCH_COUNT', "40", group='Trending', kind='int', label='Trending count', help='Ranks 1 to this number get the Trending sash.', min=1, max=500))
 TRENDING_BROAD_FETCH_COUNT   = int(_env('TRENDING_BROAD_FETCH_COUNT', "100", group='Trending', kind='int', label='Broad trending count', help='Lower-ranked trending titles, from the trending count up to this rank, qualify for the lower-priority Trending (Broad) sash.', min=1, max=1000))

@@ -43,6 +43,7 @@ def _rasterize_svg(svg_bytes: bytes, target_w: int = 1000) -> "Image.Image | Non
 
 from cache import (
     get_cached_trending_snapshot,
+    get_cached_trending_snapshot_entry,
     set_cached_trending_snapshot,
     get_cached_tmdb_poster,
     set_cached_tmdb_poster,
@@ -1528,81 +1529,131 @@ async def fetch_trending_source_ids(
     return ids
 
 
-async def fetch_trending_rank(
+async def _fetch_tmdb_trending_ids(
+    client: httpx.AsyncClient, tmdb_key: str, endpoint: str,
+) -> list[str] | None:
+    """TMDB's day-trending ids for *endpoint*, pages 1-5, in rank order.
+
+    The pages are fetched concurrently, and TMDB's list can shift between those
+    requests, so a title can turn up on two pages. The first appearance wins
+    and the ranks are numbered without gaps. Keeping the last appearance, as
+    this used to, left rank numbers that no title held and put the titles
+    around them a place out.
+    """
+    logger.info("External API Call: Refreshing TMDB trending snapshot (pages 1-5 concurrent)")
+
+    async def _fetch_page(page: int) -> list[dict]:
+        resp = await client.get(
+            f"https://api.themoviedb.org/3/trending/{endpoint}/day",
+            params={"api_key": tmdb_key, "page": page},
+        )
+        resp.raise_for_status()
+        return resp.json().get("results", [])
+
+    try:
+        pages = await asyncio.gather(*(_fetch_page(page) for page in range(1, 6)))
+    except Exception as exc:
+        logger.error(f"TMDB trending fetch error: {exc}")
+        return None
+
+    seen: set[str] = set()
+    ids: list[str] = []
+    for results in pages:
+        for item in results:
+            entry_id = str(item["id"])
+            if entry_id not in seen:
+                seen.add(entry_id)
+                ids.append(entry_id)
+    return ids
+
+
+async def ensure_trending_snapshot(
+    client: httpx.AsyncClient,
+    tmdb_key: str,
+    endpoint: str,
+) -> "tuple[dict[str, int], float] | None":
+    """The current (rankings, expires_at) for *endpoint*, fetched only if the
+    stored snapshot has expired or came from another source.
+
+    Concurrent callers share one fetch.  None when there is nothing to rank
+    against: the source failed, or TMDB is the source and there is no key.
+    """
+    source_sig = trending_source_signature(endpoint)
+
+    entry = get_cached_trending_snapshot_entry(endpoint, source_sig)
+    if entry is not None:
+        return entry
+
+    inflight_event = _trending_inflight.get(endpoint)
+    if inflight_event is not None:
+        await inflight_event.wait()
+        entry = get_cached_trending_snapshot_entry(endpoint, source_sig)
+        if entry is not None:
+            return entry
+
+    event_to_set = asyncio.Event()
+    _trending_inflight[endpoint] = event_to_set
+    try:
+        # An operator-configured source replaces TMDB's list entirely.
+        # A configured-but-broken source serves no ranks, so the sash
+        # goes quiet instead of falling back to TMDB and looking like
+        # the config worked.
+        source_ids = await fetch_trending_source_ids(client, endpoint)
+        if source_ids is not None:
+            if not source_ids:
+                # Deliberately NOT cached.  Writing an empty snapshot
+                # would pin "no trending" for the full TTL on what is
+                # usually a transient fetch failure; the source's own
+                # retry cooldown already stops this from re-fetching per
+                # request.  Nothing to rank against this time round.
+                return None
+            ids = source_ids
+        else:
+            if not tmdb_key:
+                return None
+            ids = await _fetch_tmdb_trending_ids(client, tmdb_key, endpoint)
+            if ids is None:
+                return None
+
+        rankings = {entry_id: position for position, entry_id in enumerate(ids, start=1)}
+        set_cached_trending_snapshot(endpoint, rankings, source_sig)
+        return get_cached_trending_snapshot_entry(endpoint, source_sig) or (
+            rankings, time.time() + 86400
+        )
+    finally:
+        event_to_set.set()
+        _trending_inflight.pop(endpoint, None)
+
+
+async def fetch_trending_rank_entry(
     client: httpx.AsyncClient,
     tmdb_id: str,
     tmdb_key: str,
     media_type: str = "movie",
-) -> int | None:
-
+) -> "tuple[int | None, float | None]":
+    """(rank, expires_at): the title's rank and when the snapshot it came from
+    is replaced.  A poster that prints the rank is cached until then."""
     endpoint = "tv" if media_type in ("tv", "series") else "movie"
-    source_sig = trending_source_signature(endpoint)
-
-    snapshot = get_cached_trending_snapshot(endpoint, source_sig)
-
-    if snapshot is None:
-        inflight_event = _trending_inflight.get(endpoint)
-        if inflight_event is not None:
-            await inflight_event.wait()
-            snapshot = get_cached_trending_snapshot(endpoint, source_sig)
-        
-        if snapshot is None:
-            event_to_set = asyncio.Event()
-            _trending_inflight[endpoint] = event_to_set
-            
-            try:
-                # An operator-configured source replaces TMDB's list entirely.
-                # A configured-but-broken source serves no ranks, so the sash
-                # goes quiet instead of falling back to TMDB and looking like
-                # the config worked.
-                source_ids = await fetch_trending_source_ids(client, endpoint)
-                if source_ids is not None:
-                    if not source_ids:
-                        # Deliberately NOT cached.  Writing an empty snapshot
-                        # would pin "no trending" for the full TTL on what is
-                        # usually a transient fetch failure; the source's own
-                        # retry cooldown already stops this from re-fetching per
-                        # request.  Nothing to rank against this time round.
-                        return None
-                    rankings = {
-                        entry_id: position
-                        for position, entry_id in enumerate(source_ids, start=1)
-                    }
-                else:
-                    logger.info("External API Call: Refreshing TMDB trending snapshot (pages 1-5 concurrent)")
-
-                    async def _fetch_page(page: int) -> list[dict]:
-                        resp = await client.get(
-                            f"https://api.themoviedb.org/3/trending/{endpoint}/day",
-                            params={"api_key": tmdb_key, "page": page},
-                        )
-                        resp.raise_for_status()
-                        return resp.json().get("results", [])
-
-                    try:
-                        pages = await asyncio.gather(*(_fetch_page(page) for page in range(1, 6)))
-                    except Exception as exc:
-                        logger.error(f"TMDB trending fetch error: {exc}")
-                        return None
-
-                    rankings = {}
-                    rank = 1
-                    for results in pages:
-                        for item in results:
-                            rankings[str(item["id"])] = rank
-                            rank += 1
-
-                set_cached_trending_snapshot(endpoint, rankings, source_sig)
-                snapshot = rankings
-            finally:
-                event_to_set.set()
-                _trending_inflight.pop(endpoint, None)
+    entry = await ensure_trending_snapshot(client, tmdb_key, endpoint)
+    if entry is None:
+        return None, None
+    snapshot, expires_at = entry
 
     rank = snapshot.get(str(tmdb_id))
 
     if rank:
         logger.info(f"Trending rank for {tmdb_id}: #{rank}")
 
+    return rank, expires_at
+
+
+async def fetch_trending_rank(
+    client: httpx.AsyncClient,
+    tmdb_id: str,
+    tmdb_key: str,
+    media_type: str = "movie",
+) -> int | None:
+    rank, _expires_at = await fetch_trending_rank_entry(client, tmdb_id, tmdb_key, media_type)
     return rank
 
 
@@ -1659,12 +1710,18 @@ async def fetch_trending_candidates(
     # next /poster request fetched the identical list again to rebuild it — and
     # a title warmed this cycle could be rendered against yesterday's ranks.
     # An empty list means the fetch failed; leave the existing snapshot alone.
+    #
+    # Only an expired snapshot is replaced. Posters showing a rank are cached
+    # until their snapshot expires, so replacing a current one would put new
+    # ranks beside cached copies of the old ones. The warm loop keeps its own
+    # schedule, so it would otherwise add a second daily turnover.
     for _media_type, _ids in sources.items():
-        if _ids:
+        _sig = trending_source_signature(_media_type)
+        if _ids and get_cached_trending_snapshot(_media_type, _sig) is None:
             set_cached_trending_snapshot(
                 _media_type,
                 {entry_id: position for position, entry_id in enumerate(_ids, start=1)},
-                trending_source_signature(_media_type),
+                _sig,
             )
 
     async def _source_or_tmdb(media_type: str, window: str) -> list[dict]:

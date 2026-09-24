@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Trending ranks change together
+
+- Two posters could both read "#10 Today". Each one was cached for a day from
+  when it was drawn, so posters drawn before the daily refresh stayed in
+  apps beside ones drawn after it. Every poster showing a rank now expires
+  exactly when the ranks refresh, and apps are told the same.
+- With TMDB as the source, the scheduled refresh (`TRENDING_FETCH_TIME`) never
+  actually fetched new ranks. It redrew the trending posters with the old
+  ones instead. It now refreshes the ranks and then redraws those posters.
+  Without a fetch time, the refresh happens 24 hours after the previous
+  one rather than on a clock that restarts with the container.
+- Cache warming no longer replaces ranks that are still current.
+- A title TMDB listed on two pages no longer leaves a rank number empty and
+  pushes the titles around it a place out.
+- Trending anime posters are now redrawn and cleared from memory like any
+  other title when their rank changes.
+
 ### The configurator remembers your settings on reload
 
 - **Minimum Quality to Display** set to HD Web came back as the strictest

@@ -10,8 +10,7 @@ import re
 import time
 import httpx
 import numpy as np
-from datetime import datetime, timedelta, timezone
-import zoneinfo
+from datetime import datetime, timezone
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
@@ -684,6 +683,8 @@ from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash
 from festivals import match_festival_keyword
 from i18n import load_languages, translate_genre, translate_sash
 from cache import (
+    get_cached_trending_snapshot_entry,
+    next_trending_fetch_at,
     get_cached_movie_release_info,
     get_cached_quality,
     get_cached_rating,
@@ -748,7 +749,7 @@ from ratings import (
     _score_color_alt,
     _score_color_metal,
 )
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, TEXT_FORWARD_PRIORITIES as _TEXT_FORWARD_LOGO_PRIORITIES, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, IdResolveError, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, TEXT_FORWARD_PRIORITIES as _TEXT_FORWARD_LOGO_PRIORITIES, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, IdResolveError, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date
 
 # Logo priorities that consult the secondary preferred language ("custom").
 # Elsewhere the secondary language is inert and must be kept out of the image
@@ -4433,43 +4434,76 @@ def _sanitize_request_params(query: str) -> str:
 
 
 async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
-    logger.info("Starting scheduled trending fetch cycle")
-    if not _cfg.SERVER_TMDB_KEY:
-        logger.info("Trending fetch: skipped - no server TMDB key configured")
-        return
+    """Replace any trending snapshot that is due, then re-render the cached
+    posters of every title in the old or new list.
 
-    try:
-        trending = await fetch_trending_candidates(
-            client, _cfg.SERVER_TMDB_KEY, max_items=max(_cfg.TRENDING_FETCH_COUNT, _cfg.TRENDING_BROAD_FETCH_COUNT)
-        )
-    except Exception as exc:
-        logger.error(f"Trending fetch: failed to fetch candidates: {exc}")
-        return
+    The snapshot is only replaced when it has expired, and posters showing a
+    rank expire with it, so after a refresh every cached copy of a ranked
+    poster is already out of date and the re-render just brings them back
+    warm.  A cycle that finds both snapshots current (a restart, or a request
+    that refreshed first) re-renders nothing: the posters it would redo are
+    still correct.  The same check makes this safe to run in every worker.
+    """
+    logger.info("Starting scheduled trending fetch cycle")
 
     # Build the set of trending (tmdb_id, type) pairs. TV titles are cached under
     # both "tv" and "series" (Stremio uses "series"), so include both variants.
     # Keeping the media type prevents a movie and a TV show that share a numeric
     # TMDB id from cross-triggering each other's regeneration.
     trending_pairs: set[tuple[str, str]] = set()
-    for item in trending:
-        tid = item.get("tmdb_id")
-        if tid is None:
+    for endpoint in ("movie", "tv"):
+        if not (_cfg.SERVER_TMDB_KEY or trending_source_url(endpoint)):
             continue
-        tid = str(tid)
-        mt = item.get("media_type")
-        if mt in ("tv", "series"):
-            trending_pairs.add((tid, "tv"))
-            trending_pairs.add((tid, "series"))
-        elif mt:
-            trending_pairs.add((tid, mt))
+        before = get_cached_trending_snapshot_entry(endpoint, include_stale=True)
+        try:
+            after = await ensure_trending_snapshot(client, _cfg.SERVER_TMDB_KEY, endpoint)
+        except Exception as exc:
+            logger.error(f"Trending fetch: {endpoint} snapshot refresh failed: {exc}")
+            continue
+        if after is None:
+            logger.warning(f"Trending fetch: no {endpoint} snapshot this cycle")
+            continue
+        if before is not None and before[1] == after[1]:
+            logger.info(f"Trending fetch: {endpoint} snapshot still current, nothing to re-render")
+            continue
+        ids = set(after[0]) | (set(before[0]) if before else set())
+        types = ("tv", "series") if endpoint == "tv" else ("movie",)
+        trending_pairs.update((tid, mt) for tid in ids for mt in types)
     if not trending_pairs:
         return
 
     regenerated_count = await _regenerate_cached_posters(
-        lambda parts: (parts[1], parts[2]) in trending_pairs,
+        # From the tail: anime keys carry extra leading segments.
+        lambda parts: (parts[-3], parts[-2]) in trending_pairs,
         log_prefix="Trending fetch",
     )
     logger.info(f"Trending fetch cycle completed. Regenerated {regenerated_count} posters.")
+
+
+def _seconds_until_trending_due() -> float:
+    """How long the trending loop sleeps: until the earliest snapshot expires.
+
+    With TRENDING_FETCH_TIME set that is the next fetch time.  Without it, it
+    is the snapshot's own expiry rather than a fixed day from whenever the
+    container started, so the loop refreshes at the moment the ranked posters
+    run out.  A snapshot already past due (the last refresh failed) is retried
+    within the hour; requests also retry it on their own.
+    """
+    now = time.time()
+    expiries = [
+        entry[1]
+        for endpoint in ("movie", "tv")
+        if (entry := get_cached_trending_snapshot_entry(endpoint, include_stale=True))
+    ]
+    due = min(expiries) if expiries else now + 86400
+    if due <= now:
+        due = now + 3600
+    scheduled = next_trending_fetch_at(now)
+    if scheduled is not None:
+        due = min(due, scheduled)
+    # A second past the boundary: waking a moment early would find the snapshot
+    # still current and skip the refresh.
+    return max(60.0, due - now + 1.0)
 
 
 async def _regenerate_cached_posters(matches, *, log_prefix: str) -> int:
@@ -4534,7 +4568,8 @@ async def _on_watchlist_change(changed: "watchlist.SnapshotDiff") -> None:
 
 
 async def _trending_fetch_loop() -> None:
-    """Periodically fetch trending items and regenerate cached posters."""
+    """Refresh the trending snapshots when they fall due and re-render the
+    cached posters that show a rank."""
     # First run immediately on startup
     await asyncio.sleep(10)
     try:
@@ -4544,26 +4579,7 @@ async def _trending_fetch_loop() -> None:
         logger.error(f"Trending fetch: startup cycle failed: {exc}")
 
     while True:
-        if not _cfg.TRENDING_FETCH_TIME:
-            wait = 86400.0
-        else:
-            try:
-                tz = zoneinfo.ZoneInfo(_cfg.TRENDING_FETCH_TIMEZONE)
-            except Exception as exc:
-                logger.error(f"Trending fetch: invalid timezone {_cfg.TRENDING_FETCH_TIMEZONE}: {exc}, using UTC")
-                tz = zoneinfo.ZoneInfo("UTC")
-
-            try:
-                h, m = map(int, _cfg.TRENDING_FETCH_TIME.split(':'))
-            except ValueError:
-                h, m = 0, 0
-                
-            now_dt = datetime.now(tz)
-            target_dt = now_dt.replace(hour=h, minute=m, second=0, microsecond=0)
-            if target_dt <= now_dt:
-                target_dt += timedelta(days=1)
-            wait = (target_dt - now_dt).total_seconds()
-            
+        wait = _seconds_until_trending_due()
         logger.info(f"Trending fetch: next cycle scheduled in {wait / 3600:.1f} hours")
         await asyncio.sleep(wait)
         try:
@@ -4946,22 +4962,10 @@ async def server_caps(access_key: str = ""):
     if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
         raise HTTPException(status_code=403, detail="Unauthorized")
     next_refresh_hours = None
-    if _cfg.TRENDING_FETCH_TIME:
-        import zoneinfo
-        from datetime import datetime, timedelta
-        try:
-            tz = zoneinfo.ZoneInfo(_cfg.TRENDING_FETCH_TIMEZONE)
-        except Exception:
-            tz = zoneinfo.ZoneInfo("UTC")
-        try:
-            h, m = map(int, _cfg.TRENDING_FETCH_TIME.split(':'))
-            now_dt = datetime.now(tz)
-            target_dt = now_dt.replace(hour=h, minute=m, second=0, microsecond=0)
-            if target_dt <= now_dt:
-                target_dt += timedelta(days=1)
-            next_refresh_hours = round((target_dt - now_dt).total_seconds() / 3600, 1)
-        except Exception:
-            pass
+    _now = time.time()
+    _next_fetch = next_trending_fetch_at(_now)
+    if _next_fetch is not None:
+        next_refresh_hours = round((_next_fetch - _now) / 3600, 1)
 
     return {
         "tmdb_key_set":          bool(_cfg.SERVER_TMDB_KEY),
@@ -6993,7 +6997,7 @@ async def get_poster(
             image,
             logo,
             rating_fetch_result,
-            trending_rank,
+            (trending_rank, trending_expires_at),
         ) = await asyncio.gather(
             _image_coro,
             _resolve_logo() if (is_textless and not is_no_poster) else _resolved(None),
@@ -7002,9 +7006,9 @@ async def get_poster(
             # which AIOMetadata does send alongside the anime id when it has one.
             # An operator-configured source (an MDBList page) needs no key,
             # only the id to look up.
-            fetch_trending_rank(client, tmdb_id, effective_tmdb_key, type)
+            fetch_trending_rank_entry(client, tmdb_id, effective_tmdb_key, type)
             if has_tmdb_id and (effective_tmdb_key or trending_source_url(type))
-            else _resolved(None),
+            else _resolved((None, None)),
         )
 
         rating_key_used, rating_result = rating_fetch_result
@@ -7622,7 +7626,11 @@ async def get_poster(
         _composite_expires_at: int | None = None
         if final_cache_key is not None and not _render_provisional:
             # A composite must not outlive the facts baked into it.  Trending
-            # rank turns over daily; release status has its own tier (Cinema and
+            # rank lasts until its snapshot is replaced, and every poster
+            # printing a rank from that snapshot expires at that same moment:
+            # a flat day from each render left copies drawn from yesterday's
+            # snapshot in clients' caches beside today's, so two titles could
+            # both read "#10 Today".  Release status has its own tier (Cinema and
             # Production re-check every day, Physical every 90).  Without this
             # the render kept a "Cinema" sash — and the greyscale treatment that
             # keys off the same field — for the flat 7-day composite TTL, long
@@ -7631,7 +7639,10 @@ async def get_poster(
             if discovery_meta is not None:
                 _sash_result = pick_sash(discovery_meta, _sash_priority)
                 if _sash_result and _sash_result[1] in ("trending", "trending_broad"):
-                    _ttl_override = 86400
+                    _ttl_override = (
+                        max(60, int(trending_expires_at - time.time()))
+                        if trending_expires_at else 86400
+                    )
             if _status_for_ttl:
                 _status_ttl = release_status_ttl_seconds(_status_for_ttl)
                 _ttl_override = (

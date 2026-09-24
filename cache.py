@@ -8,7 +8,8 @@ import tempfile
 import time
 import json
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from festivals import LEGACY_LABEL_KEYWORDS
 import config as _cfg
@@ -572,9 +573,12 @@ def invalidate_final_posters(tmdb_id: str, media_type: str | None = None) -> Non
         with _composite_l1_lock:
             keys_to_delete = []
             for k in _composite_l1:
+                # Read from the tail: an anime key has more segments in front
+                # ("kitsu:<id>:<imdb>:<tmdb>:<type>:<hash>"), so parts[1] is
+                # the anime id there and the entry was never cleared.
                 parts = k.split(":")
-                if len(parts) >= 3 and parts[1] == tmdb_id:
-                    if type_variants is None or parts[2] in type_variants:
+                if len(parts) >= 4 and parts[-3] == tmdb_id:
+                    if type_variants is None or parts[-2] in type_variants:
                         keys_to_delete.append(k)
             for k in keys_to_delete:
                 _composite_l1.pop(k, None)
@@ -1031,16 +1035,56 @@ def set_cached_quality(
 # All callers use get_cached_trending_snapshot / set_cached_trending_snapshot.
 # ---------------------------------------------------------------------------
 
-def get_cached_trending_snapshot(
-    media_type: str, source_sig: str | None = None
-) -> dict[str, int] | None:
-    """Cached rankings for *media_type*, or None if absent, stale, or from a
-    different source.
+def next_trending_fetch_at(after: float) -> float | None:
+    """The first TRENDING_FETCH_TIME strictly after *after*, or None when no
+    fetch time is set (the snapshot then simply lasts TRENDING_CACHE_DURATION).
+    """
+    fetch_time = _cfg.TRENDING_FETCH_TIME
+    if not fetch_time:
+        return None
+    try:
+        tz = ZoneInfo(_cfg.TRENDING_FETCH_TIMEZONE)
+    except Exception:
+        tz = ZoneInfo("UTC")
+    try:
+        h, m = map(int, fetch_time.split(":"))
+    except ValueError:
+        h, m = 0, 0
+    start = datetime.fromtimestamp(after, tz)
+    target = start.replace(hour=h, minute=m, second=0, microsecond=0)
+    if target <= start:
+        target += timedelta(days=1)
+    return target.timestamp()
+
+
+def trending_snapshot_expires_at(cached_at: float) -> float:
+    """When a snapshot written at *cached_at* stops being served.
+
+    Every poster that prints a rank from the snapshot is cached until exactly
+    this moment, and clients are told the same. The ranks then all turn over
+    together. Each poster used to get its own day from when it was rendered,
+    so a copy drawn an hour before the refresh sat in clients' caches for most
+    of the next day beside posters drawn from the new snapshot, and two titles
+    showed the same rank.
+    """
+    ttl_end = cached_at + TRENDING_CACHE_DURATION * 86400
+    scheduled = next_trending_fetch_at(cached_at)
+    return ttl_end if scheduled is None else min(ttl_end, scheduled)
+
+
+def get_cached_trending_snapshot_entry(
+    media_type: str, source_sig: str | None = None, *, include_stale: bool = False,
+) -> "tuple[dict[str, int], float] | None":
+    """(rankings, expires_at) for *media_type*, or None if absent, stale, or
+    from a different source.
 
     *source_sig* identifies where the snapshot came from (see
     tmdb.trending_source_signature).  A mismatch is treated as expired so that
     changing TRENDING_SOURCE_* takes effect on the next request rather than
     whenever the day-long TTL happens to lapse.
+
+    *include_stale* returns the stored snapshot whatever its age or source, for
+    diffing against and for scheduling the next refresh.
     """
     try:
         row = get_db().execute(
@@ -1056,22 +1100,32 @@ def get_cached_trending_snapshot(
             return None
 
         rankings_json, cached_at, stored_sig = row
-        age_days = (time.time() - cached_at) / 86400
+        expires_at = trending_snapshot_expires_at(cached_at)
 
-        if age_days > TRENDING_CACHE_DURATION:
-            return None
+        if not include_stale:
+            if time.time() >= expires_at:
+                return None
 
-        if source_sig is not None and (stored_sig or "") != source_sig:
-            logger.info(
-                f"Trending snapshot for {media_type} discarded: source changed "
-                f"({stored_sig or 'unset'!r} -> {source_sig!r})"
-            )
-            return None
+            if source_sig is not None and (stored_sig or "") != source_sig:
+                logger.info(
+                    f"Trending snapshot for {media_type} discarded: source changed "
+                    f"({stored_sig or 'unset'!r} -> {source_sig!r})"
+                )
+                return None
 
-        return json.loads(rankings_json)
+        return json.loads(rankings_json), expires_at
     except Exception as exc:
         logger.error(f"Trending snapshot cache read error: {exc}")
         return None
+
+
+def get_cached_trending_snapshot(
+    media_type: str, source_sig: str | None = None
+) -> dict[str, int] | None:
+    """Cached rankings for *media_type*, or None if absent, stale, or from a
+    different source.  See get_cached_trending_snapshot_entry."""
+    entry = get_cached_trending_snapshot_entry(media_type, source_sig)
+    return None if entry is None else entry[0]
 
 
 def set_cached_trending_snapshot(
@@ -1079,10 +1133,13 @@ def set_cached_trending_snapshot(
     rankings: dict[str, int],
     source_sig: str | None = None,
 ) -> None:
-    # Deliberately read without the signature: the point of this is to diff
-    # against whatever was there before so changed titles get invalidated, and a
-    # source switch changes the most ranks of all.
-    old_rankings = get_cached_trending_snapshot(media_type) or {}
+    # Deliberately read without the signature or the expiry: the point of this
+    # is to diff against whatever was there before so changed titles get
+    # invalidated, and a source switch changes the most ranks of all. A snapshot
+    # is normally replaced once it has expired, and diffing that against
+    # nothing left the titles that dropped out of the list uninvalidated.
+    _old_entry = get_cached_trending_snapshot_entry(media_type, include_stale=True)
+    old_rankings = _old_entry[0] if _old_entry else {}
     try:
         with _db_lock:
             get_db().execute(
