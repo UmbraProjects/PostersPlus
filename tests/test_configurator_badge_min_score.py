@@ -22,7 +22,7 @@ class BadgeMinScoreStickinessTests(unittest.TestCase):
         return match.group(1)
 
     def test_mode_default_only_seeds_an_untouched_field(self):
-        body = self._fn("updateBadgeModeHint")
+        body = self._fn("applyBadgeModeDefaults")
         # The assignment must be guarded, not unconditional.
         self.assertNotRegex(
             body,
@@ -33,8 +33,23 @@ class BadgeMinScoreStickinessTests(unittest.TestCase):
 
     def test_badge_height_is_still_reseeded_per_mode(self):
         # Guard against "fixing" this one too — the per-mode heights are wanted.
-        self.assertRegex(self._fn("updateBadgeModeHint"),
-                         r"getElementById\('cfg-badge-h'\)\.value\s*=")
+        self.assertRegex(self._fn("applyBadgeModeDefaults"),
+                         r"cfg-badge-h'\)")
+        self.assertIn('onchange="applyBadgeModeDefaults();', self.html)
+
+    def test_repaint_does_not_seed(self):
+        # updateBadgeModeHint also runs after the startup restore and after a
+        # preset. Seeding there overwrote the restored Badge Size on every load.
+        body = self._fn("updateBadgeModeHint")
+        self.assertNotIn("cfg-badge-h", body)
+        self.assertNotIn("cfg-badge-min-score').value", body)
+
+    def test_saved_settings_keep_defaults(self):
+        # The startup restore runs before /server-caps answers, so it can't
+        # fill an omitted parameter back in from the server defaults. The
+        # minimum quality's form default (5) is not the server's (2), so an
+        # omitted "HD Web" came back as 5 on every reload.
+        self.assertIn("const _emitted = full ? params : omitServerDefaults(params);", self.html)
 
     def test_choosing_a_minimum_marks_it_user_set(self):
         select = re.search(

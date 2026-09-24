@@ -315,7 +315,10 @@ class ConfiguratorLandscapeTests(unittest.TestCase):
         for gated in ("params.set('rating_display_mode', ratingMode)",
                       "params.set('badge_display_mode', badgeMode)"):
             self.assertIn(f"if (emitAll) {gated}", self.html)
-        self.assertIn("if (!emitAll) emitWeights();", self.html)
+        # The saved settings and a "{shape}" URL serve landscape, whose info
+        # strip always prints the score, so they carry the weights even when
+        # portrait hides its rating (and the rating block skips them).
+        self.assertIn("if (!emitAll || ((full || dualShape) && ratingMode === 0)) emitWeights();", self.html)
 
     def test_portrait_only_tabs_hide_in_landscape(self):
         self.assertIn("const _PORTRAIT_ONLY_TABS = ['rating', 'logo', 'quality'];", self.html)

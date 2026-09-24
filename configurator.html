@@ -3157,7 +3157,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <div class="field">
               <!-- data-tip is rewritten per mode by updateBadgeModeHint(). -->
               <label class="field-label" id="badge-mode-label">Display Mode</label>
-              <select id="cfg-badge-display-mode" onchange="updateBadgeModeHint(); build(); queuePreviewReload()">
+              <select id="cfg-badge-display-mode" onchange="applyBadgeModeDefaults(); updateBadgeModeHint(); build(); queuePreviewReload()">
                 <option value="0">Hidden</option>
                 <option value="4" selected>Quality Notch</option>
                 <option value="6">Quality Bookmark</option>
@@ -4037,16 +4037,25 @@ function updateBadgeModeHint() {
   document.getElementById('badge-layout-fields').style.display     = hidden ? 'none' : '';
   document.getElementById('badge-x-field').style.display           = mode === 6 ? 'none' : '';
   document.getElementById('badge-y-field').style.display           = mode === 6 ? 'none' : '';
-  if (!hidden) {
-    document.getElementById('cfg-badge-h').value = mode === 6 ? 30 : mode === 4 ? 20 : mode === 2 ? 32 : mode === 5 ? 28 : 36;
-    if ([1,2,4,5,6].includes(mode)) {
-      // The mode's default only seeds an untouched field.  Unlike badge height,
-      // a minimum quality means the same thing in every mode, so once the user
-      // (or an imported URL) has picked one, switching modes must not throw it
-      // away.  Cleared by Reset to Defaults, which re-arms the seeding.
-      const _minScore = document.getElementById('cfg-badge-min-score');
-      if (!_minScore.dataset.userSet) _minScore.value = mode === 1 ? '2' : '5';
-    }
+}
+
+// Seeds the new mode's own defaults. Kept out of updateBadgeModeHint, which
+// also runs to repaint after a restore or a preset: seeding there overwrote the
+// restored Badge Size on every page load. So this runs only where the mode
+// actually changes, and an import applies its own values after it.
+function applyBadgeModeDefaults() {
+  const mode = parseInt(document.getElementById('cfg-badge-display-mode').value);
+  if (mode === 0) return;
+  const h = document.getElementById('cfg-badge-h');
+  h.value = mode === 6 ? 30 : mode === 4 ? 20 : mode === 2 ? 32 : mode === 5 ? 28 : 36;
+  updateRange(h, 'rng-bh');
+  if ([1,2,4,5,6].includes(mode)) {
+    // The mode's default only seeds an untouched field.  Unlike badge height,
+    // a minimum quality means the same thing in every mode, so once the user
+    // (or an imported URL) has picked one, switching modes must not throw it
+    // away.  Cleared by Reset to Defaults, which re-arms the seeding.
+    const _minScore = document.getElementById('cfg-badge-min-score');
+    if (!_minScore.dataset.userSet) _minScore.value = mode === 1 ? '2' : '5';
   }
 }
 
@@ -5072,7 +5081,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       params.set('anime_tv_weights',    _weights(getWeights('anime-tv-weights',    ANIME_TV_SOURCES)));
     }
   }
-  if (!emitAll) emitWeights();
+  // A "{shape}" URL and the saved settings serve landscape as well, so they
+  // need the weights even when portrait hides its rating and the rating block
+  // below, which otherwise emits them, is skipped.
+  if (!emitAll || ((full || dualShape) && ratingMode === 0)) emitWeights();
 
   // ── Rating / Genre Label ───────────────────────────────────────────────────
   if (emitAll) params.set('rating_display_mode', ratingMode);
@@ -5244,7 +5256,14 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     if (c('tog-greyscale-noquality')) params.set('greyscale_no_quality', 'true');
   }
 
-  const finalUrl = `${domain}/poster?${omitServerDefaults(params).toString()}`;
+  // The saved settings (full) keep every parameter. The startup restore runs
+  // before /server-caps has answered, so it has no server defaults to fill an
+  // omitted parameter back in from, and the control keeps its own initial
+  // value. Where that differs from the server's default (the minimum quality
+  // is 5 here, 2 on the server), the user's choice is replaced on every
+  // reload. localStorage has no URL length limit, so omitting saves nothing.
+  const _emitted = full ? params : omitServerDefaults(params);
+  const finalUrl = `${domain}/poster?${_emitted.toString()}`;
   return usePlaceholders ? decodePlaceholders(finalUrl) : finalUrl;
 }
 
@@ -7074,9 +7093,10 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
 
   // ── Quality badges ──────────────────────────────────────────────────────
   if (p.has('badge_display_mode')) _setEl('cfg-badge-display-mode', p.get('badge_display_mode'));
-  // Refresh field visibility for the restored mode BEFORE applying the saved
-  // values — updateBadgeModeHint resets cfg-badge-h to a mode default, so the
-  // explicit badge_height below must be applied after it to take precedence.
+  // Seed the mode's defaults BEFORE applying the saved values, so a URL that
+  // omits badge_height (/server-caps not answered yet) still gets a size that
+  // suits its mode, and an explicit badge_height below takes precedence.
+  applyBadgeModeDefaults();
   updateBadgeModeHint();
   if (p.has('badge_height'))            _setEl('cfg-badge-h',         p.get('badge_height'));
   if (p.has('badge_gap'))               _setEl('cfg-badge-gap',        p.get('badge_gap'));

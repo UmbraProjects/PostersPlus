@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### The configurator remembers your settings on reload
+
+- **Minimum Quality to Display** set to HD Web came back as the strictest
+  tier but one after a reload, so most titles lost their quality badge in
+  the preview and in copied URLs. A few other settings left at the server's
+  default reverted the same way. Settings are now saved in full. Anything
+  already lost needs setting once more.
+- **Badge Size** no longer resets to the mode's default on every reload or
+  when a landscape preset is loaded. Changing the display mode still picks
+  that mode's size.
+- With the portrait rating hidden, your rating weights were left out of the
+  saved settings and out of Nuvio's `{shape}` URL, so landscape posters were
+  scored with the server's weights. They're kept now.
+
 ### Shows waiting to premiere stay unreleased
 
 - TMDB sometimes marks a show "Returning Series" before its first episode
