@@ -276,13 +276,18 @@ class UnreadTtlTests(unittest.TestCase):
 
 
 class TrendingCycleTests(_TempDb):
+    # The movie and TV lists only: the anime list (the trending catalogs addon)
+    # has its own tests, and would otherwise count as a list never read.
     def setUp(self):
         super().setUp()
         self._key = main._cfg.SERVER_TMDB_KEY
+        self._catalogs = main._cfg.TRENDING_CATALOGS_ENABLED
         main._cfg.SERVER_TMDB_KEY = "k"
+        main._cfg.TRENDING_CATALOGS_ENABLED = False
 
     def tearDown(self):
         main._cfg.SERVER_TMDB_KEY = self._key
+        main._cfg.TRENDING_CATALOGS_ENABLED = self._catalogs
         super().tearDown()
 
     def _run_cycle(self, ensure):

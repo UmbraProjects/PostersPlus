@@ -15,13 +15,14 @@
 ### Trending catalogs addon
 
 - A Trending row in your metadata addon is built from its own copy of the
-  list, so its order rarely matched the "#N Today" on its posters. With
-  `TRENDING_CATALOGS_ENABLED=true`, PostersPlus serves the lists behind the
-  Trending sashes as a Stremio addon with Trending Movies, Series and Anime
-  catalogs. Import it into AIOMetadata (cache time 0) and each row's order
+  list, so its order rarely matched the "#N Today" on its posters.
+  PostersPlus now serves the lists behind the Trending sashes as a Stremio
+  addon with Trending Movies, Series and Anime catalogs. It is on by default
+  (`TRENDING_CATALOGS_ENABLED=false` turns it off). Import it into AIOMetadata (cache time 0) and each row's order
   matches its labels. The configurator shows the manifest URL.
 - Trending Anime is AniList's trending list. With the addon on, a poster
-  requested with an AniList id shows its rank on that list.
+  requested with an AniList id shows its rank on that list rather than its
+  TMDB TV rank.
 
 ### Trending ranks change together
 
