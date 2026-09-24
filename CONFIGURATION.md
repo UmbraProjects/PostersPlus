@@ -6,7 +6,7 @@ Everything here can be set from the [admin dashboard](README.md#admin-dashboard)
 - [Settings reference](#settings-reference)
 - [Quality via QualiCache](#quality-via-qualicache)
 - [Watchlist marker](#watchlist-marker)
-- [Custom trending sources](#custom-trending-sources)
+- [Custom trending sources](#custom-trending-sources) and the [trending catalogs addon](#trending-catalogs-addon)
 - [Customising directors, studios and cast](#customising-directors-studios-and-cast)
 - [Caching](#caching) and [cache warming](#cache-warming)
 - [Plex and Jellyfin sync](#plex-and-jellyfin-sync)
@@ -92,6 +92,7 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `TRENDING_BROAD_FETCH_COUNT` | `100` | Lower-ranked trending titles, from the trending count up to this rank, qualify for the lower-priority Trending (Broad) sash. |
 | `TRENDING_SOURCE_MOVIE` | - | An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces TMDB's global movie trending list. Blank keeps TMDB's list. |
 | `TRENDING_SOURCE_TV` | - | An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces TMDB's global TV trending list for both sashes and cache warming. Blank keeps TMDB's list. |
+| `TRENDING_CATALOGS_ENABLED` | `false` | Serve the trending lists behind the Trending sashes as a Stremio addon with Trending Movies, Series and Anime catalogs, at /trending/manifest.json (/trending/<access key>/manifest.json when an access key is set). Import it into your metadata addon and the "#N Today" labels match the row order. Also gives posters requested with an AniList id the AniList trending rank used by the anime catalog. `true` or `false`. |
 
 #### Watchlist
 
@@ -266,6 +267,22 @@ The list is re-checked every `WATCHLIST_REFRESH_MINUTES` (default 30). Each chec
 ## Custom trending sources
 
 Set `TRENDING_SOURCE_MOVIE` and/or `TRENDING_SOURCE_TV` to an ordinary MDBList page URL or any endpoint returning TMDB-shaped `{"results": [{"id": 1234}]}` JSON. The source order becomes the ranking for both Trending sashes and cache warming. Movie and TV sources are independent; leave either one empty to keep TMDB's global list for that media type. Entries must contain numeric TMDB ids.
+
+## Trending catalogs addon
+
+The Trending sashes print a rank ("#10 Today"), but a Trending row in your metadata addon is built from its own copy of the list, fetched at a different time. TMDB's list moves every few minutes, so the two rarely agree. Set `TRENDING_CATALOGS_ENABLED=true` and PostersPlus serves the lists behind the sashes as a small Stremio addon, and the row order then matches the labels exactly.
+
+The manifest is at `/trending/manifest.json`, or `/trending/<ACCESS_KEY>/manifest.json` when an access key is set (the configurator shows the full URL under Core). It has three catalogs:
+
+| Catalog | List |
+|---|---|
+| Trending Movies | TMDB's day list, or `TRENDING_SOURCE_MOVIE` |
+| Trending Series | TMDB's day list, or `TRENDING_SOURCE_TV` |
+| Trending Anime | AniList's trending anime (TV, TV short and ONA) |
+
+Each catalog lists ranks 1 to `TRENDING_BROAD_FETCH_COUNT`, and item N is rank N. In AIOMetadata, import the manifest as a custom manifest and set each catalog's cache time to 0, so the row is re-read from PostersPlus whenever it opens. A longer cache time works too, but the row then lags the labels for up to that long after each daily refresh. AIOMetadata's own filters, such as an age-rating cap, can still remove titles from a row, which leaves a gap in the numbers.
+
+The anime catalog gives its titles AniList ids, and with the addon enabled a poster requested with an AniList id shows its AniList trending rank. Posters requested with a Kitsu, TMDB or IMDb id keep the TMDB rank, so a show that is in both lists shows the rank for the row it is in.
 
 ## Customising directors, studios and cast
 

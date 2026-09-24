@@ -684,6 +684,7 @@ from festivals import match_festival_keyword
 from i18n import load_languages, translate_genre, translate_sash
 from cache import (
     get_cached_trending_snapshot_entry,
+    get_cached_trending_details,
     next_trending_fetch_at,
     get_cached_movie_release_info,
     get_cached_quality,
@@ -4451,8 +4452,9 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
     # Keeping the media type prevents a movie and a TV show that share a numeric
     # TMDB id from cross-triggering each other's regeneration.
     trending_pairs: set[tuple[str, str]] = set()
-    for endpoint in ("movie", "tv"):
-        if not (_cfg.SERVER_TMDB_KEY or trending_source_url(endpoint)):
+    anime_keys: set[str] = set()
+    for endpoint in _trending_endpoints():
+        if endpoint != "anime" and not (_cfg.SERVER_TMDB_KEY or trending_source_url(endpoint)):
             continue
         before = get_cached_trending_snapshot_entry(endpoint, include_stale=True)
         try:
@@ -4467,17 +4469,31 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
             logger.info(f"Trending fetch: {endpoint} snapshot still current, nothing to re-render")
             continue
         ids = set(after[0]) | (set(before[0]) if before else set())
+        if endpoint == "anime":
+            anime_keys.update(ids)
+            continue
         types = ("tv", "series") if endpoint == "tv" else ("movie",)
         trending_pairs.update((tid, mt) for tid in ids for mt in types)
-    if not trending_pairs:
+    if not trending_pairs and not anime_keys:
         return
 
     regenerated_count = await _regenerate_cached_posters(
-        # From the tail: anime keys carry extra leading segments.
-        lambda parts: (parts[-3], parts[-2]) in trending_pairs,
+        # TMDB-ranked keys match from the tail, since anime keys carry extra
+        # leading segments; AniList-ranked ones by the "anilist:<id>" they lead
+        # with.
+        lambda parts: (
+            (parts[-3], parts[-2]) in trending_pairs
+            or ":".join(parts[:2]) in anime_keys
+        ),
         log_prefix="Trending fetch",
     )
     logger.info(f"Trending fetch cycle completed. Regenerated {regenerated_count} posters.")
+
+
+def _trending_endpoints() -> tuple[str, ...]:
+    """The snapshots the trending loop keeps current.  Anime is ranked only for
+    the trending catalogs addon."""
+    return ("movie", "tv", "anime") if _cfg.TRENDING_CATALOGS_ENABLED else ("movie", "tv")
 
 
 def _seconds_until_trending_due() -> float:
@@ -4492,7 +4508,7 @@ def _seconds_until_trending_due() -> float:
     now = time.time()
     expiries = [
         entry[1]
-        for endpoint in ("movie", "tv")
+        for endpoint in _trending_endpoints()
         if (entry := get_cached_trending_snapshot_entry(endpoint, include_stale=True))
     ]
     due = min(expiries) if expiries else now + 86400
@@ -4957,6 +4973,155 @@ def _render_param_defaults(shape: str = "portrait") -> dict:
     return defaults
 
 
+# ---------------------------------------------------------------------------
+# Trending catalogs addon
+#
+# A catalog-only Stremio addon serving the snapshots behind the Trending sashes,
+# for a metadata addon (AIOMetadata's custom manifest import) or a client to
+# install.  The row order and the "#N Today" labels come from the same snapshot
+# and expire together, so the numbers match the row.  The access key, when one
+# is set, rides in the path: AIOMetadata builds page URLs by swapping the
+# trailing ".json" for "/skip=N.json", which a query string would break.
+# ---------------------------------------------------------------------------
+
+# (catalog id, Stremio type, snapshot, name)
+_TRENDING_CATALOGS = (
+    ("pp.trending.movie", "movie", "movie", "Trending Movies"),
+    ("pp.trending.series", "series", "tv", "Trending Series"),
+    ("pp.trending.anime", "series", "anime", "Trending Anime"),
+)
+_TMDB_POSTER_BASE = "https://image.tmdb.org/t/p/w500"
+_ADDON_HEADERS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"}
+
+
+def _trending_addon_guard(key: str | None) -> None:
+    if not _cfg.TRENDING_CATALOGS_ENABLED:
+        raise HTTPException(status_code=404, detail="Trending catalogs are not enabled")
+    if _cfg.ACCESS_KEY and not (key and hmac.compare_digest(key, _cfg.ACCESS_KEY)):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+
+def _trending_addon_manifest() -> dict:
+    return {
+        "id": "community.postersplus.trending",
+        "version": "1.0.0",
+        "name": "Posters+ Trending",
+        "description": (
+            "The trending lists behind the Posters+ Trending sashes, so a row's "
+            "order matches the \"#N Today\" on its posters."
+        ),
+        "resources": ["catalog"],
+        "types": ["movie", "series"],
+        "catalogs": [
+            {"type": ctype, "id": cid, "name": name, "extra": [{"name": "skip"}]}
+            for cid, ctype, _endpoint, name in _TRENDING_CATALOGS
+        ],
+        "behaviorHints": {"configurable": False},
+    }
+
+
+async def _trending_catalog_meta(
+    client: httpx.AsyncClient, entry_id: str, ctype: str, endpoint: str,
+    details: dict, sem: asyncio.Semaphore,
+) -> dict:
+    """One catalog item.  An IMDb id where we have one, since every client and
+    metadata addon understands it; otherwise the namespaced TMDB or AniList id."""
+    detail = details.get(entry_id) or {}
+    if endpoint == "anime":
+        meta_id = entry_id
+    else:
+        imdb_id = detail.get("imdb_id")
+        if not imdb_id and _cfg.SERVER_TMDB_KEY:
+            async with sem:
+                try:
+                    imdb_id = await resolve_tmdb_to_imdb(client, entry_id, endpoint, _cfg.SERVER_TMDB_KEY)
+                except IdResolveError:
+                    imdb_id = None
+        meta_id = imdb_id or f"tmdb:{entry_id}"
+    poster = detail.get("poster")
+    if poster and poster.startswith("/"):
+        poster = _TMDB_POSTER_BASE + poster
+    meta = {
+        "id": meta_id,
+        "type": ctype,
+        "name": detail.get("name") or meta_id,
+        "poster": poster,
+        "posterShape": "poster",
+        "releaseInfo": detail.get("year"),
+    }
+    return {k: v for k, v in meta.items() if v}
+
+
+async def _trending_catalog(key: str | None, ctype: str, cid: str, extra: str | None) -> JSONResponse:
+    _trending_addon_guard(key)
+    spec = next((c for c in _TRENDING_CATALOGS if c[0] == cid and c[1] == ctype), None)
+    if spec is None:
+        raise HTTPException(status_code=404, detail="Unknown catalog")
+    endpoint = spec[2]
+    extras = dict(parse_qsl(extra or "", keep_blank_values=True))
+    try:
+        skip = max(0, int(extras.get("skip") or 0))
+    except ValueError:
+        skip = 0
+
+    entry = await ensure_trending_snapshot(_HTTP_CLIENT, _cfg.SERVER_TMDB_KEY, endpoint)
+    if entry is None:
+        # Nothing to rank against right now; ask to be retried soon.
+        return JSONResponse({"metas": []}, headers={**_ADDON_HEADERS, "Cache-Control": "public, max-age=300"})
+    rankings, expires_at = entry
+
+    # The whole ranked list at skip=0: a metadata addon caches what one request
+    # returns, so every page it cuts from that comes from one snapshot.  Rank N
+    # is item N, matching the label on its poster.
+    limit = max(_cfg.TRENDING_FETCH_COUNT, _cfg.TRENDING_BROAD_FETCH_COUNT)
+    ordered = [entry_id for entry_id, _rank in sorted(rankings.items(), key=lambda kv: kv[1])][:limit]
+    ordered = ordered[skip:]
+    details = get_cached_trending_details(endpoint)
+    sem = asyncio.Semaphore(8)
+    metas = await asyncio.gather(*(
+        _trending_catalog_meta(_HTTP_CLIENT, entry_id, ctype, endpoint, details, sem)
+        for entry_id in ordered
+    ))
+    # Cached no longer than the snapshot, like the posters that print its ranks.
+    max_age = max(0, int(expires_at - time.time()))
+    return JSONResponse(
+        {"metas": list(metas)},
+        headers={**_ADDON_HEADERS, "Cache-Control": f"public, max-age={max_age}"},
+    )
+
+
+@app.get("/trending/manifest.json")
+async def trending_manifest():
+    _trending_addon_guard(None)
+    return JSONResponse(_trending_addon_manifest(), headers=_ADDON_HEADERS)
+
+
+@app.get("/trending/{key}/manifest.json")
+async def trending_manifest_keyed(key: str):
+    _trending_addon_guard(key)
+    return JSONResponse(_trending_addon_manifest(), headers=_ADDON_HEADERS)
+
+
+@app.get("/trending/catalog/{ctype}/{cid}.json")
+async def trending_catalog(ctype: str, cid: str):
+    return await _trending_catalog(None, ctype, cid, None)
+
+
+@app.get("/trending/catalog/{ctype}/{cid}/{extra}.json")
+async def trending_catalog_extra(ctype: str, cid: str, extra: str):
+    return await _trending_catalog(None, ctype, cid, extra)
+
+
+@app.get("/trending/{key}/catalog/{ctype}/{cid}.json")
+async def trending_catalog_keyed(key: str, ctype: str, cid: str):
+    return await _trending_catalog(key, ctype, cid, None)
+
+
+@app.get("/trending/{key}/catalog/{ctype}/{cid}/{extra}.json")
+async def trending_catalog_keyed_extra(key: str, ctype: str, cid: str, extra: str):
+    return await _trending_catalog(key, ctype, cid, extra)
+
+
 @app.get("/server-caps")
 async def server_caps(access_key: str = ""):
     if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
@@ -4978,6 +5143,7 @@ async def server_caps(access_key: str = ""):
         "trending_fetch_time":   _cfg.TRENDING_FETCH_TIME,
         "trending_fetch_timezone": _cfg.TRENDING_FETCH_TIMEZONE,
         "trending_next_refresh_hours": next_refresh_hours,
+        "trending_catalogs_enabled": _cfg.TRENDING_CATALOGS_ENABLED,
         "watchlist":             watchlist.status(),
         # Lets the configurator leave out any parameter already at its default.
         # A generated URL was running ~1500 characters, most of it restating
@@ -7006,7 +7172,14 @@ async def get_poster(
             # which AIOMetadata does send alongside the anime id when it has one.
             # An operator-configured source (an MDBList page) needs no key,
             # only the id to look up.
-            fetch_trending_rank_entry(client, tmdb_id, effective_tmdb_key, type)
+            #
+            # With the trending catalogs addon on, a poster requested by its
+            # AniList id is ranked on AniList's list instead: that is the id
+            # the addon's anime catalog hands out, so the rank is the poster's
+            # position in that row.
+            fetch_trending_rank_entry(client, anime_key, effective_tmdb_key, "anime")
+            if anime_namespace == "anilist" and _cfg.TRENDING_CATALOGS_ENABLED
+            else fetch_trending_rank_entry(client, tmdb_id, effective_tmdb_key, type)
             if has_tmdb_id and (effective_tmdb_key or trending_source_url(type))
             else _resolved((None, None)),
         )

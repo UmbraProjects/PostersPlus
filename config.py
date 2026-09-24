@@ -337,6 +337,12 @@ TRENDING_BROAD_FETCH_COUNT   = int(_env('TRENDING_BROAD_FETCH_COUNT', "100", gro
 # TMDB's list and looking like it worked.
 TRENDING_SOURCE_MOVIE        = _env('TRENDING_SOURCE_MOVIE', "", group='Trending', kind='url', label='Movie trending source', help="An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces TMDB's global movie trending list. Blank keeps TMDB's list.", placeholder='https://mdblist.com/lists/snoak/trending-movies').strip()
 TRENDING_SOURCE_TV           = _env('TRENDING_SOURCE_TV', "", group='Trending', kind='url', label='TV trending source', help="An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces TMDB's global TV trending list for both sashes and cache warming. Blank keeps TMDB's list.", placeholder='https://mdblist.com/lists/snoak/trakt-s-trending-shows').strip()
+# A small Stremio addon serving the trending lists behind the sashes as three
+# catalogs (movies, series, anime), for metadata addons such as AIOMetadata to
+# import.  Row order and the "#N Today" labels then come from the same snapshot,
+# so the numbers line up with the row.  Also switches posters requested with an
+# AniList id to the AniList trending rank, the ranking the anime catalog uses.
+TRENDING_CATALOGS_ENABLED    = _env('TRENDING_CATALOGS_ENABLED', "false", group='Trending', kind='bool', label='Trending catalogs addon', help='Serve the trending lists behind the Trending sashes as a Stremio addon with Trending Movies, Series and Anime catalogs, at /trending/manifest.json (/trending/<access key>/manifest.json when an access key is set). Import it into your metadata addon and the "#N Today" labels match the row order. Also gives posters requested with an AniList id the AniList trending rank used by the anime catalog.').strip().lower() == "true"
 # Cap on how many entries are taken from a custom source, so a 10k-item list
 # cannot balloon the snapshot held in memory and in trending_cache.
 TRENDING_SOURCE_MAX_ITEMS    = max(1, int(_env('TRENDING_SOURCE_MAX_ITEMS', "500", group='Trending', kind='int', label='Custom source cap', help='Maximum entries taken from a custom trending source.', min=1, max=10000, advanced=True)))

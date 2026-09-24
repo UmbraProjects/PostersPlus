@@ -153,7 +153,7 @@ class EnsureSnapshotTests(_TempDb):
     def test_an_expired_snapshot_is_refetched(self):
         self._store("movie", {"5": 1}, time.time() - 2 * 86400)
 
-        async def _ids(client, key, endpoint):
+        async def _ids(client, key, endpoint, details_out=None):
             return ["7", "5"]
 
         with mock.patch.object(tmdb, "_fetch_tmdb_trending_ids", side_effect=_ids):
@@ -166,7 +166,7 @@ class EnsureSnapshotTests(_TempDb):
         sig = tmdb.trending_source_signature("movie")
         self._store("movie", {"5": 1}, time.time() - 60, sig=sig)
 
-        async def _source(client, media_type):
+        async def _source(client, media_type, details_out=None):
             return ["9", "5"] if media_type == "movie" else None
 
         async def _list(*a, **k):

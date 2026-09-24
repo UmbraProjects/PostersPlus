@@ -288,6 +288,78 @@ async def _fetch_anilist(client: httpx.AsyncClient, anime_id: int) -> dict | Non
     return media
 
 
+_ANILIST_TRENDING_QUERY = """
+query ($page: Int, $perPage: Int) {
+  Page(page: $page, perPage: $perPage) {
+    pageInfo { hasNextPage }
+    media(type: ANIME, sort: TRENDING_DESC, isAdult: false, format_in: [TV, TV_SHORT, ONA]) {
+      id
+      title { romaji english }
+      seasonYear
+      coverImage { extraLarge large }
+    }
+  }
+}
+"""
+
+# Series formats only: the catalog is a series catalog, and an anime film typed
+# as a series would open as one.  Ranks are numbered after this filter, so a
+# rank is always the title's position in the catalog.
+_ANILIST_TRENDING_PAGE = 50
+
+
+async def fetch_anilist_trending(
+    client: httpx.AsyncClient, details_out: dict | None = None,
+) -> "list[str] | None":
+    """AniList's trending anime series as ``anilist:<id>`` keys, in rank order,
+    up to the broad trending count.  None when AniList could not be read.
+
+    For the trending catalogs addon: the anime catalog and the rank printed on
+    a poster requested with an AniList id both come from this list.
+    """
+    from config import TRENDING_BROAD_FETCH_COUNT, TRENDING_FETCH_COUNT
+    limit = max(TRENDING_FETCH_COUNT, TRENDING_BROAD_FETCH_COUNT)
+    ids: list[str] = []
+    page = 1
+    logger.info("External API Call: AniList trending anime")
+    try:
+        while len(ids) < limit:
+            async with _get_semaphore("anilist"):
+                resp = await client.post(
+                    ANILIST_API_URL,
+                    json={
+                        "query": _ANILIST_TRENDING_QUERY,
+                        "variables": {"page": page, "perPage": _ANILIST_TRENDING_PAGE},
+                    },
+                    timeout=15.0,
+                )
+            if resp.status_code != 200:
+                raise _TransientError(f"AniList error {resp.status_code}")
+            data = ((resp.json().get("data") or {}).get("Page")) or {}
+            for media in data.get("media") or []:
+                key = namespaced_id("anilist", int(media["id"]))
+                if key in ids:
+                    continue
+                ids.append(key)
+                if details_out is not None:
+                    title = media.get("title") or {}
+                    cover = media.get("coverImage") or {}
+                    details_out[key] = {k: v for k, v in {
+                        "name": title.get("english") or title.get("romaji"),
+                        "year": str(media["seasonYear"]) if media.get("seasonYear") else None,
+                        "poster": cover.get("extraLarge") or cover.get("large"),
+                    }.items() if v}
+                if len(ids) >= limit:
+                    break
+            if not (data.get("pageInfo") or {}).get("hasNextPage"):
+                break
+            page += 1
+    except Exception as exc:
+        logger.error(f"AniList trending fetch failed: {exc}")
+        return None
+    return ids
+
+
 async def _fetch_kitsu(client: httpx.AsyncClient, anime_id: int) -> dict | None:
     """One JSON:API call.  Both vocabularies are sideloaded in the same response,
     so no second round-trip is needed.

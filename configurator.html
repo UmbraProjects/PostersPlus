@@ -2248,6 +2248,12 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </label>
               <div class="field-hint" id="trending-schedule-hint"></div>
             </div>
+
+            <!-- Shown when the operator has TRENDING_CATALOGS_ENABLED on. -->
+            <div class="field callout" id="trending-catalogs-field" style="display:none;">
+              <label class="field-label" data-tip="Import this manifest into AIOMetadata as a custom manifest and set its cache time to 0. The rows then follow the same list as the Trending sashes, so each poster's &quot;#N Today&quot; matches its place in the row.">Trending Catalogs Addon</label>
+              <input type="text" id="trending-catalogs-url" readonly onclick="this.select()">
+            </div>
             <div class="cfg-sep">
             <span class="group-title">Presentation</span>
             <div class="field">
@@ -3865,6 +3871,7 @@ async function fetchServerCaps() {
     }
 
     applyWatchlistStatus(serverCaps.watchlist || {});
+    updateTrendingCatalogsField();
     
     const trField = document.getElementById('trending-schedule-field');
     const trHint = document.getElementById('trending-schedule-hint');
@@ -4737,7 +4744,23 @@ function syncSecondaryLangVisibility() {
   field.style.display = show ? '' : 'none';
 }
 
+// The trending catalogs addon's manifest, on the same address and access key
+// as the poster URL (so on a LAN it is the postersplus hostname AIOMetadata
+// reaches).  The key goes in the path; see _trending_catalog in main.py.
+function updateTrendingCatalogsField() {
+  const field = document.getElementById('trending-catalogs-field');
+  if (!field) return;
+  const on = !!serverCaps.trending_catalogs_enabled;
+  field.style.display = on ? '' : 'none';
+  if (!on) return;
+  const domain = (vEl('cfg-domain') || window.location.origin).replace(/\/$/, '');
+  const ak = vEl('cfg-access-key');
+  document.getElementById('trending-catalogs-url').value =
+    `${domain}/trending/${ak ? encodeURIComponent(ak) + '/' : ''}manifest.json`;
+}
+
 function build() {
+  updateTrendingCatalogsField();
   const url = buildPreviewUrl();
   if (_SHOW_URL_BOX) {
     document.getElementById('url-display-input').value = buildTemplateUrl();

@@ -369,6 +369,9 @@ def init_db() -> None:
     # own — up to a day of an operator setting the variable, restarting, seeing
     # the old rankings and concluding the feature was broken.
     _add_column_if_missing(conn, "trending_cache", "source_sig", "TEXT")
+    # Name, year and art for each ranked title, for the trending catalogs
+    # addon, which serves the snapshot as a Stremio catalog.
+    _add_column_if_missing(conn, "trending_cache", "details_json", "TEXT")
 
     conn.commit()
 
@@ -553,6 +556,26 @@ def delete_cached_final_poster(cache_key: str) -> None:
             get_db().commit()
     except Exception as exc:
         logger.error(f"Final poster cache delete error: {exc}")
+
+def invalidate_anime_posters(anime_key: str) -> None:
+    """Invalidate every composite rendered for an anime id ("anilist:123"),
+    whose cache key leads with it."""
+    prefix = f"{anime_key}:"
+    if COMPOSITE_MEM_ENTRIES > 0:
+        with _composite_l1_lock:
+            for k in [k for k in _composite_l1 if k.startswith(prefix)]:
+                _composite_l1.pop(k, None)
+    try:
+        with _db_lock:
+            get_db().execute(
+                "DELETE FROM final_poster_cache WHERE cache_key LIKE ?",
+                (f"{prefix}%",),
+            )
+            get_db().commit()
+        logger.info(f"Invalidated final poster cache for {anime_key}")
+    except Exception as exc:
+        logger.error(f"Anime poster invalidation error: {exc}")
+
 
 def invalidate_final_posters(tmdb_id: str, media_type: str | None = None) -> None:
     """Invalidate all composited posters for a specific TMDB ID.
@@ -1128,10 +1151,24 @@ def get_cached_trending_snapshot(
     return None if entry is None else entry[0]
 
 
+def get_cached_trending_details(media_type: str) -> dict[str, dict]:
+    """Per-title name, year and art stored with the snapshot, by ranked id."""
+    try:
+        row = get_db().execute(
+            "SELECT details_json FROM trending_cache WHERE media_type = ?",
+            (media_type,),
+        ).fetchone()
+        return json.loads(row[0]) if row and row[0] else {}
+    except Exception as exc:
+        logger.error(f"Trending details read error: {exc}")
+        return {}
+
+
 def set_cached_trending_snapshot(
     media_type: str,
     rankings: dict[str, int],
     source_sig: str | None = None,
+    details: dict[str, dict] | None = None,
 ) -> None:
     # Deliberately read without the signature or the expiry: the point of this
     # is to diff against whatever was there before so changed titles get
@@ -1145,14 +1182,18 @@ def set_cached_trending_snapshot(
             get_db().execute(
                 """
                 INSERT OR REPLACE INTO trending_cache
-                (media_type, rankings_json, cached_at, source_sig)
-                VALUES (?, ?, ?, ?)
+                (media_type, rankings_json, cached_at, source_sig, details_json)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
                     media_type,
                     json.dumps(rankings),
                     int(time.time()),
                     source_sig or "",
+                    # Only the ranked titles: a custom source can be capped
+                    # from thousands of rows.
+                    json.dumps({k: v for k, v in details.items() if k in rankings})
+                    if details else None,
                 ),
             )
             get_db().commit()
@@ -1179,7 +1220,12 @@ def set_cached_trending_snapshot(
                 changed_ids.add(t_id)
                 
         for t_id in changed_ids:
-            invalidate_final_posters(t_id, media_type)
+            if media_type == "anime":
+                # Keyed "anilist:<id>", the anime namespace a composite key
+                # leads with, rather than by TMDB id.
+                invalidate_anime_posters(t_id)
+            else:
+                invalidate_final_posters(t_id, media_type)
             
     except Exception as exc:
         logger.error(f"Trending snapshot cache write error: {exc}")

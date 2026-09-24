@@ -1391,6 +1391,8 @@ def trending_source_signature(media_type: str) -> str:
     and the URL it identifies may contain credentials.  All the signature has to
     do is differ when the configured source differs.
     """
+    if media_type == "anime":
+        return "anilist"
     url = _normalise_trending_url(trending_source_url(media_type))
     if not url:
         return "tmdb"
@@ -1424,7 +1426,21 @@ _TRENDING_SOURCE_RETRY_SECS = 300
 _trending_source_failed_at: dict[str, float] = {}
 
 
-def _parse_trending_payload(payload, media_type: str) -> list[str]:
+def _trending_item_details(item: dict) -> dict:
+    """Name, year, IMDb id and poster path from one trending-list row, for the
+    trending catalogs addon.  Covers TMDB's and MDBList's field names."""
+    date = str(item.get("release_date") or item.get("first_air_date") or "")
+    year = item.get("release_year") or item.get("year") or (date[:4] if date[:4].isdigit() else None)
+    out = {
+        "name": item.get("title") or item.get("name"),
+        "year": str(year) if year else None,
+        "imdb_id": item.get("imdb_id") if str(item.get("imdb_id") or "").startswith("tt") else None,
+        "poster": item.get("poster_path") or item.get("poster"),
+    }
+    return {k: v for k, v in out.items() if v}
+
+
+def _parse_trending_payload(payload, media_type: str, details_out: dict | None = None) -> list[str]:
     """Extract an ordered list of TMDB ids from a trending payload.
 
     Handles the two shapes documented on TRENDING_SOURCE_MOVIE: TMDB's
@@ -1465,6 +1481,8 @@ def _parse_trending_payload(payload, media_type: str) -> list[str]:
             continue
         order = item.get("rank") if ranked else None
         rows.append((float(order) if isinstance(order, (int, float)) else position, str(raw)))
+        if details_out is not None and str(raw) not in details_out:
+            details_out[str(raw)] = _trending_item_details(item)
 
     rows.sort(key=lambda row: row[0])
     seen: set[str] = set()
@@ -1481,6 +1499,7 @@ def _parse_trending_payload(payload, media_type: str) -> list[str]:
 async def fetch_trending_source_ids(
     client: httpx.AsyncClient,
     media_type: str,
+    details_out: dict | None = None,
 ) -> list[str] | None:
     """Ordered TMDB ids from the operator's trending source.
 
@@ -1508,7 +1527,7 @@ async def fetch_trending_source_ids(
         # form should not read as a broken config.
         resp = await client.get(resolved, timeout=20.0, follow_redirects=True)
         resp.raise_for_status()
-        ids = _parse_trending_payload(resp.json(), media_type)
+        ids = _parse_trending_payload(resp.json(), media_type, details_out)
     except Exception as exc:
         _trending_source_failed_at[media_type] = time.monotonic()
         logger.error(
@@ -1531,6 +1550,7 @@ async def fetch_trending_source_ids(
 
 async def _fetch_tmdb_trending_ids(
     client: httpx.AsyncClient, tmdb_key: str, endpoint: str,
+    details_out: dict | None = None,
 ) -> list[str] | None:
     """TMDB's day-trending ids for *endpoint*, pages 1-5, in rank order.
 
@@ -1564,6 +1584,8 @@ async def _fetch_tmdb_trending_ids(
             if entry_id not in seen:
                 seen.add(entry_id)
                 ids.append(entry_id)
+                if details_out is not None:
+                    details_out[entry_id] = _trending_item_details(item)
     return ids
 
 
@@ -1593,12 +1615,33 @@ async def ensure_trending_snapshot(
 
     event_to_set = asyncio.Event()
     _trending_inflight[endpoint] = event_to_set
+    details: dict[str, dict] = {}
     try:
+        if endpoint == "anime":
+            # Only the trending catalogs addon ranks anime on its own list.
+            # A failed read is not retried for a while: every poster requested
+            # with an AniList id would otherwise try again, against a rate
+            # limit the anime art fetches share.
+            failed_at = _trending_source_failed_at.get("anime")
+            if failed_at is not None and time.monotonic() - failed_at < _TRENDING_SOURCE_RETRY_SECS:
+                return None
+            from anime import fetch_anilist_trending
+            ids = await fetch_anilist_trending(client, details)
+            if not ids:
+                _trending_source_failed_at["anime"] = time.monotonic()
+                return None
+            _trending_source_failed_at.pop("anime", None)
+            rankings = {entry_id: position for position, entry_id in enumerate(ids, start=1)}
+            set_cached_trending_snapshot(endpoint, rankings, source_sig, details)
+            return get_cached_trending_snapshot_entry(endpoint, source_sig) or (
+                rankings, time.time() + 86400
+            )
+
         # An operator-configured source replaces TMDB's list entirely.
         # A configured-but-broken source serves no ranks, so the sash
         # goes quiet instead of falling back to TMDB and looking like
         # the config worked.
-        source_ids = await fetch_trending_source_ids(client, endpoint)
+        source_ids = await fetch_trending_source_ids(client, endpoint, details)
         if source_ids is not None:
             if not source_ids:
                 # Deliberately NOT cached.  Writing an empty snapshot
@@ -1611,12 +1654,12 @@ async def ensure_trending_snapshot(
         else:
             if not tmdb_key:
                 return None
-            ids = await _fetch_tmdb_trending_ids(client, tmdb_key, endpoint)
+            ids = await _fetch_tmdb_trending_ids(client, tmdb_key, endpoint, details)
             if ids is None:
                 return None
 
         rankings = {entry_id: position for position, entry_id in enumerate(ids, start=1)}
-        set_cached_trending_snapshot(endpoint, rankings, source_sig)
+        set_cached_trending_snapshot(endpoint, rankings, source_sig, details)
         return get_cached_trending_snapshot_entry(endpoint, source_sig) or (
             rankings, time.time() + 86400
         )
@@ -1633,7 +1676,10 @@ async def fetch_trending_rank_entry(
 ) -> "tuple[int | None, float | None]":
     """(rank, expires_at): the title's rank and when the snapshot it came from
     is replaced.  A poster that prints the rank is cached until then."""
-    endpoint = "tv" if media_type in ("tv", "series") else "movie"
+    endpoint = (
+        "anime" if media_type == "anime"
+        else "tv" if media_type in ("tv", "series") else "movie"
+    )
     entry = await ensure_trending_snapshot(client, tmdb_key, endpoint)
     if entry is None:
         return None, None
@@ -1696,11 +1742,12 @@ async def fetch_trending_candidates(
     # Resolve each media type's custom source once. The day/week split is a TMDB
     # concept; a custom source is a single list, so it stands in for the "day"
     # pass and the "week" pass contributes nothing rather than duplicating it.
+    source_details: dict[str, dict] = {"movie": {}, "tv": {}}
     sources = dict(zip(
         ("movie", "tv"),
         await asyncio.gather(
-            fetch_trending_source_ids(client, "movie"),
-            fetch_trending_source_ids(client, "tv"),
+            fetch_trending_source_ids(client, "movie", source_details["movie"]),
+            fetch_trending_source_ids(client, "tv", source_details["tv"]),
         ),
     ))
 
@@ -1722,6 +1769,7 @@ async def fetch_trending_candidates(
                 _media_type,
                 {entry_id: position for position, entry_id in enumerate(_ids, start=1)},
                 _sig,
+                source_details[_media_type],
             )
 
     async def _source_or_tmdb(media_type: str, window: str) -> list[dict]:

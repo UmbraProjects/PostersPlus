@@ -148,7 +148,7 @@ Sashes display contextual metadata about a title - awards, festival recognition,
 | Notable Studio | A24, Neon, Pixar, and other curated studios |
 | Notable Director | Curated list of notable directors |
 | Notable Cast | Curated list of notable cast members |
-| Trending | Rank 1–`TRENDING_FETCH_COUNT` (default top 40) in TMDB's list or the configured movie/TV trending source |
+| Trending | Rank 1–`TRENDING_FETCH_COUNT` (default top 40) in TMDB's list or the configured movie/TV trending source; AniList's list for an AniList id when the [trending catalogs addon](CONFIGURATION.md#trending-catalogs-addon) is on |
 | New Season | TV show with a recent or upcoming S2+ season premiere |
 | Returning | TV show with a recent or upcoming non-premiere episode |
 | Premiere | Show initial release within the last two weeks |
