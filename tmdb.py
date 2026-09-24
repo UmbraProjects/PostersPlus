@@ -1424,6 +1424,11 @@ def _normalise_trending_url(url: str) -> str:
 # clears well inside the snapshot TTL.
 _TRENDING_SOURCE_RETRY_SECS = 300
 _trending_source_failed_at: dict[str, float] = {}
+# A failed trending read is tried once more after this pause before the list
+# is given up on for the cooldown above.  Most failures are a blip (a timeout,
+# a 5xx, a throttle), and giving up costs every poster its rank until the next
+# attempt.
+_TRENDING_RETRY_DELAY_SECS = 2.0
 
 
 def _trending_item_details(item: dict) -> dict:
@@ -1520,18 +1525,32 @@ async def fetch_trending_source_ids(
     if failed_at is not None and time.monotonic() - failed_at < _TRENDING_SOURCE_RETRY_SECS:
         return []
 
-    try:
-        logger.info(f"External API Call: trending source for {media_type} ({shown})")
-        # Redirects are followed here specifically: an operator pastes whatever
-        # their browser showed them, and a host that answers on a canonical
-        # form should not read as a broken config.
-        resp = await client.get(resolved, timeout=20.0, follow_redirects=True)
-        resp.raise_for_status()
-        ids = _parse_trending_payload(resp.json(), media_type, details_out)
-    except Exception as exc:
+    ids: list[str] = []
+    error: Exception | None = None
+    for attempt in (1, 2):
+        error = None
+        try:
+            logger.info(f"External API Call: trending source for {media_type} ({shown})")
+            # Redirects are followed here specifically: an operator pastes whatever
+            # their browser showed them, and a host that answers on a canonical
+            # form should not read as a broken config.
+            resp = await client.get(resolved, timeout=20.0, follow_redirects=True)
+            resp.raise_for_status()
+            ids = _parse_trending_payload(resp.json(), media_type, details_out)
+        except Exception as exc:
+            ids, error = [], exc
+        if ids:
+            break
+        if attempt == 1:
+            logger.warning(
+                f"Trending source for {media_type} ({shown}) "
+                f"{f'failed: {error}' if error else 'yielded no usable ids'} — retrying"
+            )
+            await asyncio.sleep(_TRENDING_RETRY_DELAY_SECS)
+    if error is not None:
         _trending_source_failed_at[media_type] = time.monotonic()
         logger.error(
-            f"Trending source fetch failed ({shown}): {exc} — "
+            f"Trending source fetch failed ({shown}): {error} — "
             f"no trending data will be served for {media_type} this cycle"
         )
         return []
@@ -1589,6 +1608,26 @@ async def _fetch_tmdb_trending_ids(
     return ids
 
 
+def _trending_cooling_down(key: str) -> bool:
+    failed_at = _trending_source_failed_at.get(key)
+    return failed_at is not None and time.monotonic() - failed_at < _TRENDING_SOURCE_RETRY_SECS
+
+
+async def _read_twice(read, label: str):
+    """*read()* once more after a short pause if the first gave nothing."""
+    result = await read()
+    if not result:
+        logger.warning(f"Trending {label} list unreadable — retrying")
+        await asyncio.sleep(_TRENDING_RETRY_DELAY_SECS)
+        result = await read()
+        if not result:
+            logger.error(
+                f"Trending {label} list unreadable twice — no ranks for "
+                f"{_TRENDING_SOURCE_RETRY_SECS // 60} minutes"
+            )
+    return result
+
+
 async def ensure_trending_snapshot(
     client: httpx.AsyncClient,
     tmdb_key: str,
@@ -1622,11 +1661,10 @@ async def ensure_trending_snapshot(
             # A failed read is not retried for a while: every poster requested
             # with an AniList id would otherwise try again, against a rate
             # limit the anime art fetches share.
-            failed_at = _trending_source_failed_at.get("anime")
-            if failed_at is not None and time.monotonic() - failed_at < _TRENDING_SOURCE_RETRY_SECS:
+            if _trending_cooling_down("anime"):
                 return None
             from anime import fetch_anilist_trending
-            ids = await fetch_anilist_trending(client, details)
+            ids = await _read_twice(lambda: fetch_anilist_trending(client, details), "AniList anime")
             if not ids:
                 _trending_source_failed_at["anime"] = time.monotonic()
                 return None
@@ -1654,9 +1692,19 @@ async def ensure_trending_snapshot(
         else:
             if not tmdb_key:
                 return None
-            ids = await _fetch_tmdb_trending_ids(client, tmdb_key, endpoint, details)
-            if ids is None:
+            # Its own cooldown key: a custom source for this type is not in
+            # play here, so the two never share one.
+            cooldown_key = f"tmdb:{endpoint}"
+            if _trending_cooling_down(cooldown_key):
                 return None
+            ids = await _read_twice(
+                lambda: _fetch_tmdb_trending_ids(client, tmdb_key, endpoint, details),
+                f"TMDB {endpoint}",
+            )
+            if not ids:
+                _trending_source_failed_at[cooldown_key] = time.monotonic()
+                return None
+            _trending_source_failed_at.pop(cooldown_key, None)
 
         rankings = {entry_id: position for position, entry_id in enumerate(ids, start=1)}
         set_cached_trending_snapshot(endpoint, rankings, source_sig, details)

@@ -34,8 +34,15 @@ class _TempDb(unittest.TestCase):
         cache._cfg.TRENDING_FETCH_TIMEZONE = "UTC"
         with cache._composite_l1_lock:
             cache._composite_l1.clear()
+        # Retry cooldowns are module state; one test's failure must not leave
+        # the next test's list cooling down.  And no real retry pauses.
+        tmdb._trending_source_failed_at.clear()
+        self._no_retry_pause = mock.patch.object(tmdb, "_TRENDING_RETRY_DELAY_SECS", 0)
+        self._no_retry_pause.start()
 
     def tearDown(self):
+        self._no_retry_pause.stop()
+        tmdb._trending_source_failed_at.clear()
         cache._cfg.TRENDING_FETCH_TIME, cache._cfg.TRENDING_FETCH_TIMEZONE = self._cfg_saved
         conn = getattr(cache._local, "conn", None)
         if conn is not None:
@@ -180,6 +187,94 @@ class EnsureSnapshotTests(_TempDb):
         self.assertEqual(cache.get_cached_trending_snapshot("movie", sig), {"5": 1})
 
 
+class RetryTests(_TempDb):
+    """An unreadable trending list is read once more before it is given up on,
+    and then left alone for the cooldown instead of being retried per poster."""
+
+    def setUp(self):
+        super().setUp()
+        self._src = (tmdb.TRENDING_SOURCE_MOVIE, tmdb.TRENDING_SOURCE_TV)
+        tmdb.TRENDING_SOURCE_MOVIE = tmdb.TRENDING_SOURCE_TV = ""
+
+    def tearDown(self):
+        tmdb.TRENDING_SOURCE_MOVIE, tmdb.TRENDING_SOURCE_TV = self._src
+        super().tearDown()
+
+    def _tmdb(self, results):
+        calls = []
+
+        async def _ids(client, key, endpoint, details_out=None):
+            calls.append(1)
+            return results.pop(0)
+
+        return calls, mock.patch.object(tmdb, "_fetch_tmdb_trending_ids", side_effect=_ids)
+
+    def test_a_second_tmdb_read_rescues_a_failed_first(self):
+        calls, patch = self._tmdb([None, ["7", "5"]])
+        with patch:
+            entry = asyncio.run(tmdb.ensure_trending_snapshot(None, "k", "movie"))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(entry[0], {"7": 1, "5": 2})
+
+    def test_two_failed_tmdb_reads_cool_down(self):
+        calls, patch = self._tmdb([None, None, ["7"]])
+        with patch:
+            self.assertIsNone(asyncio.run(tmdb.ensure_trending_snapshot(None, "k", "movie")))
+            # Every poster request lands here while the list is down; none of
+            # them may go back to TMDB until the cooldown has passed.
+            self.assertIsNone(asyncio.run(tmdb.ensure_trending_snapshot(None, "k", "movie")))
+        self.assertEqual(len(calls), 2)
+        # The other type has its own list and its own cooldown.
+        self.assertFalse(tmdb._trending_cooling_down("tmdb:tv"))
+
+    def test_a_second_anilist_read_rescues_a_failed_first(self):
+        results = [None, ["anilist:1"]]
+
+        async def _read(client, details_out=None):
+            return results.pop(0)
+
+        with mock.patch("anime.fetch_anilist_trending", side_effect=_read):
+            entry = asyncio.run(tmdb.ensure_trending_snapshot(None, "k", "anime"))
+        self.assertEqual(entry[0], {"anilist:1": 1})
+
+    def _source(self, outcomes):
+        tmdb.TRENDING_SOURCE_MOVIE = "https://example.com/list.json"
+        calls = []
+
+        async def _get(url, timeout, follow_redirects):
+            calls.append(1)
+            outcome = outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return _Resp(outcome)
+
+        return calls, mock.Mock(get=_get)
+
+    def test_a_second_source_read_rescues_a_failed_first(self):
+        calls, client = self._source([RuntimeError("timeout"), {"results": [{"id": 9}]}])
+        ids = asyncio.run(tmdb.fetch_trending_source_ids(client, "movie"))
+        self.assertEqual(ids, ["9"])
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("movie", tmdb._trending_source_failed_at)
+
+    def test_two_failed_source_reads_cool_down(self):
+        calls, client = self._source([RuntimeError("a"), RuntimeError("b"), {"results": [{"id": 9}]}])
+        self.assertEqual(asyncio.run(tmdb.fetch_trending_source_ids(client, "movie")), [])
+        self.assertEqual(asyncio.run(tmdb.fetch_trending_source_ids(client, "movie")), [])
+        self.assertEqual(len(calls), 2)
+
+
+class UnreadTtlTests(unittest.TestCase):
+    def test_a_render_without_its_trending_list_is_kept_for_the_cooldown(self):
+        src = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn(
+            "if (_trending_by_anilist or _trending_by_tmdb) and trending_expires_at is None:",
+            src,
+        )
+        self.assertEqual(main._TRENDING_UNREAD_TTL, tmdb._TRENDING_SOURCE_RETRY_SECS)
+        self.assertLessEqual(main._TRENDING_UNREAD_TTL, 600)
+
+
 class TrendingCycleTests(_TempDb):
     def setUp(self):
         super().setUp()
@@ -237,6 +332,10 @@ class TrendingCycleTests(_TempDb):
         self._store("movie", {"1": 1}, now - 3600)
         self._store("tv", {"1": 1}, now - 7200)
         self.assertAlmostEqual(main._seconds_until_trending_due(), 86400 - 7200 + 1, delta=3)
+
+    def test_loop_retries_within_the_hour_when_a_list_was_never_read(self):
+        self._store("tv", {"1": 1}, time.time() - 60)
+        self.assertAlmostEqual(main._seconds_until_trending_due(), 3601, delta=3)
 
     def test_loop_retries_within_the_hour_after_a_failed_refresh(self):
         self._store("movie", {"1": 1}, time.time() - 2 * 86400)

@@ -300,8 +300,12 @@ class AnimeRankTests(_AddonTest):
     def test_render_path_ranks_anilist_requests_only_with_the_addon_on(self):
         src = Path("main.py").read_text(encoding="utf-8")
         self.assertIn(
+            '_trending_by_anilist = anime_namespace == "anilist" and _cfg.TRENDING_CATALOGS_ENABLED',
+            src,
+        )
+        self.assertIn(
             'fetch_trending_rank_entry(client, anime_key, effective_tmdb_key, "anime")\n'
-            '            if anime_namespace == "anilist" and _cfg.TRENDING_CATALOGS_ENABLED',
+            '            if _trending_by_anilist',
             src,
         )
 
@@ -326,8 +330,8 @@ class AnimeRankTests(_AddonTest):
         self.assertFalse(matches("kitsu:5:tt1:77:series:h".split(":")))
 
     def test_a_failed_anilist_read_is_not_retried_per_request(self):
+        # Read twice (the retry), then left alone for the cooldown.
         import tmdb
-        tmdb._trending_source_failed_at.pop("anime", None)
         calls = []
 
         async def _fail(client, details_out=None):
@@ -340,7 +344,7 @@ class AnimeRankTests(_AddonTest):
                     self.assertIsNone(asyncio.run(tmdb.ensure_trending_snapshot(None, "k", "anime")))
         finally:
             tmdb._trending_source_failed_at.pop("anime", None)
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls), 2)
 
     def test_only_ranked_titles_keep_details(self):
         cache.set_cached_trending_snapshot(

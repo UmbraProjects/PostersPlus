@@ -752,6 +752,9 @@ from ratings import (
     _score_color_metal,
 )
 from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, TEXT_FORWARD_PRIORITIES as _TEXT_FORWARD_LOGO_PRIORITIES, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, IdResolveError, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date
+# How long a poster rendered while its trending list was unreadable is kept:
+# the same as that list's retry cooldown.
+from tmdb import _TRENDING_SOURCE_RETRY_SECS as _TRENDING_UNREAD_TTL
 
 # Logo priorities that consult the secondary preferred language ("custom").
 # Elsewhere the secondary language is inert and must be kept out of the image
@@ -4507,11 +4510,15 @@ def _seconds_until_trending_due() -> float:
     within the hour; requests also retry it on their own.
     """
     now = time.time()
-    expiries = [
-        entry[1]
-        for endpoint in _trending_endpoints()
-        if (entry := get_cached_trending_snapshot_entry(endpoint, include_stale=True))
-    ]
+    expiries = []
+    for endpoint in _trending_endpoints():
+        entry = get_cached_trending_snapshot_entry(endpoint, include_stale=True)
+        if entry is not None:
+            expiries.append(entry[1])
+        elif endpoint == "anime" or _cfg.SERVER_TMDB_KEY or trending_source_url(endpoint):
+            # A list that has never been read (its first read failed) is as
+            # past due as one whose refresh failed.
+            expiries.append(now)
     due = min(expiries) if expiries else now + 86400
     if due <= now:
         due = now + 3600
@@ -7259,6 +7266,8 @@ async def get_poster(
             # priority 3 — TMDB -> Metahub -> TVDB
             return (await _tmdb(use_metahub=True)) or (await _tvdb())
 
+        _trending_by_anilist = anime_namespace == "anilist" and _cfg.TRENDING_CATALOGS_ENABLED
+        _trending_by_tmdb = bool(has_tmdb_id and (effective_tmdb_key or trending_source_url(type)))
         (
             image,
             logo,
@@ -7278,9 +7287,9 @@ async def get_poster(
             # the addon's anime catalog hands out, so the rank is the poster's
             # position in that row.
             fetch_trending_rank_entry(client, anime_key, effective_tmdb_key, "anime")
-            if anime_namespace == "anilist" and _cfg.TRENDING_CATALOGS_ENABLED
+            if _trending_by_anilist
             else fetch_trending_rank_entry(client, tmdb_id, effective_tmdb_key, type)
-            if has_tmdb_id and (effective_tmdb_key or trending_source_url(type))
+            if _trending_by_tmdb
             else _resolved((None, None)),
         )
 
@@ -7921,6 +7930,17 @@ async def get_poster(
                 _ttl_override = (
                     _status_ttl if _ttl_override is None
                     else min(_ttl_override, _status_ttl)
+                )
+            # The trending list could not be read (twice), so this render may be
+            # missing a rank it should show.  A lookup that did read the list
+            # always comes back with its expiry, ranked or not.  Kept only as
+            # long as the list's retry cooldown, so the next render after that
+            # tries again; not caching it at all would re-render the whole
+            # poster on every request for as long as the source is down.
+            if (_trending_by_anilist or _trending_by_tmdb) and trending_expires_at is None:
+                _ttl_override = (
+                    _TRENDING_UNREAD_TTL if _ttl_override is None
+                    else min(_ttl_override, _TRENDING_UNREAD_TTL)
                 )
 
             _composite_expires_at = set_cached_final_poster(

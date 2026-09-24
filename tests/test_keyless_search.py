@@ -110,7 +110,7 @@ class CinemetaStructureTests(unittest.TestCase):
     def test_release_status_rescue_is_wired_for_the_cinemeta_spine(self):
         src = open("main.py", encoding="utf-8").read()
         self.assertIn('elif use_cinemeta and tmdb_data.get("cinemeta_theatrical_date"):', src)
-        self.assertIn("if has_tmdb_id and (effective_tmdb_key or trending_source_url(type))", src)
+        self.assertIn("_trending_by_tmdb = bool(has_tmdb_id and (effective_tmdb_key or trending_source_url(type)))", src)
 
 
 class MdblistReleaseDatesTests(unittest.TestCase):

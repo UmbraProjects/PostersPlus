@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Trending lists get a second attempt
+
+- A trending list that couldn't be read (TMDB, a custom source or AniList) is
+  now read once more after a short pause. If that fails too, it is left for
+  five minutes instead of being retried on every poster request.
+- Posters drawn while their list was unreadable are kept for those five
+  minutes instead of seven days, so a title's rank comes back as soon as the
+  list does. The scheduled refresh also retries within the hour when a list
+  has never been read.
+
 ### Trending catalogs addon
 
 - A Trending row in your metadata addon is built from its own copy of the

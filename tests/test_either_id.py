@@ -658,6 +658,14 @@ class RenderPathTests(unittest.IsolatedAsyncioTestCase):
         }
         self._cm_fetch = cinemeta.fetch_cinemeta_metadata
         self._cm_meta = cinemeta.fetch_cinemeta_meta
+        # The stubbed client cannot serve TMDB's trending list, so every render
+        # here reads it, fails, and retries: no real pause for that, and no
+        # cooldown left behind for the next test.
+        self._retry_delay = tmdb._TRENDING_RETRY_DELAY_SECS
+        tmdb._TRENDING_RETRY_DELAY_SECS = 0
+        tmdb._trending_source_failed_at.clear()
+        self.addCleanup(tmdb._trending_source_failed_at.clear)
+        self.addCleanup(setattr, tmdb, "_TRENDING_RETRY_DELAY_SECS", self._retry_delay)
         main._cfg.ACCESS_KEY = ""
         main._cfg.SERVER_MDBLIST_KEYS = []
         main._cfg.CINEMETA_ENABLED = True
