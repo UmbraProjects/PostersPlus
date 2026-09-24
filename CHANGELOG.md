@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Monster resolves as one series
+
+- IMDb lists Monster (`tt13207736`) as one anthology with a season per story.
+  TMDB lists each story as its own show, so the IMDb id sometimes failed to
+  resolve and the metadata provider's plain poster showed instead. Monster
+  now renders as its newest story that has premiered: Ed Gein today, and
+  Lizzie Borden from the day it airs.
+
 ### Importing a URL keeps you on this instance
 
 - Importing a URL copied from another instance no longer carries that

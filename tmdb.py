@@ -1884,6 +1884,63 @@ def _idmap_key(imdb_id: str, media_type: str) -> str:
     return f"idmap:{_IDMAP_VERSION}:imdb:{imdb_id}:{media_type}"
 
 
+# Anthologies IMDb files as one series with a season per story, where TMDB
+# lists each story as a show of its own — so /find has nothing to say for the
+# IMDb id, or only sometimes. Installments are listed oldest first, and the
+# IMDb id renders as the newest one that has premiered, the way IMDb's own page
+# fronts the current season. Which one that is changes when a new story airs,
+# so the answer is kept for a day rather than the id map's ninety.
+ANTHOLOGY_INSTALLMENTS: dict[str, tuple[str, ...]] = {
+    # Monster: Dahmer, Ed Gein, Lizzie Borden
+    "tt13207736": ("113988", "286801", "299939"),
+}
+_ANTHOLOGY_TTL_SECONDS = 86400
+
+
+def _anthology_key(imdb_id: str) -> str:
+    return f"idmap:{_IDMAP_VERSION}:anthology:{imdb_id}"
+
+
+async def _resolve_anthology(
+    client: httpx.AsyncClient,
+    imdb_id: str,
+    installments: tuple[str, ...],
+    tmdb_key: str,
+    key: str,
+) -> dict:
+    """The newest installment of *imdb_id*'s anthology that has premiered.
+
+    Asks TMDB for each installment's first air date, newest first, and stops at
+    the first one already out. The oldest is taken on trust — it is only listed
+    because it aired. A failed lookup skips that installment and leaves the
+    answer uncached, so an outage never pins the anthology to an older story.
+    """
+    today = _date.today().isoformat()
+    chosen = installments[0]
+    complete = True
+    for tmdb_id in reversed(installments[1:]):
+        try:
+            resp = await client.get(
+                f"https://api.themoviedb.org/3/tv/{tmdb_id}",
+                params={"api_key": tmdb_key},
+            )
+            resp.raise_for_status()
+            first_air = resp.json().get("first_air_date") or ""
+        except Exception as exc:
+            logger.warning(f"Anthology {imdb_id}: TMDB tv/{tmdb_id} lookup failed: {exc}")
+            complete = False
+            continue
+        if first_air and first_air <= today:
+            chosen = tmdb_id
+            break
+
+    result = {"tmdb_id": chosen, "media_type": "tv"}
+    logger.info(f"Resolved anthology {imdb_id} -> TMDB tv/{chosen} (newest aired installment)")
+    if complete:
+        set_cached_tvdb_json(key, result, _ANTHOLOGY_TTL_SECONDS)
+    return result
+
+
 async def resolve_imdb_to_tmdb(
     client: httpx.AsyncClient,
     imdb_id: str,
@@ -1899,8 +1956,12 @@ async def resolve_imdb_to_tmdb(
     taken on trust). None means neither source has a TMDB id for it — the
     caller decides whether the Cinemeta spine can carry the title instead.
     Raises ``IdResolveError`` only when a keyed TMDB lookup failed outright.
+
+    An IMDb id in ``ANTHOLOGY_INSTALLMENTS`` resolves, with a key, to its
+    newest aired installment instead of going through /find.
     """
-    key = _idmap_key(imdb_id, media_type)
+    anthology = ANTHOLOGY_INSTALLMENTS.get(imdb_id) if tmdb_key else None
+    key = _anthology_key(imdb_id) if anthology else _idmap_key(imdb_id, media_type)
     cached = get_cached_tvdb_json(key)
     if cached is not None:
         if cached.get("__miss__"):
@@ -1915,7 +1976,10 @@ async def resolve_imdb_to_tmdb(
     fut: "asyncio.Future[dict | None]" = asyncio.get_running_loop().create_future()
     _idmap_inflight[key] = fut
     try:
-        result = await _resolve_imdb_to_tmdb_uncached(client, imdb_id, media_type, tmdb_key, key)
+        if anthology:
+            result = await _resolve_anthology(client, imdb_id, anthology, tmdb_key, key)
+        else:
+            result = await _resolve_imdb_to_tmdb_uncached(client, imdb_id, media_type, tmdb_key, key)
     except BaseException as exc:
         fut.set_exception(exc)
         raise

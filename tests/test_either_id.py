@@ -348,6 +348,45 @@ class ResolverTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await tmdb.resolve_imdb_to_tmdb(_FakeClient(_FakeResponse(503)), "tt0111161", "movie", None))
             self.assertEqual([k for k in cache.store if k.startswith("idmap:")], [])
 
+    async def test_anthology_resolves_to_newest_aired_installment(self):
+        # Monster: Lizzie Borden not out yet, so the anthology fronts Ed Gein.
+        with _MemoryJsonCache(tmdb, cinemeta) as cache:
+            client = _FakeClient(
+                _FakeResponse(200, {"first_air_date": "2999-01-01"}),
+                _FakeResponse(200, {"first_air_date": "2025-10-03"}),
+            )
+            result = await tmdb.resolve_imdb_to_tmdb(client, "tt13207736", "tv", "k")
+            self.assertEqual(result, {"tmdb_id": "286801", "media_type": "tv"})
+            self.assertEqual(
+                [u for u, _ in client.calls],
+                ["https://api.themoviedb.org/3/tv/299939", "https://api.themoviedb.org/3/tv/286801"],
+            )
+            # Never asks /find, and the answer is kept.
+            again = await tmdb.resolve_imdb_to_tmdb(client, "tt13207736", "movie", "k")
+            self.assertEqual(again, result)
+            self.assertEqual(len(client.calls), 2)
+            self.assertEqual(list(cache.store), ["idmap:v1:anthology:tt13207736"])
+
+    async def test_anthology_picks_newest_once_it_airs(self):
+        with _MemoryJsonCache(tmdb, cinemeta):
+            client = _FakeClient(_FakeResponse(200, {"first_air_date": "2020-01-01"}))
+            result = await tmdb.resolve_imdb_to_tmdb(client, "tt13207736", "tv", "k")
+            self.assertEqual(result["tmdb_id"], "299939")
+            self.assertEqual(len(client.calls), 1)
+
+    async def test_anthology_falls_back_to_first_and_skips_cache_on_failure(self):
+        with _MemoryJsonCache(tmdb, cinemeta) as cache:
+            client = _FakeClient(RuntimeError("down"))
+            result = await tmdb.resolve_imdb_to_tmdb(client, "tt13207736", "tv", "k")
+            self.assertEqual(result, {"tmdb_id": "113988", "media_type": "tv"})
+            self.assertEqual(cache.store, {})
+
+    async def test_anthology_without_key_takes_the_cinemeta_route(self):
+        with _MemoryJsonCache(tmdb, cinemeta):
+            client = _FakeClient(_FakeResponse(503))
+            await tmdb.resolve_imdb_to_tmdb(client, "tt13207736", "tv", None)
+            self.assertTrue(client.calls[0][0].startswith("https://v3-cinemeta.strem.io/"))
+
     async def test_concurrent_lookups_share_one_request(self):
         release = asyncio.Event()
 
