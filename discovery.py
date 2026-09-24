@@ -447,7 +447,17 @@ def tv_release_facts(
         d = _parse_date(value)
         return d if d is not None and d > today else None
 
-    if status in ("In Production", "Planned", "Pilot"):
+    # TMDB editors sometimes flip a show to "Returning Series" before its first
+    # episode airs (East of Eden, a week before its premiere).  Nothing has
+    # aired, so it is still a show waiting to premiere, not a renewal.
+    _aired = _parse_date(_episode_date(last_ep))
+    unaired_returning = (
+        status == "Returning Series"
+        and (_aired is None or _aired > today)
+        and (next_ep is not None or bool(seasons))
+    )
+
+    if status in ("In Production", "Planned", "Pilot") or unaired_returning:
         candidates = [d for d in (
             _future(_episode_date(next_ep)),
             _future(tmdb_data.get("tmdb_release_date")),

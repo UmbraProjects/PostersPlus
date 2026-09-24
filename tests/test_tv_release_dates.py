@@ -104,6 +104,17 @@ class OtherStatusTests(unittest.TestCase):
                   next_episode=ep(1, 1, "2026-12-25"), seasons=seasons((1, "2026-12-25"))),
             ("Production", "2026-12-25", "Premiere"))
 
+    def test_an_unaired_returning_series_is_a_premiere_not_a_renewal(self):
+        # East of Eden: TMDB flipped it to Returning Series before S1E1 aired.
+        self.assertEqual(
+            facts("Returning Series", tmdb_release_date="2026-10-01",
+                  next_episode=ep(1, 1, "2026-10-01"), seasons=seasons((1, "2026-09-30"))),
+            ("Production", "2026-09-30", "Premiere"))
+
+    def test_an_unaired_returning_series_without_a_date(self):
+        self.assertEqual(facts("Returning Series", seasons=seasons((1, None))),
+                         ("Production", None, None))
+
     def test_an_undated_unaired_show(self):
         self.assertEqual(facts("Planned"), ("Production", None, None))
 

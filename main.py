@@ -1589,14 +1589,23 @@ def _unreleased_for_rating(status: str | None, media_type: str, tmdb_data: dict)
     sit at TMDB's "In Production" with episodes already aired (between
     seasons, or a status nobody updated), and an aired episode is people
     having watched it, so that keeps its score.
+
+    A series is judged on its episodes, not only the status word: TMDB can
+    mark a show "Returning Series" before anything has aired, and whatever
+    status that maps to, nobody has watched it yet.
     """
-    if status != "Production":
-        return False
     if media_type in ("tv", "series"):
         aired = _parse_tmdb_date((tmdb_data.get("last_episode") or {}).get("air_date"))
         if aired is not None and aired <= datetime.now().date():
             return False
-    return True
+        if status == "Production":
+            return True
+        # No aired episode, but episode data that says one is coming.
+        # Without any episode data (anime providers ship none) the status
+        # word is all there is, and only "Production" says unaired.
+        return (status not in ("Ended", "Cancelled")
+                and bool(tmdb_data.get("next_episode") or tmdb_data.get("seasons")))
+    return status == "Production"
 
 
 def _parse_bool(val: str | None, default: bool) -> bool:

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Shows waiting to premiere stay unreleased
+
+- TMDB sometimes marks a show "Returning Series" before its first episode
+  airs. Those shows read "Season 1" as if renewed, and Hide Rating Until
+  Released showed their score. They now read like any show waiting to
+  premiere ("Sep 30 Premiere"), and the score stays hidden until an episode
+  has aired.
+
 ### Monster resolves as one series
 
 - IMDb lists Monster (`tt13207736`) as one anthology with a season per story.

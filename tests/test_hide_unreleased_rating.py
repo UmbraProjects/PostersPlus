@@ -31,6 +31,15 @@ class UnreleasedForRatingTests(unittest.TestCase):
         self.assertFalse(_unreleased_for_rating("Production", "series", aired))
         self.assertFalse(_unreleased_for_rating("Production", "tv", aired))
 
+    def test_unaired_series_hides_whatever_the_status_says(self):
+        # East of Eden: "Returning Series" on TMDB before S1E1 aired.
+        upcoming = {"next_episode": {"air_date": _day(7)}, "seasons": [{"season_number": 1}]}
+        for status in ("Renewed", "Airing", None):
+            with self.subTest(status=status):
+                self.assertTrue(_unreleased_for_rating(status, "series", upcoming))
+        self.assertFalse(_unreleased_for_rating("Cancelled", "series", upcoming))
+        self.assertFalse(_unreleased_for_rating("Renewed", "movie", upcoming))
+
     def test_a_future_last_episode_is_not_an_aired_one(self):
         self.assertTrue(_unreleased_for_rating(
             "Production", "series", {"last_episode": {"air_date": _day(10)}}))
