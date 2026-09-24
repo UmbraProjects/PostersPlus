@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Landscape score out of 10
+
+- Landscape gains the **Display score out of 10** switch portrait already had
+  (`landscape_score_out_of_10=true`), under Core → Landscape. The score on the
+  `Genre • Year • Score` line reads `8.7` rather than `87`, and a perfect
+  score reads `10`. It hides with Hide Rating, as the portrait switches do.
+
+### QualiCache trust defaults to medium
+
+- `QUALICACHE_MIN_TRUST` now defaults to `medium`, so releases from unknown
+  groups count as well as the known ranked ones. Set it to `high` to keep the
+  old behaviour.
+
 ### Hide Rating Until Released
 
 - A new **Hide Rating Until Released** switch (`hide_unreleased_rating=true`)

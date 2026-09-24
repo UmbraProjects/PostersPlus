@@ -591,7 +591,8 @@ def _draw_title(image: Image.Image, title: str) -> tuple[int, int]:
 
 def _draw_info_strip(image: Image.Image, genre_label: str,
                      release_year: str | None, score, scale: float = 1.0,
-                     logo_right: int | None = None) -> None:
+                     logo_right: int | None = None,
+                     out_of_10: bool = False) -> None:
     """`Genre • Year • 87`, right-aligned on the shared baseline.
 
     Drawn right-to-left so the score stays pinned to the right edge whatever the
@@ -605,6 +606,9 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
     clear of that rather than of the widest a logo is ever allowed to be: with
     the maximum reserved, a narrow logo still cost the strip its genre, and at
     any enlarged size it lost it every time.  None falls back to the maximum.
+
+    ``out_of_10`` prints the score the way portrait's out-of-10 switches do:
+    one decimal ("8.7", "8.0"), with a bare "10" at the top.
     """
     width, height = image.size
     scale = max(0.1, float(scale or 1.0))
@@ -622,6 +626,9 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
         score_text = score.strip()
     else:
         score_text = None
+    if score_text and out_of_10:
+        value = int(score_text)
+        score_text = "10" if value >= 100 else f"{value / 10:.1f}"
 
     # The score takes the same weight as the genre and the year rather than a
     # score-banded colour.  Here the three are one line of metadata, and one
@@ -737,7 +744,8 @@ def build_landscape(
                      "" if cfg.hide_genre else (translate_genre(genre, cfg.logo_language) or genre),
                      release_year, None if cfg.hide_rating else score,
                      scale=getattr(cfg, "landscape_info_scale", 1.0),
-                     logo_right=logo_right)
+                     logo_right=logo_right,
+                     out_of_10=getattr(cfg, "landscape_score_out_of_10", False))
 
     if cfg.sash_mode != "hidden" and discovery_meta is not None:
         sash_result = pick_sash(discovery_meta, cfg.sash_priority)

@@ -71,7 +71,7 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `SCRAPER_URL` | - | Base URL of a Stremio stream addon, e.g. https://torrentio.strem.fun/. Only used when the quality source is scraper. Standalone addons like Torrentio and Comet work best; Stremthru Torz requires auth and should be used through AIOStreams instead. Only used when `QUALITY_SOURCE` is `scraper`. |
 | `QUALICACHE_URL` | - | Base URL of a QualiCache instance. Only used when the quality source is qualicache. Only used when `QUALITY_SOURCE` is `qualicache`. |
 | `QUALICACHE_API_KEY` | - | Must match QualiCache's own ACCESS_KEY when it has one. Only used when `QUALITY_SOURCE` is `qualicache`. |
-| `QUALICACHE_MIN_TRUST` | `high` | Lowest release-group tier to accept from QualiCache. Only used when `QUALITY_SOURCE` is `qualicache`. One of `high`, `medium`, `low`. |
+| `QUALICACHE_MIN_TRUST` | `medium` | Lowest release-group tier to accept from QualiCache. Only used when `QUALITY_SOURCE` is `qualicache`. One of `high`, `medium`, `low`. |
 
 #### Output
 
@@ -217,7 +217,7 @@ QUALITY_SOURCE=qualicache
 QUALICACHE_URL=https://quality.myaio.xyz
 QUALICACHE_API_KEY=HN7Aj1Z4CV95k0ZxJJ583nmU
 # Accept known ranked groups only (high), unknown groups too (medium), or all tiers (low)
-QUALICACHE_MIN_TRUST=high
+QUALICACHE_MIN_TRUST=medium
 ```
 
 Leave `AIOSTREAMS_URL` and `AIOSTREAMS_AUTH` unset- they're ignored when

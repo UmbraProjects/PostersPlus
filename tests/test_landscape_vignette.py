@@ -148,6 +148,33 @@ class LandscapeLogoAndBadgeTests(unittest.TestCase):
         self.assertEqual(cfg.landscape_info_scale, 1.5)
         self.assertEqual(main.build_request_config({"landscape_info_scale": "9"}).landscape_info_scale, 2.0)
 
+    def test_info_strip_score_can_read_out_of_10(self):
+        # Same formatting as portrait's out-of-10 switches: one decimal, and a
+        # bare "10" at the top.  Off by default.
+        def drawn(score, out_of_10):
+            texts = []
+            real_draw = landscape.ImageDraw.Draw
+
+            def spy(im):
+                d = real_draw(im)
+                real_text = d.text
+                d.text = lambda xy, text, *a, **k: (texts.append(text), real_text(xy, text, *a, **k))[1]
+                return d
+
+            with mock.patch.object(landscape.ImageDraw, "Draw", spy):
+                landscape._draw_info_strip(Image.new("RGBA", (1000, 563)), "", None,
+                                           score, out_of_10=out_of_10)
+            return texts
+
+        self.assertIn("87", drawn(87, False))
+        self.assertIn("8.7", drawn(87, True))
+        self.assertIn("8.0", drawn("80", True))
+        self.assertIn("10", drawn(100, True))
+        self.assertEqual(drawn("N/A", True), [])
+        self.assertFalse(main.build_request_config({}).landscape_score_out_of_10)
+        cfg = main.build_request_config({"landscape_score_out_of_10": "true"})
+        self.assertTrue(cfg.landscape_score_out_of_10)
+
     def test_badge_shadow_clips_at_the_canvas_edge(self):
         # A top-left pill's shadow spills past x=0 / y=0; it must be clipped
         # rather than refused, and it must darken the art around the pill.

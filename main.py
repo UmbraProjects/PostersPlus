@@ -1455,6 +1455,7 @@ class RequestConfig:
     # and padding scale together, so the pill keeps its proportions.
     landscape_badge_scale: float = 1.0
     landscape_info_scale: float = 1.0   # size of the landscape "Genre • Year • Score" line
+    landscape_score_out_of_10: bool = False   # "8.7" rather than "87" on that line
     score_color_mode: int = 2
     score_custom_palette: CustomScorePalette | None = None
     sash_badge: bool = False              # legacy; superseded by sash_mode (kept for back-compat parsing)
@@ -1838,6 +1839,7 @@ def build_request_config(params: dict) -> RequestConfig:
         cfg.landscape_color_link = _ls_link
     cfg.landscape_badge_scale = _f("landscape_badge_scale", cfg.landscape_badge_scale, 0.5, 2.5)
     cfg.landscape_info_scale  = _f("landscape_info_scale",  cfg.landscape_info_scale,  0.5, 2.0)
+    cfg.landscape_score_out_of_10 = _b("landscape_score_out_of_10", cfg.landscape_score_out_of_10)
 
     cfg.sash_badge              = _b("sash_badge",              cfg.sash_badge)
     # sash_mode supersedes the legacy sash_badge bool; fall back to it for old
@@ -4634,7 +4636,7 @@ async def lifespan(app: FastAPI):
         if _cfg.QUALICACHE_MIN_TRUST_RAW not in _cfg.QUALICACHE_MIN_TRUST_VALUES:
             logger.warning(
                 f"Unknown QUALICACHE_MIN_TRUST={_cfg.QUALICACHE_MIN_TRUST_RAW!r} — "
-                "expected high, medium, or low; defaulting to high."
+                "expected high, medium, or low; defaulting to medium."
             )
         logger.info(
             f"Quality source: QualiCache at {_cfg.QUALICACHE_URL} "

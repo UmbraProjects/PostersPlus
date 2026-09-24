@@ -133,7 +133,7 @@ class QualiCacheFetchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.url, "http://qualicache:8000/v1/quality/series/tt0068646")
         self.assertEqual(client.params["season"], 2)
         self.assertEqual(client.params["episode"], 5)
-        self.assertEqual(client.params["min_trust"], "high")
+        self.assertEqual(client.params["min_trust"], "medium")
 
     async def test_configured_minimum_trust_is_forwarded(self):
         main._cfg.QUALICACHE_MIN_TRUST = "low"

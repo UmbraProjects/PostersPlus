@@ -74,8 +74,8 @@ AIOSTREAMS_AUTH       = _env('AIOSTREAMS_AUTH', "", group='Quality source', show
 # QUALICACHE_URL:   Base URL of a QualiCache instance — only used when
 #                   QUALITY_SOURCE=qualicache. Example: http://qualicache:8000
 # QUALICACHE_API_KEY: Optional; must match QualiCache's own ACCESS_KEY when set.
-# QUALICACHE_MIN_TRUST: Lowest release-group tier to accept: high (default),
-#                      medium, or low.
+# QUALICACHE_MIN_TRUST: Lowest release-group tier to accept: high, medium
+#                      (default), or low.
 #
 # Unlike aiostreams/scraper, QualiCache never scrapes on the request path: it
 # crawls catalogues in the background and answers from its own SQLite cache, so
@@ -89,11 +89,11 @@ SCRAPER_URL           = _env('SCRAPER_URL', "", group='Quality source', show_if=
 QUALICACHE_URL        = _env('QUALICACHE_URL', "", group='Quality source', show_if=('QUALITY_SOURCE', 'qualicache'), kind='url', label='QualiCache URL', help='Base URL of a QualiCache instance. Only used when the quality source is qualicache.', placeholder='http://qualicache:8000').strip()
 QUALICACHE_API_KEY    = _env('QUALICACHE_API_KEY', "", group='Quality source', show_if=('QUALITY_SOURCE', 'qualicache'), kind='secret', label='QualiCache API key', help="Must match QualiCache's own ACCESS_KEY when it has one.").strip()
 QUALICACHE_MIN_TRUST_VALUES = ("high", "medium", "low")
-QUALICACHE_MIN_TRUST_RAW = _env('QUALICACHE_MIN_TRUST', "high", group='Quality source', show_if=('QUALITY_SOURCE', 'qualicache'), kind='choice', label='QualiCache minimum trust', help='Lowest release-group tier to accept from QualiCache.', choices=('high', 'medium', 'low')).lower().strip()
+QUALICACHE_MIN_TRUST_RAW = _env('QUALICACHE_MIN_TRUST', "medium", group='Quality source', show_if=('QUALITY_SOURCE', 'qualicache'), kind='choice', label='QualiCache minimum trust', help='Lowest release-group tier to accept from QualiCache.', choices=('high', 'medium', 'low')).lower().strip()
 QUALICACHE_MIN_TRUST = (
     QUALICACHE_MIN_TRUST_RAW
     if QUALICACHE_MIN_TRUST_RAW in QUALICACHE_MIN_TRUST_VALUES
-    else "high"
+    else "medium"
 )
 SERVER_TMDB_KEY       = _env('TMDB_API_KEY', "", group='API keys', kind='secret', label='TMDB API key', help='Fetches posters, logos and metadata. Strongly recommended; without one (and no per-client tmdb_key) titles render from Cinemeta and need an imdb_id on the request.').strip()
 SERVER_MDBLIST_KEY    = _env('MDBLIST_API_KEY', "", group='API keys', kind='secret', label='MDBList API key', help='Ratings, awards, keywords and age ratings. Without it the score reads N/A and the MDBList-only sashes are unavailable.').strip()

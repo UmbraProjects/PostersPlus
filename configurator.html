@@ -2394,6 +2394,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <span class="range-val" id="rng-lis">1.00</span>
                 </div>
               </div>
+              <div class="toggle-row" id="landscape-score10-row">
+                <span class="toggle-label">Display score out of 10</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-landscape-score-10" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
               <!-- The Hide Genre, Hide Rating and Textless switches move in
                    here while the tabs that own them are hidden (see
                    updateShapeFields): one control, one parameter, shared by
@@ -5024,6 +5031,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     params.set('badge_pos',     vEl('cfg-landscape-badge-pos') || 'top_left');
     params.set('landscape_badge_scale', n('cfg-landscape-badge-scale').toFixed(2));
     params.set('landscape_info_scale', n('cfg-landscape-info-scale').toFixed(2));
+    params.set('landscape_score_out_of_10', c('tog-landscape-score-10') ? 'true' : 'false');
     // Only meaningful with a tinted band — there is nothing to link otherwise.
     if (lShared['tog-vignette-color-bottom'] === true || lShared['tog-vignette-color-bottom'] === 'true')
       params.set('landscape_color_link', vEl('cfg-landscape-color-link') || 'off');
@@ -6155,6 +6163,7 @@ function updateShapeFields() {
   // its change handler, so the rows it hides in the Rating tab are re-derived
   // on the way back in — otherwise they would still show landscape's answer.
   if (!landscape) updateRatingFields();
+  document.getElementById('landscape-score10-row').style.display = c('tog-hide-rating') ? 'none' : '';
   // There is no diagonal sash or notch in landscape, only the badge: the mode
   // is drawn-or-not, so the segmented reads Hidden | Shown and the notch
   // button goes away.  "Shown" writes 'sash'; a 'notch' left over from an
@@ -6435,6 +6444,7 @@ function updateRatingFields() {
   document.getElementById('numeric-score10-row').style.display      = (mode === 2 && !hideRating) ? '' : 'none';
   document.getElementById('minimalist-score10-row').style.display   = (mode === 3 && !hideRating) ? '' : 'none';
   document.getElementById('bar-score10-row').style.display          = (mode === 4 && !hideRating) ? '' : 'none';
+  document.getElementById('landscape-score10-row').style.display    = hideRating ? 'none' : '';
   _updateMinimalistRows();
   // Hidden mode has no per-mode fields, so the Style group would otherwise be
   // a heading and a rule with nothing under them.
@@ -6640,7 +6650,7 @@ function _buildPresetCard(grid, preset) {
 // importing it would otherwise reset the rating bar to its defaults.
 const _LANDSCAPE_ONLY_CONTROLS = ['cfg-landscape-art', 'cfg-landscape-badge-pos',
                                   'cfg-landscape-badge-scale', 'cfg-landscape-info-scale',
-                                  'cfg-landscape-color-link'];
+                                  'cfg-landscape-color-link', 'tog-landscape-score-10'];
 // Everything both shapes read, or that a preset never carries (identity and
 // keys — settingsOnly leaves them alone in any case).
 const _BOTH_SHAPES_CONTROLS = new Set([
@@ -6913,6 +6923,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     _setEl('cfg-landscape-color-link', p.get('landscape_color_link') || 'badge_follows_vignette');
     _setEl('cfg-landscape-badge-scale', p.get('landscape_badge_scale') || '1.00');
     _setEl('cfg-landscape-info-scale', p.get('landscape_info_scale') || '1.00');
+    _setEl('tog-landscape-score-10',   p.get('landscape_score_out_of_10') || 'false');
   }
   // Anime ids carry no setting to restore: which ids a URL may use is decided
   // by the copy template now, so stremio_id / anilist_id / kitsu_id on an
