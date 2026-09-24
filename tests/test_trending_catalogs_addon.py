@@ -183,6 +183,11 @@ class AddonConfigTests(_AddonTest):
         # Identity from the settings never overrides the item's own.
         self.assertNotIn("shape", q)
         self.assertEqual(len(q["tmdb_id"]), 1)
+        # The same settings drawn 16:9 for landscape rows.
+        lq = parse_qs(urlsplit(metas[0]["landscapePoster"]).query)
+        self.assertEqual(lq["shape"], ["landscape"])
+        self.assertEqual(lq["tmdb_id"], ["11"])
+        self.assertEqual(lq["badge_display_mode"], ["6"])
 
     def test_anime_posters_are_requested_by_anilist_id(self):
         seg = _cfg_segment("badge_display_mode=4")
@@ -190,6 +195,8 @@ class AddonConfigTests(_AddonTest):
         self.assertIn("stremio_id=anilist%3A5", metas[0]["poster"])
         self.assertIn("type=series", metas[0]["poster"])
         self.assertTrue(metas[0]["poster"].startswith("http://testserver/poster?"))
+        self.assertIn("stremio_id=anilist%3A5", metas[0]["landscapePoster"])
+        self.assertIn("shape=landscape", metas[0]["landscapePoster"])
 
     def test_settings_segment_works_on_manifest_and_paged_urls(self):
         seg = _cfg_segment("badge_display_mode=4")
@@ -200,6 +207,7 @@ class AddonConfigTests(_AddonTest):
     def test_without_settings_posters_stay_tmdb_art(self):
         metas = self._metas("/trending/sekrit/catalog/series/pp.trending.anime.json")
         self.assertNotIn("poster", metas[0])  # no stored art for this one
+        self.assertNotIn("landscapePoster", metas[0])
 
     def test_settings_without_an_access_key(self):
         main._cfg.ACCESS_KEY = ""

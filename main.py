@@ -5064,12 +5064,15 @@ def _public_base(request: Request) -> str:
 def _addon_poster_url(
     base: str, cfg: list[tuple[str, str]], key: str | None,
     endpoint: str, ctype: str, entry_id: str, imdb_id: str | None,
+    shape: str | None = None,
 ) -> str:
     if endpoint == "anime":
         ids = [("stremio_id", entry_id)]
     else:
         ids = [("tmdb_id", entry_id)] + ([("imdb_id", imdb_id)] if imdb_id else [])
     ids.append(("type", ctype))
+    if shape:
+        ids.append(("shape", shape))
     if key:
         ids.append(("access_key", key))
     return f"{base}/poster?{urlencode(ids + cfg)}"
@@ -5084,7 +5087,8 @@ async def _trending_catalog_meta(
     metadata addon understands it; otherwise the namespaced TMDB or AniList id.
 
     *poster_cfg* is (base, settings, access key) when the addon URL carried
-    poster settings: the item's poster is then a Posters+ render of it."""
+    poster settings: the item's poster, and its landscape poster, are then
+    Posters+ renders of it."""
     detail = details.get(entry_id) or {}
     if endpoint != "anime" and not detail.get("name") and _cfg.SERVER_TMDB_KEY:
         # A snapshot written before details were stored (or a source whose
@@ -5113,9 +5117,15 @@ async def _trending_catalog_meta(
                 except IdResolveError:
                     imdb_id = None
         meta_id = imdb_id or f"tmdb:{entry_id}"
+    landscape = None
     if poster_cfg is not None:
         base, settings, key = poster_cfg
         poster = _addon_poster_url(base, settings, key, endpoint, ctype, entry_id, imdb_id)
+        # The same settings drawn 16:9, for clients that lay a row out in
+        # landscape (Nuvio reads it from here, as AIOMetadata supplies it).
+        landscape = _addon_poster_url(
+            base, settings, key, endpoint, ctype, entry_id, imdb_id, shape="landscape",
+        )
     else:
         poster = detail.get("poster")
         if poster and poster.startswith("/"):
@@ -5125,6 +5135,7 @@ async def _trending_catalog_meta(
         "type": ctype,
         "name": detail.get("name") or meta_id,
         "poster": poster,
+        "landscapePoster": landscape,
         "posterShape": "poster",
         "releaseInfo": detail.get("year"),
     }

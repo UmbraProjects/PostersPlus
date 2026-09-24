@@ -2251,7 +2251,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
             <!-- Shown when the operator has TRENDING_CATALOGS_ENABLED on. -->
             <div class="field callout" id="trending-catalogs-field" style="display:none;">
-              <label class="field-label" data-tip="Install this in your client, or import it into AIOMetadata as a custom manifest with its cache time set to 0. The rows follow the same list as the Trending sashes, so each poster's &quot;#N Today&quot; matches its place in the row. The URL carries your current poster settings, so installed directly its posters are drawn with them; copy it again after changing settings.">Trending Catalogs Addon</label>
+              <label class="field-label" data-tip="Install this in your client, or import it into AIOMetadata as a custom manifest with its cache time set to 0. The rows follow the same list as the Trending sashes, so each poster's &quot;#N Today&quot; matches its place in the row. The URL carries your current poster settings for both shapes, so installed directly its posters (and landscape posters, for clients that show landscape rows) are drawn with them; copy it again after changing settings.">Trending Catalogs Addon</label>
               <input type="text" id="trending-catalogs-url" readonly onclick="this.select()">
             </div>
             <div class="cfg-sep">
@@ -4754,15 +4754,19 @@ function syncSecondaryLangVisibility() {
 const _ADDON_CFG_IDENTITY = ['tmdb_id', 'imdb_id', 'type', 'stremio_id', 'anilist_id',
                              'kitsu_id', 'access_key', 'shape'];
 function trendingAddonConfigSegment() {
-  // The full build carries portrait settings whichever view is showing; the
-  // catalogs are portrait rows, so the landscape-only settings are dropped.
-  const full = buildBaseParams({ usePlaceholders: false, full: true });
-  const qIdx = full.indexOf('?');
+  // Each catalog item gets a portrait poster and a landscape one, and the
+  // client picks by the row's layout, so this needs both shapes' settings.
+  // Nuvio's "{shape}" URL is exactly that: it carries both from whichever view
+  // is showing (the saved-settings build keeps the hidden shape's values out of
+  // the URL), leaves out only what both layouts default the same way, and
+  // puts the typed-in keys in literally.  Its id placeholders are dropped.
+  const url = buildBaseParams({ usePlaceholders: true, templateId: 'nuvio' });
+  const qIdx = url.indexOf('?');
   if (qIdx < 0) return '';
-  const p = new URLSearchParams(full.slice(qIdx + 1));
+  const p = new URLSearchParams(url.slice(qIdx + 1));
   _ADDON_CFG_IDENTITY.forEach(k => p.delete(k));
-  for (const k of [...p.keys()]) if (k.startsWith('landscape_') || k === 'badge_pos') p.delete(k);
-  const query = omitServerDefaults(p).toString();
+  for (const [k, v] of [...p]) if (v.includes('{')) p.delete(k);
+  const query = p.toString();
   if (!query) return '';
   return 'cfg-' + btoa(query).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
