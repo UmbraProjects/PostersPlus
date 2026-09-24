@@ -5,7 +5,7 @@
 #     /app/cache/discovery_overrides.json (inside the existing cache volume,
 #     no extra mount needed).
 #     See the docstring at the top of discovery.py for the full format,
-#     or the project README for a ready-made sample.
+#     or discovery_overrides.example.json for a ready-made sample.
 import os
 
 # Every operator-facing setting is declared through settings.env(): one call

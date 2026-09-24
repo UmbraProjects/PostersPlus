@@ -59,7 +59,7 @@ File format:
 "merge": provided entries are added to (and override) the built-in lists.
   Useful for adding names without losing the defaults.
 
-See the project README for a full sample file.
+See discovery_overrides.example.json for a full sample file.
 """
 
 from __future__ import annotations

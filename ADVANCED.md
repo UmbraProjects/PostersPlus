@@ -4,7 +4,7 @@ Tuning and debugging variables that are **not** in `.env.example`. These all hav
 working defaults and a running instance needs none of them.
 
 This covers the poster service. The Plex and Jellyfin sync scripts have their own
-variables (`PLEX_*`, `JELLYFIN_*`, `POSTERSPLUS_*`) documented in the README.
+variables (`PLEX_*`, `JELLYFIN_*`, `POSTERSPLUS_*`) documented in CONFIGURATION.md.
 
 Set them the same way as anything in `.env.example`: as environment variables on
 the container, or as lines in your `.env` — or from the admin dashboard, where
@@ -265,7 +265,7 @@ Rotten Tomatoes, Metacritic, Popcornmeter, Roger Ebert).
 
 ## Watchlist marker
 
-The everyday settings (`WATCHLIST_SOURCE`, `SIMKL_CLIENT_ID`, `TRAKT_CLIENT_ID`, `TRAKT_USERNAME`) are in the README. These are the rest.
+The everyday settings (`WATCHLIST_SOURCE`, `SIMKL_CLIENT_ID`, `TRAKT_CLIENT_ID`, `TRAKT_USERNAME`) are in [CONFIGURATION.md](CONFIGURATION.md#watchlist-marker). These are the rest.
 
 ### `WATCHLIST_REFRESH_MINUTES`
 

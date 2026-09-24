@@ -15,7 +15,7 @@ fork's `main`, and open the PR against `UmbraProjects:dev`.
 ## Adding a poster translation
 
 Poster text (genre labels and info-sash labels) is translated per language in
-`languages/<code>.json`. See the Poster Translations section of the README for
+`languages/<code>.json`. See the Poster Translations section of URL_REFERENCE.md for
 the full rules. The two that trip people up:
 
 - **Copy `languages/en.json` whole and translate only the values.** The keys are
@@ -48,7 +48,7 @@ nothing else to wire up. `group` must be one of `settings.GROUP_ORDER`, `kind`
 one of `settings.KINDS`, and `help` is required — a test checks all three.
 Mark it `advanced=True` if it is a tuning knob nobody needs to run an
 instance; those get a `### \`KEY\`` section in `ADVANCED.md`. Everything else
-gets a `KEY=` line (with a comment) in `.env.example`. The README's settings
+gets a `KEY=` line (with a comment) in `.env.example`. CONFIGURATION.md's settings
 reference is generated — run `python3 tools/settings_docs.py --write` — and
 `tests/test_settings_docs.py` fails if any of the three is out of step, or if
 a module reads a setting from `os.environ` behind the registry's back.

@@ -1,7 +1,7 @@
 """Every operator setting is declared once in config.py; these tests keep the
 three documents that describe them from drifting away from that registry.
 
-  README.md      generated reference block (tools/settings_docs.py --write)
+  CONFIGURATION.md  generated reference block (tools/settings_docs.py --write)
   .env.example   every everyday (non-advanced) setting has a KEY= line
   ADVANCED.md    every advanced setting has a `### KEY` section
 
@@ -32,8 +32,8 @@ ENV_ONLY = {
 BUILD_ONLY = {"BAKE_PPOCR_MODEL"}
 
 
-class ReadmeReferenceTests(unittest.TestCase):
-    def test_readme_reference_matches_the_registry(self):
+class ConfigurationReferenceTests(unittest.TestCase):
+    def test_configuration_reference_matches_the_registry(self):
         result = subprocess.run(
             [sys.executable, str(ROOT / "tools" / "settings_docs.py"), "--check"],
             capture_output=True, text=True, cwd=ROOT,
