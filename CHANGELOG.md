@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Importing a URL keeps you on this instance
+
+- Importing a URL copied from another instance no longer carries that
+  instance's address or access key over. Copy config now always points at
+  the instance you're using, with its own key, so switching instances is
+  just a matter of importing your old URL.
+
 ### Landscape score out of 10
 
 - Landscape gains the **Display score out of 10** switch portrait already had

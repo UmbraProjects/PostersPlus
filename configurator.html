@@ -6814,13 +6814,17 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     }
   }
 
-  // Domain, auth keys and media identity belong to the Core Config section and
-  // the current selection — skip them when restoring persisted *settings* so a
+  // API keys and media identity belong to the Core Config section and the
+  // current selection — skip them when restoring persisted *settings* so a
   // reload never clobbers the user's saved keys / language / chosen title.
+  //
+  // The domain and access key are never imported: both belong to the
+  // instance serving this page and are set once at startup from its own URL.
+  // A URL copied from another instance must come back out pointing here with
+  // this instance's key, or switching instances silently keeps every copied
+  // URL on the old one.
   if (!settingsOnly) {
-    // ── Domain & auth ──────────────────────────────────────────────────────
-    document.getElementById('cfg-domain').value = parsed.origin;
-    if (p.has('access_key'))  document.getElementById('cfg-access-key').value = p.get('access_key');
+    // ── Client ─────────────────────────────────────────────────────────────
     if (p.has('primary_client') && CLIENT_INSETS[p.get('primary_client')]) {
       _setEl('cfg-primary-client', p.get('primary_client'));
       onPrimaryClientChange({ rebuild: false });
