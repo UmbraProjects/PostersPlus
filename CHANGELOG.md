@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Hide Rating Until Released
+
+- A new **Hide Rating Until Released** switch (`hide_unreleased_rating=true`)
+  hides the score only on titles nobody can have watched yet: a film not out
+  in cinemas or anywhere else, or a series that has not aired an episode.
+  Trakt and IMDb accept ratings for announced titles, so a show years from
+  air could print a score from a handful of votes. Everything else keeps its
+  score, and a hidden one comes back by itself once the title is out: the
+  poster is re-rendered on the release-status schedule.
+- It uses the same release status as the info sash, but doesn't need the
+  status sash turned on, and turning it on doesn't add a sash or greyscale
+  the art. Films need a TMDB key, or Cinemeta, for their release dates.
+  Without either, a film's score is always shown.
+- A series TMDB still lists as "In Production" keeps its score once an
+  episode has aired. Films that have only had a festival premiere still
+  count as unreleased.
+
 ### One Nuvio URL for both shapes
 
 - Nuvio's custom poster pattern gained a `{shape}` placeholder, which its
