@@ -1428,6 +1428,13 @@ class RequestConfig:
     # encodes the rating as a colour is still the rating, so "hidden" has to
     # mean all of them or the switch would only half work.
     hide_rating: bool = False
+    # hide_rating, but only for a title nobody can have watched yet: a film
+    # not out in cinemas or anywhere else ("Production"), or a series that has
+    # not aired an episode.  Trakt and IMDb take scores for announced titles,
+    # and a handful of them printed on a show years from air reads as a
+    # verdict.  Decided per render, so the same URL shows the score the day
+    # the title comes out.
+    hide_unreleased_rating: bool = False
     # --- Landscape (16:9) rendering -------------------------------------
     # "portrait" (default, unchanged) | "landscape".  Landscape is a separate
     # renderer, not a variant of the portrait layout — see landscape.py.
@@ -1537,6 +1544,24 @@ def _landscape_view(params: dict) -> dict:
         if f"landscape_{name}" in params
     }
     return {**params, **overrides} if overrides else params
+
+
+def _unreleased_for_rating(status: str | None, media_type: str, tmdb_data: dict) -> bool:
+    """Whether hide_unreleased_rating should hide the score on this title.
+
+    *status* is the release status the sash reads.  Only "Production" counts —
+    "Cinema" is out, and people who have seen it are rating it.  A series can
+    sit at TMDB's "In Production" with episodes already aired (between
+    seasons, or a status nobody updated), and an aired episode is people
+    having watched it, so that keeps its score.
+    """
+    if status != "Production":
+        return False
+    if media_type in ("tv", "series"):
+        aired = _parse_tmdb_date((tmdb_data.get("last_episode") or {}).get("air_date"))
+        if aired is not None and aired <= datetime.now().date():
+            return False
+    return True
 
 
 def _parse_bool(val: str | None, default: bool) -> bool:
@@ -1799,6 +1824,7 @@ def build_request_config(params: dict) -> RequestConfig:
         except ValueError: pass
     cfg.hide_genre = _b("hide_genre", cfg.hide_genre)
     cfg.hide_rating = _b("hide_rating", cfg.hide_rating)
+    cfg.hide_unreleased_rating = _b("hide_unreleased_rating", cfg.hide_unreleased_rating)
 
     cfg.shape = _normalise_shape(params.get("shape"))
     _ls_art = (params.get("landscape_art") or "").strip().lower()
@@ -7241,7 +7267,8 @@ async def get_poster(
                 (get_cached_movie_release_info(f"movie_{tmdb_id}") or {}).get("digital_date"))
             return (_scheduled_digital is None
                     or (_scheduled_digital - datetime.now().date()).days <= _LEAK_LEAD_DAYS)
-        if any(s in rcfg.sash_priority for s in _rs_slots):
+        _status_sash = any(s in rcfg.sash_priority for s in _rs_slots)
+        if _status_sash or rcfg.hide_unreleased_rating:
             # Resolved for every title regardless of age.  There used to be an
             # age gate here that skipped the lookup for anything older than a
             # configurable limit, but it silently blanked the status on older
@@ -7309,6 +7336,18 @@ async def get_poster(
             # skipped (and lower-priority sashes can surface) for released titles.
             if rcfg.release_status_cinema_only and _release_status not in ("Cinema", "Production"):
                 _release_status = None
+
+        # Read before the status is dropped below, which it is when only
+        # hide_unreleased_rating asked for it: the status also drives the
+        # sash and the greyscale art, and neither was asked for.
+        _hide_unreleased = (rcfg.hide_unreleased_rating
+                            and _unreleased_for_rating(_release_status, type, tmdb_data))
+        # Kept for the composite TTL either way: a render with the score
+        # hidden has to re-check on the status tier so the score appears once
+        # the title is out.
+        _status_for_ttl = _release_status
+        if not _status_sash:
+            _release_status = None
 
         # An unreleased movie with a published date wears the date and the
         # window it opens instead of the bare status ("Oct 16 Cinema").
@@ -7424,6 +7463,7 @@ async def get_poster(
                 "sash_priority":     _sash_priority,
                 "badge_display_mode":rcfg.badge_display_mode,
                 "rating_display_mode":rcfg.rating_display_mode,
+                "rating_hidden_unreleased": _hide_unreleased,
             })
 
         # ------------------------------------------------------------------
@@ -7494,9 +7534,11 @@ async def get_poster(
             has_burned_in_text=(_suppress_overlay is True),
         )
 
+        _render_cfg = dataclasses.replace(rcfg, hide_rating=True) if _hide_unreleased else rcfg
+
         def _composite_and_encode() -> bytes:
             _render = build_landscape if _is_landscape else build_poster
-            result = _render(image, score, genre, rcfg, **_bp_args)
+            result = _render(image, score, genre, _render_cfg, **_bp_args)
             buf = io.BytesIO()
             _quality = _cfg.WEBP_QUALITY if _cfg.IMAGE_FORMAT == "webp" else _cfg.JPEG_QUALITY
             result.convert("RGB").save(buf, format=_cfg.IMAGE_FORMAT.upper(), quality=_quality)
@@ -7540,8 +7582,8 @@ async def get_poster(
                 _sash_result = pick_sash(discovery_meta, _sash_priority)
                 if _sash_result and _sash_result[1] in ("trending", "trending_broad"):
                     _ttl_override = 86400
-            if _release_status:
-                _status_ttl = release_status_ttl_seconds(_release_status)
+            if _status_for_ttl:
+                _status_ttl = release_status_ttl_seconds(_status_for_ttl)
                 _ttl_override = (
                     _status_ttl if _ttl_override is None
                     else min(_ttl_override, _status_ttl)

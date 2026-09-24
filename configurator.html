@@ -2831,6 +2831,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
+              <div id="hide-unreleased-rating-home"></div>
+              <div class="toggle-row" id="hide-unreleased-rating-row">
+                <span class="toggle-label" data-tip="Hides the score, as Hide Rating does, only on titles nobody can have watched yet: a film not out in cinemas or anywhere else, or a series that has not aired an episode. The score comes back on its own once the title is out. Films need a TMDB key or Cinemeta to know their release dates.">Hide Rating Until Released</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-hide-unreleased-rating" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
               <!-- Score-out-of-10 toggles: one per rating mode that prints a
                    numeric score. Grouped here rather than inside each mode's
                    own block so every mode-agnostic toggle sits together. -->
@@ -5160,6 +5168,9 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   }
   params.set('release_status_cinema_only', c('tog-release-cinema-only') ? 'true' : 'false');
   params.set('release_status_dates', c('tog-release-dates') ? 'true' : 'false');
+  // One value for both shapes: whether a title is out does not depend on
+  // which layout is drawing it.
+  params.set('hide_unreleased_rating', c('tog-hide-unreleased-rating') ? 'true' : 'false');
 
   // Landscape draws its one badge its own way: the mode only decides whether
   // it is drawn, the priority list what it says.  Everything else here is
@@ -6101,6 +6112,7 @@ const _PORTRAIT_ONLY_TABS = ['rating', 'logo', 'quality'];
 const _DOCKED_ROWS = [
   { id: 'hide-genre-row',  home: 'hide-genre-home' },
   { id: 'hide-rating-row', home: 'hide-rating-home' },
+  { id: 'hide-unreleased-rating-row', home: 'hide-unreleased-rating-home' },
   { id: 'textless-row',    home: 'textless-home' },
 ];
 
@@ -6636,6 +6648,7 @@ const _BOTH_SHAPES_CONTROLS = new Set([
   'cfg-language', 'cfg-language-secondary', 'cfg-logo-priority',
   'tog-fallback-imdb', 'cfg-imdb-rating-source', 'cfg-tmdb-rating-source',
   'tog-release-cinema-only', 'tog-release-dates', 'tog-anime-weights',
+  'tog-hide-unreleased-rating',
   'cfg-primary-client', 'cfg-domain', 'cfg-access-key', 'cfg-tmdb-key', 'cfg-mdblist-key',
   'cfg-search-query',
 ]);
@@ -6926,6 +6939,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('cinema_greyscale_skip_if_available')) _setEl('tog-cinema-greyscale-skip', p.get('cinema_greyscale_skip_if_available'));
   if (p.has('release_status_cinema_only')) _setEl('tog-release-cinema-only', p.get('release_status_cinema_only'));
   if (p.has('release_status_dates')) _setEl('tog-release-dates', p.get('release_status_dates'));
+  if (p.has('hide_unreleased_rating')) _setEl('tog-hide-unreleased-rating', p.get('hide_unreleased_rating'));
 
   if (p.has('muted'))           _setEl('tog-muted',         p.get('muted'));
   // sash_mode supersedes the legacy show_award_sash + sash_badge bools.
