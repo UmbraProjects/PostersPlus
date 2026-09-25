@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Faster, more accurate burned-in-text scans
+
+- Textless posters are scanned for burned-in text in two passes: first at
+  0.65x size, then at full size only when the small pass comes back clear but
+  still found a title-sized block of text (about a quarter of scans). A scan
+  takes roughly a third less time: ~85 ms instead of ~130 ms for a typical
+  clean poster on a 4-core ARM host.
+- Fixes a mismatch between detected text boxes and their confidence scores.
+  RapidOCR sorted the boxes without their scores, so the size, position and
+  confidence rules were often judging one box by another's score. The detector
+  is now driven directly, which also drops some wasted preprocessing.
+- On ~2,900 cached posters, checking every changed verdict by eye: 4 wrong,
+  against 25 before. Stylised titles are caught more often, and signs,
+  shirts and chalkboards in the scene are less often mistaken for a title.
+- Cached scan results are redone under the new detector signature, so each
+  textless poster is scanned once more as it is next requested.
+
 ### Landscape star beside the score
 
 - Landscape gains a **Star beside score** switch (`landscape_score_star=true`),
