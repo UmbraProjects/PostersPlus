@@ -733,7 +733,9 @@ async def fetch_poster_image(
 #        low-confidence false-positive blob can no longer outrank a smaller,
 #        genuinely-confident face purely on bounding-box size (see
 #        face_detect.detect_faces docstring — observed on TMDB 450545)
-_CROP_VERSION = "v5"
+#   v6 = retry face detection at half size when none are found, for close-ups
+#        too large for YuNet at native size (TMDB 1751701)
+_CROP_VERSION = "v6"
 
 
 def _face_crop_left(image: Image.Image, crop_w: int) -> "int | None":

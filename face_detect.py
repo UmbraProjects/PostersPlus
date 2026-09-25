@@ -34,10 +34,19 @@ _MODEL_PATH = _cfg.YUNET_MODEL_PATH or os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "models", "face_detection_yunet.onnx",
 )
 _SCORE_THRESHOLD = 0.6
+# An image this wide with no faces found is scanned again at half size.  YuNet
+# misses big close-ups at native size — a 430 px face in a 1280 px backdrop
+# (TMDB 1751701) scores 0.84 at half size and nothing at full — so without the
+# retry the crop falls back to saliency and can frame a wall or a hood.  On 300
+# cached backdrops it found faces in 12 of the 56 with none, improving 4 crops
+# and worsening none.
+_RETRY_MIN_WIDTH = 640
 
 # Part of every face_box_cache key, so a different model or threshold never
 # reuses boxes another detector found.
-DETECTOR_SIGNATURE = f"yunet:{os.path.basename(_MODEL_PATH)}:{_SCORE_THRESHOLD}"
+DETECTOR_SIGNATURE = (
+    f"yunet:{os.path.basename(_MODEL_PATH)}:{_SCORE_THRESHOLD}:half{_RETRY_MIN_WIDTH}"
+)
 
 _detector = None
 _load_failed = False
@@ -118,13 +127,26 @@ def detect_face_boxes(image) -> list[tuple[float, float, float, float, float]]:
         h, w = arr.shape[:2]
         if h == 0 or w == 0:
             return []
-        with _infer_lock:
-            det.setInputSize((w, h))
-            _n, faces = det.detect(arr)
-        if faces is None:
-            return []
-        return [(float(f[0]), float(f[1]), float(f[2]), float(f[3]), float(f[-1]))
-                for f in faces]
+        faces = _detect_at(det, arr)
+        if not faces and w >= _RETRY_MIN_WIDTH:
+            # Nothing at native size: look again at half size, for faces too
+            # large for the model to pick up at native size.
+            small = _cv2.resize(arr, (w // 2, h // 2), interpolation=_cv2.INTER_AREA)
+            sx, sy = w / (w // 2), h / (h // 2)
+            faces = [(x * sx, y * sy, fw * sx, fh * sy, score)
+                     for x, y, fw, fh, score in _detect_at(det, small)]
+        return faces
     except Exception as exc:
         logger.warning(f"face detect error: {exc}")
         return []
+
+
+def _detect_at(det, bgr) -> list[tuple[float, float, float, float, float]]:
+    h, w = bgr.shape[:2]
+    with _infer_lock:
+        det.setInputSize((w, h))
+        _n, faces = det.detect(bgr)
+    if faces is None:
+        return []
+    return [(float(f[0]), float(f[1]), float(f[2]), float(f[3]), float(f[-1]))
+            for f in faces]

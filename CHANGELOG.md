@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Backdrop crops find close-up faces
+
+- When no face is found in a backdrop, it is checked again at half size. The
+  face detector misses large close-ups at full size, so the portrait crop fell
+  back to a guess and could frame a wall, a background or the back of a hood
+  instead of the actor. Cached backdrop crops are redone.
+
 ### Faster, more accurate burned-in-text scans
 
 - Textless posters are scanned for burned-in text in two passes: first at
