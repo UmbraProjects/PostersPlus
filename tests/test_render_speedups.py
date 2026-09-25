@@ -59,7 +59,8 @@ class FrostBandTests(unittest.TestCase):
 
 
 def _per_pixel_frost(image, box, ramp, blur):
-    """The pre-optimisation _vignette_frost_band, verbatim bar the blend."""
+    """The pre-optimisation _vignette_frost_band, verbatim bar the blend and the
+    bilinear upscale (both paths now upscale blurred levels bilinearly)."""
     from PIL import ImageFilter
     x0, y0, x1, y1 = box
     radius = (x1 - x0) * main._VIGNETTE_BLUR_MAX_RATIO * blur
@@ -73,7 +74,7 @@ def _per_pixel_frost(image, box, ramp, blur):
             small = band.resize((max(1, band.width // shrink), max(1, band.height // shrink)),
                                 Image.Resampling.BOX)
             out = small.filter(ImageFilter.GaussianBlur(r / shrink)).resize(
-                band.size, Image.Resampling.BICUBIC)
+                band.size, Image.Resampling.BILINEAR)
         else:
             out = band.filter(ImageFilter.GaussianBlur(r))
         return np.asarray(out, dtype=np.float32)

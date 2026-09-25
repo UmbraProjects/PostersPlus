@@ -1337,66 +1337,6 @@ def _text_center(
     return x, y
 
 
-def _sash_body_cairo(
-    sl: int,
-    sh: int,
-    hi: tuple[int, int, int, int],
-    lo: tuple[int, int, int, int],
-    border_colour: tuple[int, int, int, int],
-    margin: int,
-    edge: int,
-) -> "Image.Image | None":
-    """
-    Cairo-rasterised sash body used only when muted=True.
-
-    The muted path scales the final sash's alpha by 0.8, which amplifies
-    differences in edge softness — cairo's properly antialiased fills
-    survive the rotation + downsample with cleaner edges than PIL's
-    per-row line draw, so the muted look is visibly nicer.
-
-    Default (un-muted) renders use the PIL path because the visual
-    difference is sub-perceptual there and PIL is ~4x faster on this body.
-    Returns None if pycairo is unavailable so the caller can fall back.
-    """
-    if not _HAS_CAIRO:
-        return None
-
-    surface = _cairo.ImageSurface(_cairo.FORMAT_ARGB32, sl, sh)
-    ctx     = _cairo.Context(surface)
-    ctx.set_antialias(_cairo.ANTIALIAS_BEST)
-
-    grad = _cairo.LinearGradient(0, 0, 0, sh)
-    grad.add_color_stop_rgba(0.0, lo[0] / 255, lo[1] / 255, lo[2] / 255, lo[3] / 255)
-    grad.add_color_stop_rgba(0.5, hi[0] / 255, hi[1] / 255, hi[2] / 255, hi[3] / 255)
-    grad.add_color_stop_rgba(1.0, lo[0] / 255, lo[1] / 255, lo[2] / 255, lo[3] / 255)
-    ctx.set_source(grad)
-    ctx.rectangle(0, 0, sl, sh)
-    ctx.fill()
-
-    ctx.set_source_rgba(8 / 255, 8 / 255, 14 / 255, 245 / 255)
-    ctx.rectangle(0, margin, sl, sh - 2 * margin)
-    ctx.fill()
-
-    br, bg, bb, ba = border_colour
-    ctx.set_source_rgba(br / 255, bg / 255, bb / 255, ba / 255)
-    ctx.rectangle(0, 0, sl, edge)
-    ctx.fill()
-    ctx.rectangle(0, sh - edge, sl, edge)
-    ctx.fill()
-
-    surface.flush()
-
-    # ARGB32 → RGBA. Body is always fully opaque, so a plain channel swap is
-    # sufficient (no un-premultiplication needed). Stride may exceed sl*4 for
-    # SIMD alignment so we crop before reshaping.
-    stride = surface.get_stride()
-    buf    = bytes(surface.get_data())
-    arr    = np.frombuffer(buf, dtype=np.uint8).reshape((sh, stride))[:, : sl * 4]
-    arr    = arr.reshape((sh, sl, 4))
-    rgba   = arr[:, :, [2, 1, 0, 3]].copy()
-    return Image.fromarray(rgba)
-
-
 # Formerly used to auto-star awards whose winner and nominee shared the same
 # label text ("Best Picture", "Golden Globe").  Those labels were renamed to
 # "Oscar Winner"/"Oscar Nominee" and "Globe Winner"/"Globe Nominee" so the
@@ -1462,7 +1402,10 @@ def _dominant_cluster(
     # mean is exactly what smeared them into an invented average.
     small = region.convert("RGB")
     if max(small.size) > 64:
-        small = small.resize((48, 48), Image.Resampling.LANCZOS)
+        # reducing_gap box-reduces a whole poster most of the way first, so
+        # LANCZOS only finishes the last 2x (≤2/255 difference, a fraction of
+        # the cost).
+        small = small.resize((48, 48), Image.Resampling.LANCZOS, reducing_gap=2.0)
     try:
         q = small.quantize(colors=12, method=Image.Quantize.FASTOCTREE)
     except Exception:
@@ -1741,7 +1684,9 @@ def draw_award_badge(
         region = image.crop((bx, crop_y, bx + badge_w, crop_y + badge_h))
         blur_r = max(4, int(badge_h * 0.35))
         blurred = region.filter(ImageFilter.GaussianBlur(radius=blur_r))
-        blurred_ss = blurred.resize((bw, bh), Image.Resampling.LANCZOS).convert("RGBA")
+        # Bilinear: the crop is already a heavy blur, so LANCZOS's extra taps add
+        # cost and nothing visible.
+        blurred_ss = blurred.resize((bw, bh), Image.Resampling.BILINEAR).convert("RGBA")
 
         # Dominant colour of the actual poster region (a real cluster, not a
         # muddy mean — see dominant_frost_rgb).  tint_rgb (when supplied) overrides
@@ -2025,10 +1970,9 @@ def draw_award_sash(
     width, height = image.size
     left = side == "left"
 
-    # SS = supersample factor. 2× supersample + LANCZOS downsample gives edges
-    # and text that are visually indistinguishable from 3× after JPEG, but cuts
-    # the rotation + downsample cost roughly in half (the dominant phases of the
-    # whole sash pipeline). Drop to 1 only if you can also drop the rotation.
+    # SS = supersample factor.  The band is drawn at SS× and box-reduced, which
+    # anti-aliases its edges and the label.  2× leaves visibly stepped edges on
+    # the diagonal; 3× does not.
     SS          = 3
     sash_length = int(width * length_ratio)
     sash_height = int(width * height_ratio)
@@ -2071,21 +2015,57 @@ def draw_award_sash(
 
     margin = int(sh * 0.12)
     edge   = max(2 * SS, sh // 18)
+    # The muted sash has always had a faintly blue-black centre.
+    dark   = (8, 8, 14, 245) if muted else (8, 8, 8, 245)
 
-    # Body rendering: cairo when muted (smoother edges survive the 0.8 alpha
-    # scale visibly), PIL otherwise (sub-perceptual difference + ~4x faster).
-    sash = _sash_body_cairo(sl, sh, hi, lo, border_colour, margin, edge) if muted else None
-    if sash is None:
-        sash = Image.new("RGBA", (sl, sh), (0, 0, 0, 0))
-        d    = ImageDraw.Draw(sash)
-        half = sh // 2
-        for y in range(sh):
-            t = y / half if y < half else (sh - y) / half
-            colour = tuple(int(lo[i] * (1 - t) + hi[i] * t) for i in range(4))
-            d.line([(0, y), (sl, y)], fill=colour)
-        d.rectangle([(0, margin), (sl, sh - margin)], fill=(8, 8, 8, 245))
-        d.rectangle([(0, 0), (sl, edge)], fill=border_colour)
-        d.rectangle([(0, sh - edge), (sl, sh)], fill=border_colour)
+    # Geometry.  The sash is a horizontal sl×sh strip turned 45° about its
+    # centre — clockwise in the top-right corner (label reads downhill), counter-
+    # clockwise in the top-left (reads uphill) — and hung so 68 % of its turned
+    # bounding box overlaps the poster.  Rather than draw that strip and rotate
+    # it (a ~1350² px bicubic resample of mostly empty canvas, which was most of
+    # the render's time), the band's edges are mapped straight onto a canvas
+    # covering only the part of the poster it touches, and only the small label
+    # layer is rotated.
+    _a = math.radians(45)
+    rw = math.ceil((sl + sh) * math.cos(_a))          # turned bounding box at SS
+    sw = rw // SS
+    # rw / SS (not the floored sw) on the left, so the two corners are exact
+    # mirror images rather than a sub-pixel apart.
+    x0 = (int(sw * 0.68) - rw / SS) if left else (width - int(sw * 0.68))
+    y0 = -int(sw * 0.32)
+    ct, st = math.cos(_a), math.sin(-_a if left else _a)
+
+    def _to_poster(u: float, v: float) -> tuple[float, float]:
+        """Strip coordinates at SS → poster coordinates at 1×."""
+        du, dv = u - sl / 2, v - sh / 2
+        return (x0 + (rw / 2 + du * ct - dv * st) / SS,
+                y0 + (rw / 2 + du * st + dv * ct) / SS)
+
+    corners = [_to_poster(u, v) for u, v in ((0, 0), (sl, 0), (sl, sh), (0, sh))]
+    pad = 32   # beyond the poster edge, so the shadow blur has real band to spread
+    ox = max(math.floor(min(p[0] for p in corners)), -pad)
+    oy = max(math.floor(min(p[1] for p in corners)), -pad)
+    ex = min(math.ceil(max(p[0] for p in corners)), width + pad)
+    ey = min(math.ceil(max(p[1] for p in corners)), height + pad)
+
+    def _q(u: float, v: float) -> tuple[float, float]:
+        px, py = _to_poster(u, v)
+        return ((px - ox) * SS, (py - oy) * SS)
+
+    def _band(v0: float, v1: float) -> list[tuple[float, float]]:
+        return [_q(0, v0), _q(sl, v0), _q(sl, v1), _q(0, v1)]
+
+    canvas = Image.new("RGBA", ((ex - ox) * SS, (ey - oy) * SS), (0, 0, 0, 0))
+    d = ImageDraw.Draw(canvas)
+    # Border, then the gradient rows between border and centre, then the dark
+    # centre.  Each is a band nested inside the last, so the thin diagonal
+    # gradient rows overlap rather than abut and can never leave a gap.
+    d.polygon(_band(0, sh), fill=border_colour)
+    half = sh // 2
+    for y in range(edge + 1, margin):
+        t = y / half
+        d.polygon(_band(y, sh - y), fill=tuple(int(lo[i] * (1 - t) + hi[i] * t) for i in range(4)))
+    d.polygon(_band(margin, sh - margin), fill=dark)
 
     base_size     = sash_height * 0.4
     adjusted_size = sash_height * 0.85 / (len(label) ** 0.35)
@@ -2097,23 +2077,29 @@ def draw_award_sash(
     except IOError:
         font = ImageFont.load_default()
 
-    band_cx = sl / 2
-    band_cy = margin + (sh - 2 * margin) / 2
-
-    text_layer = Image.new("RGBA", sash.size, (0, 0, 0, 0))
+    # Label: drawn level on a layer just wide enough for it, centred on the band,
+    # then that layer alone is turned and laid on the band.
+    _probe = ImageDraw.Draw(Image.new("L", (1, 1)))
+    _bb    = _probe.textbbox((0, 0), label, font=font)
+    lw     = max(1, int(_bb[2] - _bb[0] + 8 * SS))
+    text_layer = Image.new("RGBA", (lw, sh), (0, 0, 0, 0))
     td         = ImageDraw.Draw(text_layer)
 
     _txt_rgb = text_color if text_color is not None else (225, 225, 225)
-    tx, ty = _text_center(td, label, font, band_cx, band_cy)
+    tx, ty = _text_center(td, label, font, lw / 2, sh / 2)
     td.text((tx + 2 * SS, ty + 2 * SS), label, font=font, fill=(0, 0, 0, 180))
     td.text((tx, ty),                   label, font=font, fill=(*_txt_rgb, 225))
 
-    sash = Image.alpha_composite(sash, text_layer)
+    text_layer = text_layer.rotate(45 if left else -45, expand=True, resample=Image.Resampling.BICUBIC)
+    cx, cy = _q(sl / 2, sh / 2)
+    lx, ly = round(cx - text_layer.width / 2), round(cy - text_layer.height / 2)
+    sx0, sy0 = max(0, -lx), max(0, -ly)
+    sx1 = min(text_layer.width, canvas.width - lx)
+    sy1 = min(text_layer.height, canvas.height - ly)
+    if sx1 > sx0 and sy1 > sy0:
+        canvas.alpha_composite(text_layer, (lx + sx0, ly + sy0), (sx0, sy0, sx1, sy1))
 
-    # Top-right corner turns clockwise (label reads downhill); the top-left
-    # mirrors it, counter-clockwise (reads uphill).
-    sash = sash.rotate(45 if left else -45, expand=True, resample=Image.Resampling.BICUBIC)
-    sash = sash.resize((sash.width // SS, sash.height // SS), Image.Resampling.LANCZOS)
+    sash = canvas.reduce(SS)
 
     if muted:
         # Scale alpha to ~80% — sits level with the art rather than above it,
@@ -2128,13 +2114,9 @@ def draw_award_sash(
     shadow   = shadow.filter(ImageFilter.GaussianBlur(10))
 
     result   = image.copy()
-    offset_x = int(sash.width  * 0.68)
-    offset_y = int(sash.height * 0.32)
-    # Same overhang either way; the shadow falls down and away from the corner.
-    x      = offset_x - sash.width if left else width - offset_x
+    # The shadow falls down and away from the corner.
     shadow_dx = -6 if left else 6
-
-    result.paste(shadow, (x + shadow_dx, -offset_y + 6), shadow)
-    result.paste(sash,   (x,             -offset_y),     sash)
+    result.paste(shadow, (ox + shadow_dx, oy + 6), shadow)
+    result.paste(sash,   (ox,             oy),     sash)
 
     return result

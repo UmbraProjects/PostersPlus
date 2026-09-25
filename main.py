@@ -2939,42 +2939,59 @@ def _vignette_frost_band(
     depth = (np.asarray(ramp, dtype=np.float32) / peak) ** 2
 
     # Blur by reduction rather than running a wide Gaussian at full size: a box
-    # downscale, a small Gaussian, then a bicubic upscale is indistinguishable at
-    # these radii (max channel delta ~4/255) and roughly halves the cost at the
-    # default blur.  PIL's Gaussian is a box approximation whose cost barely moves
-    # with radius, so below a 3x reduction the resizes cost more than they save —
-    # hence the threshold rather than always taking this path.
+    # downscale, a small Gaussian, then an upscale is indistinguishable at these
+    # radii (max channel delta ~4/255) and roughly halves the cost at the default
+    # blur.  PIL's Gaussian is a box approximation whose cost barely moves with
+    # radius, so below a 3x reduction the resizes cost more than they save —
+    # hence the threshold rather than always taking this path.  The upscale is
+    # bilinear: the source is already a heavy blur, so bicubic's extra taps
+    # change nothing visible (≤2/255) and cost a third of the band's time.
     band = image.crop(box)
+    n    = len(_VIGNETTE_FROST_LEVELS)
 
-    def _blurred(r: float) -> np.ndarray:
+    def _blurred(r: float, r0: int = 0, r1: int | None = None) -> np.ndarray:
+        """The band blurred at radius r, rows r0:r1 only.  The blur itself always
+        runs over the whole band so the rows kept see the same neighbourhood."""
+        r1 = band.height if r1 is None else r1
         shrink = max(1, int(r / 4))
         if shrink > 2:
             small = band.resize((max(1, band.width // shrink), max(1, band.height // shrink)),
                                 Image.Resampling.BOX)
-            out = small.filter(ImageFilter.GaussianBlur(r / shrink)).resize(
-                band.size, Image.Resampling.BICUBIC)
+            small = small.filter(ImageFilter.GaussianBlur(r / shrink))
+            sy = small.height / band.height
+            out = small.resize((band.width, r1 - r0), Image.Resampling.BILINEAR,
+                               box=(0, r0 * sy, small.width, r1 * sy))
         else:
-            out = band.filter(ImageFilter.GaussianBlur(r))
+            out = band.filter(ImageFilter.GaussianBlur(r)).crop((0, r0, band.width, r1))
         return np.asarray(out, dtype=np.float32)
 
-    stack = np.stack([np.asarray(band, dtype=np.float32)]
-                     + [_blurred(radius * f) for f in _VIGNETTE_FROST_LEVELS[1:]])
-    # The bands' ramps are vertical, so depth is one value per row and the
-    # two levels each pixel blends between can be picked per row: plain row
-    # indexing instead of a per-pixel gather, same arithmetic, same result.
-    # A ramp that varies along a row still takes the per-pixel path.
+    pos = depth * (n - 1)
+    lo  = np.minimum(pos.astype(np.int32), n - 2)
     if (depth == depth[:, :1]).all():
-        depth = depth[:, 0]
-        rows = np.arange(depth.shape[0])
+        # The bands' ramps are vertical, so depth is one value per row and each
+        # blur level feeds only the rows whose depth sits either side of it — a
+        # contiguous run, since the ramp is monotonic.  Upscaling just that run
+        # of each level, instead of all of them across the whole band, is most of
+        # this function's saving.
+        lo   = lo[:, 0]
+        frac = (pos[:, 0] - lo)[:, None, None]
+        sharp = np.asarray(band, dtype=np.float32)
+        a = np.empty_like(sharp)
+        b = np.empty_like(sharp)
+        for k in range(n):
+            rows = np.nonzero((lo == k) | (lo == k - 1))[0]
+            if rows.size == 0:
+                continue
+            r0, r1 = int(rows[0]), int(rows[-1]) + 1
+            lvl = sharp[r0:r1] if k == 0 else _blurred(radius * _VIGNETTE_FROST_LEVELS[k], r0, r1)
+            as_a = lo[r0:r1] == k
+            as_b = lo[r0:r1] == k - 1
+            a[r0:r1][as_a] = lvl[as_a]
+            b[r0:r1][as_b] = lvl[as_b]
     else:
-        rows = None
-    pos  = depth * (len(_VIGNETTE_FROST_LEVELS) - 1)
-    lo   = np.minimum(pos.astype(np.int32), len(_VIGNETTE_FROST_LEVELS) - 2)
-    if rows is not None:
-        frac = (pos - lo)[:, None, None]
-        a = stack[lo, rows]
-        b = stack[lo + 1, rows]
-    else:
+        # A ramp that varies along a row: every level everywhere, gathered per pixel.
+        stack = np.stack([np.asarray(band, dtype=np.float32)]
+                         + [_blurred(radius * f) for f in _VIGNETTE_FROST_LEVELS[1:]])
         frac = (pos - lo)[..., None]
         a = np.take_along_axis(stack, lo[None, ..., None], axis=0)[0]
         b = np.take_along_axis(stack, lo[None, ..., None] + 1, axis=0)[0]
@@ -2999,6 +3016,16 @@ def _vignette_fog_ramp(height: int, max_alpha: int, rising: bool) -> np.ndarray:
     return s * s * (3.0 - 2.0 * s) * max_alpha
 
 
+@lru_cache(maxsize=16)
+def _dither_noise(shape: tuple[int, ...]) -> np.ndarray:
+    """Half-a-level dither for _vignette_composite.  Seeded, so identical for a
+    given band shape on every render — generate it once per shape and reuse it
+    (read-only) rather than drawing ~half a million floats each time."""
+    noise = np.random.default_rng(0).uniform(-0.5, 0.5, shape).astype(np.float32)
+    noise.flags.writeable = False
+    return noise
+
+
 def _vignette_composite(
     image: Image.Image, y0: int, tint: Image.Image, alpha: np.ndarray
 ) -> None:
@@ -3020,7 +3047,7 @@ def _vignette_composite(
     if a.ndim == 2:                                  # a per-row profile
         a = a[:, None, :]
     rgb = arr[..., :3] * (1.0 - a) + col * a
-    rgb += np.random.default_rng(0).uniform(-0.5, 0.5, rgb.shape).astype(np.float32)
+    rgb += _dither_noise(rgb.shape)
     arr[..., :3] = rgb
     image.paste(Image.fromarray(np.clip(np.round(arr), 0, 255).astype(np.uint8)),
                 (0, y0))
@@ -5545,7 +5572,10 @@ _configurator_etag: str | None = None
 # "7": landscape layout retuned — shallower band, larger shadowed info pill,
 #      logo no longer capped by the band, wide logos preferred — so every
 #      landscape composite cached before it is the old layout.
-_RENDER_CACHE_VERSION = "7"
+# "8": the diagonal sash is drawn straight onto the corner instead of as a
+#      rotated strip, and the frost/notch blurs upscale bilinearly — sub-pixel
+#      differences only, but bumped so clients pick up the faster renderer.
+_RENDER_CACHE_VERSION = "8"
 
 # How far ahead of TMDB's scheduled digital date an r/movieleaks post is still
 # believed (see _leak_confirmed in get_poster).  Genuine early releases beat the
