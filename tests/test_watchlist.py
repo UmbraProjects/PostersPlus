@@ -222,7 +222,11 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
             async with _fake_client(handler) as client:
                 self.assertIsNone(await watchlist.refresh(client))
         self.assertTrue(watchlist.is_listed("tt0000001", None, "movie"))
-        self.assertIn("HTTPStatusError", watchlist.status()["last_error"])
+        # Status and host, never httpx's message: that carries the request
+        # URL with ?apikey=, and status() is served on public endpoints.
+        self.assertEqual(
+            watchlist.status()["last_error"], "HTTP 500 from https://api.mdblist.com/watchlist/items"
+        )
 
     async def test_simkl_reads_the_lists_only_when_activities_moved(self):
         seen: list[str] = []

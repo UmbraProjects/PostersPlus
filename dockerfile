@@ -59,10 +59,17 @@ RUN if [ "$BAKE_PPOCR_MODEL" = "true" ]; then \
 
 RUN adduser --disabled-password --gecos '' appuser
 
-# Copy app files and set ownership on everything except the cache dir,
-# which is a runtime volume mount — permissions are fixed by entrypoint.sh.
+# The code stays owned by root, so the process serving requests cannot rewrite
+# its own code or pages; the cache volume is the only thing it writes, and
+# entrypoint.sh hands that to appuser.  (A `chown -R` here also used to copy
+# every file into a second layer, static/ included, ~80 MB for nothing.)
+# The bytecode is compiled now for the same reason: appuser cannot write
+# __pycache__, and main.py is large enough that every worker compiling it at
+# start-up is noticeable.
 COPY . .
-RUN chown -R appuser:appuser /app
+RUN python3 -m compileall -q -l /app \
+    && mkdir -p /app/cache \
+    && chown appuser:appuser /app/cache
 
 # Run as root so entrypoint.sh can fix cache volume permissions at startup,
 # then it drops to appuser via gosu before exec-ing uvicorn.

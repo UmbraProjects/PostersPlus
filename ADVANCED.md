@@ -148,6 +148,12 @@ Disable composite poster caching entirely. Every request re-renders from scratch
 
 Default: `false`
 
+### `PUBLIC_URL`
+
+The address clients reach this instance on, e.g. `https://posters.example.com`. The [trending catalogs addon](CONFIGURATION.md#trending-catalogs-addon) puts it in front of every poster link it hands out. Left blank, it is worked out from each request's `Host`, `X-Forwarded-Host` and `X-Forwarded-Proto` headers, which works behind most reverse proxies. The catch is that those headers come from the client: behind a CDN or shared cache that does not key on them, a forged header could point a cached catalog's posters at another host. Setting this removes the guesswork.
+
+Default: blank (derived from the request)
+
 ---
 
 ## Ratings without MDBList

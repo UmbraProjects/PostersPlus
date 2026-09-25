@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -222,6 +223,14 @@ def _normalize_scraper_url(url: str) -> str:
     return url.rstrip("/")
 
 
+def _scraper_host(url: str) -> str:
+    """Scheme and host of a scraper URL, for logs.  Torrentio, Comet and
+    friends carry their whole config — debrid API key included — in the path,
+    so the query-stripping sanitiser used for other sources is not enough."""
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.hostname or '?'}"
+
+
 def _tokens_from_stremio_stream(
     name: str,
     title: str,
@@ -312,13 +321,13 @@ async def fetch_quality_from_scraper(
     url = f"{base}/stream/{stream_type}/{stream_id}.json"
 
     try:
-        logger.info(f"External API Call: Stremio scraper quality fetch for {imdb_id} → {url}")
+        logger.info(f"External API Call: Stremio scraper quality fetch for {stream_id} → {_scraper_host(url)}")
         resp = await client.get(url, timeout=20.0, follow_redirects=True)
 
         if resp.status_code != 200:
             logger.warning(
-                f"Scraper returned {resp.status_code} for {imdb_id} "
-                f"(url={url})"
+                f"Scraper returned {resp.status_code} for {stream_id} "
+                f"({_scraper_host(url)})"
             )
             # For series, fall back to a show-level lookup (no season/episode).
             # Some addons support this and it avoids failures when a specific
@@ -326,7 +335,7 @@ async def fetch_quality_from_scraper(
             if is_series:
                 fallback_url = f"{base}/stream/series/{imdb_id}.json"
                 logger.info(
-                    f"Trying show-level series fallback for {imdb_id} → {fallback_url}"
+                    f"Trying show-level series fallback for {imdb_id} → {_scraper_host(fallback_url)}"
                 )
                 resp = await client.get(fallback_url, timeout=20.0, follow_redirects=True)
                 if resp.status_code != 200:
@@ -690,13 +699,13 @@ def _resize_premultiplied(img: Image.Image, size: tuple[int, int]) -> Image.Imag
     arr = np.array(img, dtype=np.float32)          # H×W×4, values 0–255
     alpha = arr[..., 3:4] / 255.0                  # normalised alpha, H×W×1
     arr[..., :3] *= alpha                           # premultiply RGB
-    pre = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
+    pre = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
     pre = pre.resize(size, Image.Resampling.LANCZOS)
     arr2 = np.array(pre, dtype=np.float32)
     alpha2 = arr2[..., 3:4] / 255.0
     nonzero = alpha2[..., 0] > 0
     arr2[nonzero, :3] /= alpha2[nonzero]           # un-premultiply where visible
-    result = Image.fromarray(np.clip(arr2, 0, 255).astype(np.uint8), "RGBA")
+    result = Image.fromarray(np.clip(arr2, 0, 255).astype(np.uint8))
 
     # Sharpen only the RGB channels; leave alpha intact to avoid edge ringing.
     r, g, b, a = result.split()

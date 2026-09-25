@@ -1,0 +1,50 @@
+name: Tests
+
+# The Docker workflow only proves the image builds; this runs the suite, so a
+# regression is caught on the PR rather than on the first instance to pull it.
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+  push:
+    branches:
+      - dev
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - 'Showcase/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # The image's interpreter (dockerfile: python:3.11-slim).
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install cairo headers
+        # pycairo builds from source against them, as in the image's builder stage.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libcairo2-dev pkg-config
+
+      - name: Install dependencies
+        # Same substitution as the dockerfile: RapidOCR declares the GUI OpenCV
+        # wheel, the image ships the headless one in its place.
+        run: |
+          pip install -r requirements.txt pytest
+          pip uninstall -y opencv-python
+          pip install --force-reinstall --no-deps 'opencv-python-headless>=4.8,<5'
+
+      - name: Run tests
+        run: python -m pytest -q

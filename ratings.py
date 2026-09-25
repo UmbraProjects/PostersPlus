@@ -423,7 +423,7 @@ def _cairo_pill_mask(w: int, h: int, radius: int) -> Image.Image:
         surface.flush()
         stride = surface.get_stride()
         arr = np.frombuffer(bytes(surface.get_data()), dtype=np.uint8).reshape((h, stride))[:, :w].copy()
-        return Image.fromarray(arr, "L")
+        return Image.fromarray(arr)
     else:
         mask = Image.new("L", (w, h), 0)
         ImageDraw.Draw(mask).rounded_rectangle(
@@ -506,7 +506,7 @@ def draw_score_bar(
     # Stack into RGBA (fill_w, 4), then broadcast to (bar_h, fill_w, 4)
     row  = np.stack([r_ch, g_ch, b_ch, a_ch], axis=1)             # (fill_w, 4)
     grad_arr = np.broadcast_to(row, (bar_h, fill_w, 4)).copy()    # (bar_h, fill_w, 4)
-    grad = Image.fromarray(grad_arr, "RGBA")
+    grad = Image.fromarray(grad_arr)
 
     # Rounded left/right mask — cairo-antialiased pill, right end cropped flat
     # when score < 99 so the cut-off aligns cleanly with the track edge.
@@ -714,7 +714,7 @@ def draw_frosted_bar(
         ink = (*_SILVER, 248)
         arr = np.zeros((bar_h, width, 4), dtype=np.uint8)
         arr[:, :, :3] = 12;  arr[:, :, 3] = int(frost_opacity * 255)
-        bar_img = Image.fromarray(arr, "RGBA")
+        bar_img = Image.fromarray(arr)
         # No accent stripe, so no stripe compensation — centre like plain frosted.
         text_y += max(1, int(bar_h * 0.03))
 
@@ -726,7 +726,7 @@ def draw_frosted_bar(
         arr[:, :, :3] = 12;  arr[:, :, 3] = int(frost_opacity * 255)
         arr[:stripe, :, 0] = accent[0]; arr[:stripe, :, 1] = accent[1]
         arr[:stripe, :, 2] = accent[2]; arr[:stripe, :, 3] = 240
-        bar_img = Image.fromarray(arr, "RGBA")
+        bar_img = Image.fromarray(arr)
         text_y += max(1, int(bar_h * 0.05)) + stripe // 2 - _lift
 
     elif style == "rating_black":
@@ -744,7 +744,7 @@ def draw_frosted_bar(
         if fw > 0:
             arr[:stripe, :fw, 0] = fc[0]; arr[:stripe, :fw, 1] = fc[1]
             arr[:stripe, :fw, 2] = fc[2]; arr[:stripe, :fw, 3] = 240
-        bar_img = Image.fromarray(arr, "RGBA")
+        bar_img = Image.fromarray(arr)
         text_y += _stripe_nudge
 
     elif style == "rating_frosted":
@@ -776,7 +776,7 @@ def draw_frosted_bar(
         if fw > 0:
             sa[:, :fw, 0] = fill_col[0]; sa[:, :fw, 1] = fill_col[1]
             sa[:, :fw, 2] = fill_col[2]; sa[:, :fw, 3] = 230
-        bar_img.alpha_composite(Image.fromarray(sa, "RGBA"), (0, 0))
+        bar_img.alpha_composite(Image.fromarray(sa), (0, 0))
         text_y += _stripe_nudge
 
     else:  # plain frosted — small nudge down, no stripe compensation needed

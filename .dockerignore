@@ -26,6 +26,8 @@
 Showcase/
 LICENSE
 README.md
+# Runtime cache (a volume in the container): never bake a local one in
+cache/
 # Dev tooling — not needed in the image
 .claude/
 .devcontainer/

@@ -504,7 +504,7 @@ def draw_quality_corner_bookmark(
     alpha = np.clip(alpha + rim * (colors["highlight"][3] / 255.0) * 0.9, 0.0, 1.0)
 
     mark = Image.fromarray(
-        np.dstack([rgb.clip(0, 255), alpha * 255]).astype(np.uint8), "RGBA"
+        np.dstack([rgb.clip(0, 255), alpha * 255]).astype(np.uint8),
     )
 
     def _blurred(color, peak_alpha: float, blur: float) -> Image.Image:
@@ -512,7 +512,7 @@ def draw_quality_corner_bookmark(
             np.ones((canvas, canvas, 1)) * np.array(color[:3], dtype=float),
             cover * peak_alpha,
         ]).astype(np.uint8)
-        return Image.fromarray(layer, "RGBA").filter(
+        return Image.fromarray(layer).filter(
             ImageFilter.GaussianBlur(max(1.0, size * blur))
         )
 

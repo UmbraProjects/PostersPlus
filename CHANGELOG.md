@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Reliability and hardening
+
+- Errors reported on `/server-caps` and `/stats` show less detail.
+- Debug pages encode the parameters they echo back.
+- A custom top or bottom gradient's height and opacity are range-checked like
+  every other setting, and number parameters no longer accept `nan`.
+- An access key with non-ASCII characters is refused with a 403 rather than a
+  500.
+- The admin dashboard refuses `nan` and `inf` in number settings. Before, they
+  were saved and broke whatever used them after a restart.
+- Stream scraper requests are logged by host only.
+- Behind a reverse proxy, set `FORWARDED_ALLOW_IPS` to the proxy's address so
+  the admin dashboard sees each visitor's own address (now documented). The
+  admin lockout table no longer grows without limit.
+- New optional `PUBLIC_URL` setting for the address used in the trending
+  addon's poster links. Without it they still come from the request's headers.
+- The image is about 80 MB smaller, keeps its code read-only to the app, and
+  startup no longer re-owns every file in the cache.
+- A poster request riding on another request's render could wait forever if
+  that render was cancelled or failed early. It now falls back to rendering
+  the poster itself.
+- Changing `ACCESS_KEY` no longer breaks the re-rendering of cached trending
+  and watchlist posters. The key is no longer stored with them.
+- `/debug/canvas` now caches what it renders and renders off the event loop.
+- Unknown parameters (`&x=…`) no longer create a separate cached poster, and
+  URLs that differ only in spelling (`0.3` / `0.30`, `1` / `true`) now share
+  one. Cached posters are re-rendered once after updating.
+- Cache reads and writes on the poster path no longer run on the event loop,
+  and a change in the trending list clears the old posters in one pass over
+  the cache instead of one pass per title.
+- Upstream JSON is now fetched compressed.
+
 ### Configurator no longer adds a stale access key
 
 - The configurator remembered the access key in the browser and fell back to

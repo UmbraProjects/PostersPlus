@@ -762,11 +762,16 @@ class RenderPathTests(unittest.IsolatedAsyncioTestCase):
             seen.append(key)
             return None
         main.get_cached_final_poster_entry = _spy
+        # Past the in-memory tier too, or the second request is answered by
+        # the first one's freshly cached render before reaching the spy.
+        real_l1 = main.get_cached_final_poster_l1
+        main.get_cached_final_poster_l1 = lambda key: None
         try:
             await self._get(imdb_id="tt0111161", type="movie", cb="either2")
             await self._get(imdb_id="tt0111161", tmdb_id="278", type="movie", cb="either2")
         finally:
             main.get_cached_final_poster_entry = real_lookup
+            main.get_cached_final_poster_l1 = real_l1
         self.assertEqual(len(seen), 2)
         self.assertEqual(seen[0], seen[1])
         self.assertTrue(seen[0].startswith("tt0111161:278:movie:"))
@@ -786,11 +791,16 @@ class RenderPathTests(unittest.IsolatedAsyncioTestCase):
             seen.append(key)
             return None
         main.get_cached_final_poster_entry = _spy
+        # Past the in-memory tier too, or the second request is answered by
+        # the first one's freshly cached render before reaching the spy.
+        real_l1 = main.get_cached_final_poster_l1
+        main.get_cached_final_poster_l1 = lambda key: None
         try:
             await self._get(imdb_id="tt13207736", tmdb_id="286801", type="series", cb="either3")
             await self._get(tmdb_id="286801", type="series", cb="either3")
         finally:
             main.get_cached_final_poster_entry = real_lookup
+            main.get_cached_final_poster_l1 = real_l1
         self.assertEqual(len(seen), 2)
         self.assertEqual(seen[0], seen[1])
         self.assertTrue(seen[0].startswith("tmdb:286801:"))

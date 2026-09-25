@@ -4,8 +4,10 @@ set -e
 # Fix ownership of the cache volume mount so appuser can read/write it.
 # This runs as root before we drop privileges — necessary because Docker
 # creates the host-side directory as root when the volume is first mounted.
+# Only what is not already appuser's is touched: a recursive chown rewrote the
+# inode of every cached image on each start, which took a while on a large cache.
 mkdir -p /app/cache/tmdb_posters /app/cache/tmdb_logos
-chown -R appuser:appuser /app/cache
+find /app/cache \( ! -user appuser -o ! -group appuser \) -exec chown appuser:appuser {} +
 
 # WORKERS is the one setting Python cannot apply to itself — uvicorn spawns the
 # processes before main.py runs — so honour the admin dashboard's saved value

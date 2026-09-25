@@ -843,6 +843,27 @@ async def _fetch_simkl(client: httpx.AsyncClient) -> list[WatchlistEntry] | None
 # Refresh cycle and loop
 # ---------------------------------------------------------------------------
 
+def _describe_error(exc: Exception) -> str:
+    """A refresh failure as status() reports it.
+
+    status() is public (/server-caps, /stats), and an httpx error's message
+    carries the full request URL, query included — for the mdblist source
+    that is ?apikey=<the server's key>.  So an httpx error is described by its
+    status and a sanitised URL only.  Anything else is one of this module's
+    own RuntimeErrors, whose message is written to be shown.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return (f"HTTP {exc.response.status_code} from "
+                f"{sanitise_source_url(str(exc.request.url))}")
+    if isinstance(exc, httpx.HTTPError):
+        try:
+            where = sanitise_source_url(str(exc.request.url))
+        except RuntimeError:   # .request is unset on an error raised outside a request
+            where = "upstream"
+        return f"{type(exc).__name__} contacting {where}"
+    return f"{type(exc).__name__}: {exc}"
+
+
 async def refresh(client: httpx.AsyncClient) -> SnapshotDiff | None:
     """Fetch the configured source once and update the snapshot.
 
@@ -867,7 +888,7 @@ async def refresh(client: httpx.AsyncClient) -> SnapshotDiff | None:
             logger.error(f"Watchlist: {_last_error}")
             return None
     except Exception as exc:
-        _last_error = f"{type(exc).__name__}: {exc}"
+        _last_error = _describe_error(exc)
         logger.error(f"Watchlist: refresh failed ({mode}): {_last_error} — keeping the previous snapshot")
         return None
 

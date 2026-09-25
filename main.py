@@ -5,6 +5,7 @@ import hashlib
 import base64
 import hmac
 import io
+import json
 import logging
 import os
 import re
@@ -16,8 +17,9 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
-from functools import lru_cache
-from urllib.parse import parse_qsl, urlencode
+from functools import lru_cache, partial
+from html import escape as _html_escape
+from urllib.parse import parse_qsl, quote, urlencode
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -149,7 +151,8 @@ async def _coalesced_fetch_poster_metadata(
     existing = _metadata_inflight.get(inflight_key)
     if existing is not None:
         logger.debug(f"Coalescing metadata fetch for {media_type}/{tmdb_id} ({lang})")
-        return await existing
+        # Shielded so a cancelled waiter cannot cancel the owner's future.
+        return await asyncio.shield(existing)
 
     fut: "asyncio.Future[tuple]" = asyncio.get_running_loop().create_future()
     fut.add_done_callback(
@@ -174,6 +177,59 @@ async def _coalesced_fetch_poster_metadata(
         _metadata_inflight.pop(inflight_key, None)
 
 
+# How long a request coalesced onto another's render waits before rendering the
+# poster itself.  Generous: the render it rides may be queued for admission
+# behind a cold catalog grid.  It exists so a render that never resolves its
+# future costs its riders a delay rather than hanging them for good.
+_RENDER_COALESCE_TIMEOUT = 120.0
+
+
+class _RenderAbandoned(Exception):
+    """Set on a render future whose owner exited without a result, so the
+    requests riding it fall through and render for themselves."""
+
+
+async def _ride_inflight_render(request: "Request", final_cache_key: str) -> "Response | None":
+    """The response of another request's in-flight render of this poster, or
+    None when there is none or it failed, in which case the caller renders.
+
+    Shielded: cancelling a rider must not cancel the render it rides, which
+    the owner would then find already done when it goes to set its result.
+    """
+    fut = _render_inflight.get(final_cache_key)
+    if fut is None:
+        return None
+    logger.info(f"Coalescing request for {final_cache_key}")
+    try:
+        # The render we rode on decides our headers too: riding on a
+        # provisional one and then stamping an ETag would cache exactly
+        # the poster it was withheld to avoid.
+        _bytes, _provisional, _expires_at = await asyncio.wait_for(
+            asyncio.shield(fut), _RENDER_COALESCE_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"Coalesced render of {final_cache_key} still unresolved after "
+            f"{_RENDER_COALESCE_TIMEOUT:.0f}s; rendering it separately"
+        )
+        return None
+    except Exception:
+        return None
+    return _poster_response(request, _bytes, final_cache_key, _provisional, _expires_at)
+
+
+def _unpublish_render(final_cache_key: str | None, fut: "asyncio.Future | None") -> None:
+    """Resolve *fut* if its owner never did and drop it from _render_inflight
+    — only if it is still the published one: a rider that timed out may have
+    published its own since."""
+    if fut is None or final_cache_key is None:
+        return
+    if not fut.done():
+        fut.set_exception(_RenderAbandoned(final_cache_key))
+    if _render_inflight.get(final_cache_key) is fut:
+        del _render_inflight[final_cache_key]
+
+
 # ---------------------------------------------------------------------------
 # Background quality fetching
 # ---------------------------------------------------------------------------
@@ -191,6 +247,20 @@ _quality_bg_inflight: set[str] = set()
 _quality_bg_semaphore: "asyncio.Semaphore | None" = None   # created inside event loop
 _quality_source_backoff_until: dict[str, float] = {}
 _quality_source_fail_count: dict[str, int] = {}
+
+# The event loop holds only a weak reference to a task, so a fire-and-forget
+# one can be garbage-collected mid-run.  A background quality fetch lost that
+# way never reaches its finally, and its id stays in _quality_bg_inflight — no
+# badges for that title until a restart.  Held here until each finishes.
+_background_tasks: set["asyncio.Task"] = set()
+
+
+def _spawn_background(coro) -> "asyncio.Task":
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
 
 # ---------------------------------------------------------------------------
 # Rating fetch deduplication
@@ -254,6 +324,32 @@ def _get_detect_semaphore() -> "asyncio.Semaphore":
     if _detect_semaphore is None:
         _detect_semaphore = asyncio.Semaphore(_cfg.TEXTLESS_DETECTION_CONCURRENCY)
     return _detect_semaphore
+
+
+# SQLite calls on the /poster path run here rather than on the event loop.  A
+# write waits on _db_lock (shared with the prune's VACUUM) and on other workers'
+# write locks for up to busy_timeout, and on the loop that stalled every
+# request in the worker, cache hits included.  Its own pool, not the default
+# executor: renders saturate that one, and a cache read queued behind them
+# would turn a hit into a wait.
+_DB_EXECUTOR_THREADS = 4
+_db_executor: "ThreadPoolExecutor | None" = None
+
+
+def _get_db_executor() -> ThreadPoolExecutor:
+    global _db_executor
+    if _db_executor is None:
+        _db_executor = ThreadPoolExecutor(
+            max_workers=_DB_EXECUTOR_THREADS, thread_name_prefix="db",
+        )
+    return _db_executor
+
+
+async def _db_call(fn, *args, **kwargs):
+    """Run a blocking cache.py call on the DB pool."""
+    return await asyncio.get_running_loop().run_in_executor(
+        _get_db_executor(), partial(fn, *args, **kwargs)
+    )
 
 
 def _get_detect_executor() -> ThreadPoolExecutor:
@@ -705,6 +801,7 @@ from cache import (
     get_cached_quality,
     get_cached_rating,
     get_cached_final_poster_entry,
+    get_cached_final_poster_l1,
     set_cached_final_poster,
     delete_cached_final_poster,
     get_cached_tmdb_poster,
@@ -829,8 +926,10 @@ def _make_http_client() -> httpx.AsyncClient:
             max_keepalive_connections=max(20, _max_connections // 2),
             keepalive_expiry=30,
         ),
+        # No Accept-Encoding: httpx's default (gzip, deflate) applies, which
+        # TMDB and MDBList honour on their JSON.  Image hosts serve images
+        # uncompressed either way.
         headers={
-            "Accept-Encoding": "identity",
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -844,6 +943,17 @@ def _make_http_client() -> httpx.AsyncClient:
 # ---------------------------------------------------------------------------
 # Input validation
 # ---------------------------------------------------------------------------
+
+def _key_ok(supplied: str | None) -> bool:
+    """Whether *supplied* passes the instance access gate (always, when no
+    ACCESS_KEY is set).  Compared as bytes: compare_digest on str raises for
+    non-ASCII input, which turned a probe into a 500."""
+    if not _cfg.ACCESS_KEY:
+        return True
+    return bool(supplied) and hmac.compare_digest(
+        supplied.encode("utf-8"), _cfg.ACCESS_KEY.encode("utf-8")
+    )
+
 
 _TMDB_ID_RE  = re.compile(r'^\d{1,10}$')
 _IMDB_ID_RE  = re.compile(r'^tt\d{1,10}$')
@@ -1782,6 +1892,25 @@ def _parse_sash_priority(raw: str | None) -> list[str]:
     return active
 
 
+def _render_config_signature(cfg: "RequestConfig") -> str:
+    """Canonical text of everything a render takes from its URL, for the
+    composite cache key.
+
+    Built from the parsed config rather than the raw query: a parameter the
+    parser ignores (a typo, a cache-buster, "&x=<random>") no longer mints a
+    new cache entry and a full render, and spellings that parse the same
+    ("0.3" and "0.30", "1" and "true", a clamped out-of-range value and its
+    bound) share one.  Sets are sorted so the text is the same in every
+    worker; string hashing is randomised per process.
+    """
+    def _stable(value):
+        if isinstance(value, (set, frozenset)):
+            return sorted(value, key=repr)
+        return repr(value)
+
+    return json.dumps(dataclasses.asdict(cfg), sort_keys=True, default=_stable)
+
+
 def build_request_config(params: dict) -> RequestConfig:
     """Build a RequestConfig from raw query-param strings.
 
@@ -1814,9 +1943,14 @@ def build_request_config(params: dict) -> RequestConfig:
     def _f(key, default, lo: float, hi: float):
         """Float param with hard clamp to [lo, hi]; invalid → default."""
         try:
-            return max(lo, min(hi, float(params[key]))) if key in params else default
+            value = float(params[key]) if key in params else None
         except (ValueError, TypeError):
             return default
+        # NaN compares false against both bounds, so it would slip through
+        # the clamp as whichever bound min()/max() happened to return.
+        if value is None or value != value:
+            return default
+        return max(lo, min(hi, value))
 
     def _i(key, default, lo: int, hi: int):
         """Int param with hard clamp to [lo, hi]; invalid → default."""
@@ -1877,22 +2011,14 @@ def build_request_config(params: dict) -> RequestConfig:
     _vc_style = str(params.get("vignette_color_style", "")).strip().lower()
     if _vc_style in _VIGNETTE_COLOR_STYLES:
         cfg.vignette_color_style = _vc_style
-    val_tgo = params.get("top_gradient_opacity")
-    if val_tgo is not None:
-        try: cfg.top_gradient_opacity = float(val_tgo)
-        except ValueError: pass
-    val_tgh = params.get("top_gradient_height")
-    if val_tgh is not None:
-        try: cfg.top_gradient_height = float(val_tgh)
-        except ValueError: pass
-    val_bgo = params.get("bottom_gradient_opacity")
-    if val_bgo is not None:
-        try: cfg.bottom_gradient_opacity = float(val_bgo)
-        except ValueError: pass
-    val_bgh = params.get("bottom_gradient_height")
-    if val_bgh is not None:
-        try: cfg.bottom_gradient_height = float(val_bgh)
-        except ValueError: pass
+    # Custom band depth is a fraction of the poster height; opacity is either a
+    # 0-1 fraction or a raw 0-255 alpha (see the band geometry in build_poster).
+    # Unclamped, the height sized a numpy band of height x ratio rows, so
+    # top_gradient_height=500 cost a gigabyte per render.
+    cfg.top_gradient_opacity    = _f("top_gradient_opacity",    cfg.top_gradient_opacity,    0.0, 255.0)
+    cfg.top_gradient_height     = _f("top_gradient_height",     cfg.top_gradient_height,     0.0, 1.0)
+    cfg.bottom_gradient_opacity = _f("bottom_gradient_opacity", cfg.bottom_gradient_opacity, 0.0, 255.0)
+    cfg.bottom_gradient_height  = _f("bottom_gradient_height",  cfg.bottom_gradient_height,  0.0, 1.0)
     cfg.hide_genre = _b("hide_genre", cfg.hide_genre)
     cfg.hide_rating = _b("hide_rating", cfg.hide_rating)
     cfg.hide_unreleased_rating = _b("hide_unreleased_rating", cfg.hide_unreleased_rating)
@@ -2234,7 +2360,7 @@ def _vignette_level_band(
     k = 1.0 - (1.0 - k) * (prof / peak)
     # Scale the RGB channels only — an RGBA band keeps its alpha.
     arr[..., :3] *= k[..., None]
-    image.paste(Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), band.mode), (x0, y0))
+    image.paste(Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)), (x0, y0))
 
 
 def _vignette_hue_gate(field: np.ndarray) -> np.ndarray:
@@ -2753,7 +2879,7 @@ def _vignette_tint_band(
     else:
         tint = _fog_paint(field, cover_lightness, confidence, saturation, lightness)
 
-    small = Image.fromarray(np.clip(tint, 0, 255).astype(np.uint8), mode="RGB")
+    small = Image.fromarray(np.clip(tint, 0, 255).astype(np.uint8))
     return small if (cols, rows) == (bw, bh) else small.resize((bw, bh), Image.Resampling.BICUBIC)
 
 
@@ -2819,7 +2945,7 @@ def _vignette_frost_band(
     a = np.take_along_axis(stack, lo[None, ..., None], axis=0)[0]
     b = np.take_along_axis(stack, lo[None, ..., None] + 1, axis=0)[0]
     out = a + (b - a) * frac
-    image.paste(Image.fromarray(np.clip(out + 0.5, 0, 255).astype(np.uint8), band.mode), (x0, y0))
+    image.paste(Image.fromarray(np.clip(out + 0.5, 0, 255).astype(np.uint8)), (x0, y0))
 
 
 def _vignette_fog_ramp(height: int, max_alpha: int, rising: bool) -> np.ndarray:
@@ -2862,7 +2988,7 @@ def _vignette_composite(
     rgb = arr[..., :3] * (1.0 - a) + col * a
     rgb += np.random.default_rng(0).uniform(-0.5, 0.5, rgb.shape).astype(np.float32)
     arr[..., :3] = rgb
-    image.paste(Image.fromarray(np.clip(np.round(arr), 0, 255).astype(np.uint8), band.mode),
+    image.paste(Image.fromarray(np.clip(np.round(arr), 0, 255).astype(np.uint8)),
                 (0, y0))
 
 
@@ -2946,7 +3072,7 @@ def _make_fallback_canvas(genre_ids: list[int] | None = None,
     arr[:, :, 1] = np.minimum(255, v * g_mult).astype(np.uint8)[:, np.newaxis]
     arr[:, :, 2] = np.minimum(255, v * b_mult).astype(np.uint8)[:, np.newaxis]
     arr[:, :, 3] = 255
-    return Image.fromarray(arr, "RGBA")
+    return Image.fromarray(arr)
 
 
 def _draw_combined_text_badge(
@@ -3209,7 +3335,6 @@ def build_poster(
     def _band_overlay(alpha: np.ndarray) -> Image.Image:
         return Image.fromarray(
             np.broadcast_to(alpha.astype(np.uint8)[:, np.newaxis], (len(alpha), width)).copy(),
-            mode="L",
         )
 
     if _tg_preset is not None:
@@ -4443,11 +4568,11 @@ def _seconds_until_next_hour(target_hour: float, now: float | None = None) -> fl
         target += 86400
     return target - now
 
-# Third-party credentials must never be persisted to the poster cache. They are
-# stripped before storage; the background regeneration cycle re-supplies the
-# server-side keys. access_key is intentionally kept — the /poster replay needs
-# it to pass the instance access gate, and it is the instance's own key.
-_UNCACHEABLE_PARAMS = {"tmdb_key", "mdblist_key"}
+# Credentials are never persisted to the poster cache. They are stripped before
+# storage; the background regeneration cycle re-supplies the server-side keys,
+# and the instance's current access key (see _replay_query) — a stored one
+# would stop passing the gate the moment the operator rotated ACCESS_KEY.
+_UNCACHEABLE_PARAMS = {"tmdb_key", "mdblist_key", "access_key"}
 
 
 def _sanitize_request_params(query: str) -> str:
@@ -4457,6 +4582,17 @@ def _sanitize_request_params(query: str) -> str:
     kept = [(k, v) for k, v in parse_qsl(query, keep_blank_values=True)
             if k not in _UNCACHEABLE_PARAMS]
     return urlencode(kept)
+
+
+def _replay_query(stored: str) -> str:
+    """A stored request's query as the regeneration replay sends it: with the
+    current access key, whatever key (if any) rows written before keys were
+    stripped still carry."""
+    query = _sanitize_request_params(stored)
+    if _cfg.ACCESS_KEY:
+        key = urlencode({"access_key": _cfg.ACCESS_KEY})
+        query = f"{query}&{key}" if query else key
+    return query
 
 
 async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
@@ -4582,7 +4718,7 @@ async def _regenerate_cached_posters(matches, *, log_prefix: str) -> int:
                 # Delete first so the replay misses the cache and re-renders
                 # instead of serving the stale composite.
                 delete_cached_final_poster(cache_key)
-                resp = await local_client.get(f"/poster?{req_params_str}")
+                resp = await local_client.get(f"/poster?{_replay_query(req_params_str)}")
                 if resp.status_code >= 400:
                     logger.warning(f"{log_prefix}: regenerate for {cache_key} returned HTTP {resp.status_code}")
                 else:
@@ -4794,7 +4930,7 @@ async def lifespan(app: FastAPI):
                 log(f"Burned-in-text detection: {text_detection_status()}")
             except Exception as exc:
                 logger.warning(f"PP-OCR warm-up failed: {exc}")
-        asyncio.create_task(_warm_text_detector())
+        _spawn_background(_warm_text_detector())
 
     try:
         from tvdb import tvdb_status
@@ -5026,7 +5162,7 @@ _ADDON_HEADERS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Head
 def _trending_addon_guard(key: str | None) -> None:
     if not _cfg.TRENDING_CATALOGS_ENABLED:
         raise HTTPException(status_code=404, detail="Trending catalogs are not enabled")
-    if _cfg.ACCESS_KEY and not (key and hmac.compare_digest(key, _cfg.ACCESS_KEY)):
+    if not _key_ok(key):
         raise HTTPException(status_code=403, detail="Unauthorized")
 
 
@@ -5079,10 +5215,14 @@ def _decode_addon_cfg(segment: str) -> list[tuple[str, str]]:
 def _public_base(request: Request) -> str:
     """The address the client reached us on, for poster URLs handed back to it.
 
-    Behind a reverse proxy the request itself looks like plain http on an
-    internal host.  The forwarded headers are trusted only for this: the URLs
-    go back to whoever sent them, so a forged header misleads nobody else.
+    PUBLIC_URL when the operator set one.  Otherwise the forwarded headers:
+    behind a reverse proxy the request itself looks like plain http on an
+    internal host.  They are trusted only for this, and the response carries
+    a Vary on them (see trending_addon), because a shared cache that ignored
+    them could hand one client's forged host to everyone.
     """
+    if _cfg.PUBLIC_URL:
+        return _cfg.PUBLIC_URL
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme).split(",")[0].strip()
     host = (request.headers.get("x-forwarded-host") or request.headers.get("host")
             or request.url.netloc).split(",")[0].strip()
@@ -5247,12 +5387,15 @@ async def trending_addon(rest: str, request: Request):
     poster_cfg = None
     if cfg_seg is not None:
         poster_cfg = (_public_base(request), _decode_addon_cfg(cfg_seg), key)
-    return await _trending_catalog(key, ctype, cid, extra, poster_cfg)
+    response = await _trending_catalog(key, ctype, cid, extra, poster_cfg)
+    if poster_cfg is not None and not _cfg.PUBLIC_URL:
+        response.headers["Vary"] = "Host, X-Forwarded-Host, X-Forwarded-Proto"
+    return response
 
 
 @app.get("/server-caps")
 async def server_caps(access_key: str = ""):
-    if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
+    if not _key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized")
     next_refresh_hours = None
     _now = time.time()
@@ -5415,7 +5558,7 @@ async def stats(access_key: str = ""):
     (in-flight renders, background quality fetches, MDBList key cooldowns).
     Gated behind the access key when one is configured.
     """
-    if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
+    if not _key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized")
     return await _build_stats()
 
@@ -5533,7 +5676,7 @@ async def debug_canvas(genre: str = "Action", title: str = "Sample Title",
     the usual rating label composited on top.  Lets you eyeball any genre/style
     without hunting for a title that happens to lack poster art.
     """
-    if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
+    if not _key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized")
     if len(title) > 200:
         raise HTTPException(status_code=400, detail="Title too long")
@@ -5546,20 +5689,30 @@ async def debug_canvas(genre: str = "Action", title: str = "Sample Title",
             headers={"Cache-Control": "private, max-age=300"},
         )
     gid = _DEBUG_GENRE_IDS.get(genre)
+    # Loaded here, on the loop, like the poster pipeline does: the background
+    # cache is not safe to share with executor threads.
     canvas = _load_genre_background(genre, style)
     if canvas is None:
         canvas = _make_fallback_canvas([gid] if gid else None).convert("RGBA")
     cfg = RequestConfig()
     _score = int(score) if score.isdigit() else "—"
-    img = build_poster(canvas, _score, genre, cfg, fallback_title=title,
-                       release_year=(year or None), no_poster=True)
-    buf = io.BytesIO()
-    _quality = _cfg.WEBP_QUALITY if _cfg.IMAGE_FORMAT == "webp" else _cfg.JPEG_QUALITY
-    img.convert("RGB").save(buf, format=_cfg.IMAGE_FORMAT.upper(), quality=_quality)
-    data = buf.getvalue()
-    if len(_debug_canvas_cache) >= _DEBUG_CANVAS_MAX_ENTRIES:
+
+    def _render() -> bytes:
+        img = build_poster(canvas, _score, genre, cfg, fallback_title=title,
+                           release_year=(year or None), no_poster=True)
+        buf = io.BytesIO()
+        _quality = _cfg.WEBP_QUALITY if _cfg.IMAGE_FORMAT == "webp" else _cfg.JPEG_QUALITY
+        img.convert("RGB").save(buf, format=_cfg.IMAGE_FORMAT.upper(), quality=_quality)
+        return buf.getvalue()
+
+    # A full composite, so it takes a render slot and runs off the loop like a
+    # /poster render: on an open instance this endpoint is as reachable as that.
+    async with _get_render_semaphore():
+        data = await asyncio.get_running_loop().run_in_executor(None, _render)
+    if cache_key not in _debug_canvas_cache and len(_debug_canvas_cache) >= _DEBUG_CANVAS_MAX_ENTRIES:
         oldest = min(_debug_canvas_cache, key=lambda key: _debug_canvas_cache[key][0])
         _debug_canvas_cache.pop(oldest, None)
+    _debug_canvas_cache[cache_key] = (now, data)
     return Response(
         content=data, media_type=f"image/{_cfg.IMAGE_FORMAT}",
         headers={"Cache-Control": "private, max-age=300"},
@@ -5574,11 +5727,14 @@ async def fallback_gallery(style: str = "minimal", access_key: str = ""):
     genre fonts at a glance and compare the minimal vs photoreal sets.  Gated
     behind the access key when configured.
     """
-    if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
+    if not _key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized. Provide ?access_key=<key>")
     if style not in _GENRE_BG_STYLES:
         style = "minimal"
-    _ak = f"&access_key={access_key}" if access_key else ""
+    # Carried into the tile and tab links only where it is needed, and always
+    # URL-encoded: this page is served from the configurator's origin, so an
+    # echoed key that could close the attribute was a script injection there.
+    _ak = f"&access_key={quote(access_key, safe='')}" if _cfg.ACCESS_KEY and access_key else ""
 
     # Every genre that has a background (covers the full genre map + any future
     # additions), derived from the minimal set so the gallery is never stale.
@@ -5591,14 +5747,14 @@ async def fallback_gallery(style: str = "minimal", access_key: str = ""):
         _genres = sorted(_DEBUG_GENRE_IDS)
 
     tiles = "".join(
-        f'<figure><img loading="lazy" src="/debug/canvas?genre={g}'
-        f'&title={g.replace(" ", "+")}&style={style}{_ak}" alt="{g}">'
-        f'<figcaption>{g}</figcaption></figure>'
+        f'<figure><img loading="lazy" src="'
+        + _html_escape(f"/debug/canvas?genre={quote(g)}&title={quote(g)}&style={style}{_ak}")
+        + f'" alt="{_html_escape(g)}"><figcaption>{_html_escape(g)}</figcaption></figure>'
         for g in _genres
     )
     _tabs = "".join(
         f'<a class="{"on" if s == style else ""}" '
-        f'href="/debug/fallback-gallery?style={s}{_ak}">{s.capitalize()}</a>'
+        f'href="{_html_escape(f"/debug/fallback-gallery?style={s}{_ak}")}">{s.capitalize()}</a>'
         for s in _GENRE_BG_STYLES
     )
     html = f"""<!doctype html><html><head><meta charset="utf-8">
@@ -5631,7 +5787,7 @@ async def fallback_gallery(style: str = "minimal", access_key: str = ""):
 
 @app.get("/", response_class=HTMLResponse)
 async def get_configurator(request: Request, access_key: str = "", reload: str = ""):
-    if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
+    if not _key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized. Provide ?access_key=<key>")
     # ?reload=1 re-reads configurator.html from disk — useful while iterating on
     # the UI without restarting the container.  Gated on the access key so it's
@@ -5673,7 +5829,7 @@ async def search_proxy(
     tmdb_key: str = "",
     access_key: str = "",
 ):
-    if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
+    if not _key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized")
     if len(q) > 200:
         raise HTTPException(status_code=400, detail="Query too long")
@@ -5708,7 +5864,7 @@ async def resolve_imdb(
     tmdb_key: str = "",
     access_key: str = "",
 ):
-    if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
+    if not _key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized")
 
     _check_tmdb_id(tmdb_id)
@@ -5740,7 +5896,7 @@ async def resolve_tmdb(
     """The TMDB id for an IMDb id, for the configurator's key-less search:
     TMDB's /find with a key, Cinemeta's moviedb_id without.  ``tmdb_id`` is
     null when neither knows one; the title still renders from its IMDb id."""
-    if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
+    if not _key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized")
     _check_imdb_id(imdb_id)
     _check_type(type)
@@ -5782,7 +5938,7 @@ async def get_logo(
     Either id identifies the title, as on /poster. Without a TMDB key (or when
     TMDB has no record for the IMDb id) the Metahub logo is the only source.
     """
-    if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
+    if not _key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized")
 
     _check_type(type)
@@ -5991,7 +6147,7 @@ async def get_poster(
     debug: str | None = None,
     nocache: str | None = None,
 ):
-    if _cfg.ACCESS_KEY and not hmac.compare_digest(access_key, _cfg.ACCESS_KEY):
+    if not _key_ok(access_key):
         raise HTTPException(status_code=403, detail="Unauthorized, your access key is not valid for this instance.")
 
     _check_type(type)
@@ -6281,7 +6437,7 @@ async def get_poster(
         _tmdb_sig = "|tmdb=0" if (not effective_tmdb_key and is_anime) else ""
         _params_hash = hashlib.sha256(
             (
-                "&".join(f"{k}={v}" for k, v in sorted(raw_params.items()))
+                _render_config_signature(rcfg)
                 + _detect_sig
                 + _poster_selection_sig
                 + _rating_policy_sig
@@ -6304,7 +6460,11 @@ async def get_poster(
             if is_anime
             else f"{canonical_id}:{tmdb_id}:{type}:{_params_hash}"
         )
-        _cached_entry = None if _force_refresh else get_cached_final_poster_entry(final_cache_key)
+        _cached_entry = None
+        if not _force_refresh:
+            _cached_entry = get_cached_final_poster_l1(final_cache_key) or await _db_call(
+                get_cached_final_poster_entry, final_cache_key
+            )
         if _force_refresh:
             logger.info(f"Force refresh (nocache) for {final_cache_key} — bypassing cache read")
         if _cached_entry is not None:
@@ -6323,36 +6483,28 @@ async def get_poster(
     # rendering the same poster, await its result instead of duplicating
     # the pipeline.  Quality-override requests (final_cache_key=None) are
     # always rendered independently.
+    #
+    # Checked here, so a burst skips the rating bookkeeping below, and again
+    # just before render admission, where this request publishes its own
+    # future.  Publishing there rather than here means nothing can raise
+    # between the future becoming visible and the try that resolves it; the
+    # second check covers the rating wait in between.
     # ------------------------------------------------------------------
     _render_fut: "asyncio.Future[tuple[bytes, bool, int | None]] | None" = None
     if final_cache_key is not None:
-        _existing_fut = _render_inflight.get(final_cache_key)
-        if _existing_fut is not None:
-            logger.info(f"Coalescing request for {final_cache_key}")
-            try:
-                # The render we rode on decides our headers too: riding on a
-                # provisional one and then stamping an ETag would cache exactly
-                # the poster it was withheld to avoid.
-                _coal_bytes, _coal_provisional, _coal_expires_at = await _existing_fut
-                return _poster_response(
-                    request, _coal_bytes, final_cache_key, _coal_provisional, _coal_expires_at
-                )
-            except Exception:
-                # The in-flight render failed; fall through and try ourselves.
-                pass
-        _render_fut = asyncio.get_running_loop().create_future()
-        # Suppress asyncio's "Future exception was never retrieved" warning when
-        # the render fails and no other request is coalesced onto this future.
-        _render_fut.add_done_callback(
-            lambda f: f.exception() if not f.cancelled() and f.exception() else None
-        )
-        _render_inflight[final_cache_key] = _render_fut
+        _coalesced = await _ride_inflight_render(request, final_cache_key)
+        if _coalesced is not None:
+            return _coalesced
+
+    if _HTTP_CLIENT is None:
+        raise HTTPException(status_code=503, detail="Service unavailable")
+    client = _HTTP_CLIENT
 
     # Declare globals that are both read and written in this function so Python
     # doesn't complain about use-before-global-declaration.
     global _mdblist_active_key_idx
 
-    cached_rating = get_cached_rating(canonical_id)
+    cached_rating = await _db_call(get_cached_rating, canonical_id)
 
     if cached_rating is not None:
         (
@@ -6453,7 +6605,7 @@ async def get_poster(
             # Another coroutine is mid-fetch — wait and piggyback on its result.
             logger.info(f"Rating fetch coalesced for {canonical_id} — awaiting in-flight fetch")
             await _inflight_event.wait()
-            _refreshed = get_cached_rating(canonical_id)
+            _refreshed = await _db_call(get_cached_rating, canonical_id)
             if _refreshed is not None:
                 (
                     cached_ratings_dict,
@@ -6514,16 +6666,36 @@ async def get_poster(
             anime_tv_weights=effective_anime_tv_weights,
         )
 
-    if _HTTP_CLIENT is None:
-        raise HTTPException(status_code=503, detail="Service unavailable")
-    client = _HTTP_CLIENT
-
     # Secondary preferred language, only when the chosen priority actually uses it.
     _effective_secondary = (
         rcfg.logo_language_secondary
         if rcfg.logo_priority in _SECONDARY_LANGUAGE_PRIORITIES
         else ""
     )
+
+    if final_cache_key is not None:
+        # Riding someone else's render (or cancelled while waiting for it),
+        # this request will not fetch the rating it may have claimed above.
+        try:
+            _coalesced = await _ride_inflight_render(request, final_cache_key)
+        except BaseException:
+            if _rating_event_to_set is not None:
+                _rating_event_to_set.set()
+                _rating_fetch_inflight.pop(canonical_id, None)
+            raise
+        if _coalesced is not None:
+            if _rating_event_to_set is not None:
+                _rating_event_to_set.set()
+                _rating_fetch_inflight.pop(canonical_id, None)
+            return _coalesced
+        # No await from here to the try below that resolves it.
+        _render_fut = asyncio.get_running_loop().create_future()
+        # Suppress asyncio's "Future exception was never retrieved" warning when
+        # the render fails and no other request is coalesced onto this future.
+        _render_fut.add_done_callback(
+            lambda f: f.exception() if not f.cancelled() and f.exception() else None
+        )
+        _render_inflight[final_cache_key] = _render_fut
 
     # Render admission: everything above was cache lookups and coalescing
     # bookkeeping; from here on the request talks to upstream APIs and
@@ -6539,14 +6711,11 @@ async def get_poster(
     _renders_queued += 1
     try:
         await _render_sem.acquire()
-    except BaseException as exc:
+    except BaseException:
         # Cancelled while queued (shutdown, mostly). Nothing has been touched
         # yet, but the coalescing future was already published and anyone
         # riding it must not wait forever.
-        if _render_fut is not None and not _render_fut.done():
-            _render_fut.set_exception(exc)
-        if final_cache_key is not None:
-            _render_inflight.pop(final_cache_key, None)
+        _unpublish_render(final_cache_key, _render_fut)
         if _rating_event_to_set is not None:
             _rating_event_to_set.set()
             _rating_fetch_inflight.pop(canonical_id, None)
@@ -6715,7 +6884,7 @@ async def get_poster(
             # the quality badge keeps working without an IMDb id.
             if quality_id not in _quality_bg_inflight:
                 _quality_bg_inflight.add(quality_id)
-                asyncio.create_task(
+                _spawn_background(
                     _background_quality_fetch(
                         quality_id, type, season, episode,
                         release_date_for_quality_ttl,
@@ -7962,7 +8131,8 @@ async def get_poster(
                     else min(_ttl_override, _TRENDING_UNREAD_TTL)
                 )
 
-            _composite_expires_at = set_cached_final_poster(
+            _composite_expires_at = await _db_call(
+                set_cached_final_poster,
                 final_cache_key,
                 img_bytes,
                 request_params=_sanitize_request_params(request.url.query),
@@ -7970,7 +8140,7 @@ async def get_poster(
             )
             logger.info(f"Final poster cached for {final_cache_key}")
 
-        if _render_fut is not None:
+        if _render_fut is not None and not _render_fut.done():
             _render_fut.set_result((img_bytes, _render_provisional, _composite_expires_at))
 
         return _poster_response(
@@ -8025,5 +8195,6 @@ async def get_poster(
         if _rating_event_to_set is not None:
             _rating_event_to_set.set()
             _rating_fetch_inflight.pop(canonical_id, None)
-        if final_cache_key is not None:
-            _render_inflight.pop(final_cache_key, None)
+        # Every except above resolves the future; this catches what they do
+        # not — a CancelledError, or anything else BaseException.
+        _unpublish_render(final_cache_key, _render_fut)

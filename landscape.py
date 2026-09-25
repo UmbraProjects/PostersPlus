@@ -210,7 +210,6 @@ def _draw_vignette(image: Image.Image, art: Image.Image, cfg,
 
     ramp = Image.fromarray(
         np.broadcast_to(_band_ramp(band_h)[:, np.newaxis], (band_h, width)).copy(),
-        mode="L",
     )
 
     box = (0, band_y, width, height)

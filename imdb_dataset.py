@@ -188,7 +188,12 @@ async def refresh_dataset(client: httpx.AsyncClient) -> int:
         return 0
 
     try:
-        resp = await client.get(_DATASET_URL, timeout=120.0)
+        # identity: the file is itself a .gz, parsed as one below.  A
+        # negotiated Content-Encoding on top would be decoded by httpx and
+        # hand the parser plain text.
+        resp = await client.get(
+            _DATASET_URL, timeout=120.0, headers={"Accept-Encoding": "identity"}
+        )
         resp.raise_for_status()
         raw = resp.content
     except Exception as exc:

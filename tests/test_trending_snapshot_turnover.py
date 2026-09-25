@@ -96,10 +96,38 @@ class SnapshotExpiryTests(_TempDb):
         # replacing an expired one (the normal case) compared against nothing
         # and never invalidated the titles that had left the list.
         self._store("movie", {"10": 1, "20": 2}, time.time() - 2 * 86400)
-        with mock.patch.object(cache, "invalidate_final_posters") as inv:
+        with mock.patch.object(cache, "invalidate_trending_turnover") as inv:
             cache.set_cached_trending_snapshot("movie", {"10": 1}, "tmdb")
-        self.assertIn(mock.call("20", "movie"), inv.call_args_list)
-        self.assertNotIn(mock.call("10", "movie"), inv.call_args_list)
+        inv.assert_called_once_with("movie", {"20"})
+
+    def test_turnover_invalidates_changed_titles_in_one_pass(self):
+        keep_rank = "tt0000001:10:movie:aaaa"
+        moved_movie = "tt0000002:20:movie:aaaa"
+        moved_tv = "tt0000003:20:series:aaaa"   # same TMDB id, other namespace
+        moved_anime_tail = "kitsu:9:tt0000004:30:movie:aaaa"
+        for k in (keep_rank, moved_movie, moved_tv, moved_anime_tail):
+            cache.set_cached_final_poster(k, b"x")
+        with cache._composite_l1_lock:
+            cache._composite_l1.clear()   # prove the SQLite rows go too
+        cache.set_cached_final_poster(moved_movie, b"x")   # and the L1 copy
+
+        self.assertEqual(cache.invalidate_trending_turnover("movie", {"20", "30"}), 2)
+        self.assertIsNotNone(cache.get_cached_final_poster(keep_rank))
+        self.assertIsNotNone(cache.get_cached_final_poster(moved_tv))
+        self.assertIsNone(cache.get_cached_final_poster(moved_movie))
+        self.assertIsNone(cache.get_cached_final_poster(moved_anime_tail))
+
+    def test_turnover_treats_tv_and_series_as_one(self):
+        for k in ("tt1:5:tv:aaaa", "tt1:5:series:bbbb", "tt1:5:movie:cccc"):
+            cache.set_cached_final_poster(k, b"x")
+        self.assertEqual(cache.invalidate_trending_turnover("tv", {"5"}), 2)
+        self.assertIsNotNone(cache.get_cached_final_poster("tt1:5:movie:cccc"))
+
+    def test_anime_turnover_matches_the_leading_namespace(self):
+        for k in ("anilist:7:tt1:5:tv:aaaa", "anilist:70:tt2:6:tv:aaaa"):
+            cache.set_cached_final_poster(k, b"x")
+        self.assertEqual(cache.invalidate_trending_turnover("anime", {"anilist:7"}), 1)
+        self.assertIsNotNone(cache.get_cached_final_poster("anilist:70:tt2:6:tv:aaaa"))
 
 
 class AnimeKeyInvalidationTests(_TempDb):

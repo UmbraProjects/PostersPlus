@@ -432,6 +432,27 @@ def get_cached_final_poster(cache_key: str) -> bytes | None:
     return None if entry is None else entry[0]
 
 
+def get_cached_final_poster_l1(cache_key: str) -> "tuple[bytes, int] | None":
+    """(jpeg_bytes, expires_at) from the in-memory LRU alone — no disk I/O, so
+    cheap enough to call on the event loop before handing an L2 read to a
+    thread."""
+    if COMPOSITE_MEM_ENTRIES <= 0:
+        return None
+    now = time.time()
+    with _composite_l1_lock:
+        entry = _composite_l1.get(cache_key)
+        if entry is None:
+            return None
+        expires_at, data = entry
+        if now <= expires_at:
+            _composite_l1.move_to_end(cache_key)
+            return data, int(expires_at)
+        # Nothing sweeps L1 on a timer, so an aged-out entry is dropped on the
+        # read that finds it and the L2 check takes over.
+        del _composite_l1[cache_key]
+    return None
+
+
 def get_cached_final_poster_entry(cache_key: str) -> "tuple[bytes, int] | None":
     """Return (jpeg_bytes, expires_at) for a composited poster, or None on miss.
 
@@ -440,18 +461,9 @@ def get_cached_final_poster_entry(cache_key: str) -> "tuple[bytes, int] | None":
     """
     now = time.time()
 
-    # L1: in-memory LRU — no disk I/O, no OS page-cache pressure
-    if COMPOSITE_MEM_ENTRIES > 0:
-        with _composite_l1_lock:
-            entry = _composite_l1.get(cache_key)
-            if entry is not None:
-                expires_at, data = entry
-                if now <= expires_at:
-                    _composite_l1.move_to_end(cache_key)
-                    return data, int(expires_at)
-                # Nothing sweeps L1 on a timer, so an aged-out entry is dropped
-                # on the read that finds it and the L2 check below takes over.
-                del _composite_l1[cache_key]
+    hit = get_cached_final_poster_l1(cache_key)
+    if hit is not None:
+        return hit
 
     # L2: SQLite with TTL check
     try:
@@ -526,23 +538,49 @@ def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: s
                 (cache_key, jpeg_bytes, now, request_params, expires_at),
             )
             if COMPOSITE_MAX_ENTRIES > 0:
-                (count,) = get_db().execute(
-                    "SELECT COUNT(*) FROM final_poster_cache"
-                ).fetchone()
-                overflow = count - COMPOSITE_MAX_ENTRIES
-                if overflow > 0:
-                    get_db().execute(
-                        "DELETE FROM final_poster_cache WHERE cache_key IN "
-                        "(SELECT cache_key FROM final_poster_cache "
-                        " ORDER BY cached_at ASC LIMIT ?)",
-                        (overflow,),
-                    )
-                    logger.info(f"Composite cache cap: evicted {overflow} oldest entries")
+                _enforce_composite_cap()
             get_db().commit()
     except Exception as exc:
         logger.error(f"Final poster cache write error: {exc}")
 
     return expires_at
+
+
+# COMPOSITE_MAX_ENTRIES bookkeeping.  A COUNT(*) on every write is a full scan
+# of the table's index each time, so the count is estimated between real ones:
+# every write adds one (a replace doesn't really, and deletes elsewhere only
+# lower the true count, so the estimate never runs below it from this worker's
+# writes).  Other workers' writes are invisible to it, hence the real count at
+# least every _COMPOSITE_RECOUNT_EVERY writes, which bounds how far past the cap
+# the table can drift.
+_COMPOSITE_RECOUNT_EVERY = 64
+_composite_count_estimate: int | None = None
+_composite_writes_since_count = 0
+
+
+def _enforce_composite_cap() -> None:
+    """Evict the oldest composites past COMPOSITE_MAX_ENTRIES.  Called with
+    _db_lock held, inside set_cached_final_poster's transaction."""
+    global _composite_count_estimate, _composite_writes_since_count
+    _composite_writes_since_count += 1
+    if _composite_count_estimate is not None:
+        _composite_count_estimate += 1
+        if (_composite_count_estimate <= COMPOSITE_MAX_ENTRIES
+                and _composite_writes_since_count < _COMPOSITE_RECOUNT_EVERY):
+            return
+    (count,) = get_db().execute("SELECT COUNT(*) FROM final_poster_cache").fetchone()
+    _composite_writes_since_count = 0
+    overflow = count - COMPOSITE_MAX_ENTRIES
+    if overflow > 0:
+        get_db().execute(
+            "DELETE FROM final_poster_cache WHERE cache_key IN "
+            "(SELECT cache_key FROM final_poster_cache "
+            " ORDER BY cached_at ASC LIMIT ?)",
+            (overflow,),
+        )
+        logger.info(f"Composite cache cap: evicted {overflow} oldest entries")
+        count -= overflow
+    _composite_count_estimate = count
 
 
 def delete_cached_final_poster(cache_key: str) -> None:
@@ -623,6 +661,58 @@ def invalidate_final_posters(tmdb_id: str, media_type: str | None = None) -> Non
         logger.info(f"Invalidated final poster cache for tmdb_id={tmdb_id}")
     except Exception as exc:
         logger.error(f"Final poster cache invalidate error: {exc}")
+
+
+def invalidate_trending_turnover(media_type: str, changed_ids: "set[str]") -> int:
+    """Invalidate the composites of every title whose trending rank changed,
+    in one pass over the composite keys.
+
+    invalidate_final_posters() is a LIKE '%:id:%' scan of the whole table, and
+    running one per changed title (two for TV) made a turnover of a hundred
+    titles over a large cache take seconds.  This reads the keys once — the
+    primary-key index covers it, the image blobs are never touched — matches
+    them in Python the way the per-title calls did, and deletes the matches in
+    one transaction.  Returns the number of rows deleted.
+
+    *media_type* is the snapshot's: "anime" ids are "anilist:<id>", the anime
+    namespace a composite key leads with; anything else is a TMDB id matched
+    against the key's tail, with "tv" and "series" treated as one.
+    """
+    if not changed_ids:
+        return 0
+    if media_type == "anime":
+        prefixes = tuple(f"{anime_key}:" for anime_key in changed_ids)
+
+        def _match(key: str) -> bool:
+            return key.startswith(prefixes)
+    else:
+        types = ("tv", "series") if media_type in ("tv", "series") else (media_type,)
+
+        def _match(key: str) -> bool:
+            parts = key.split(":")
+            return len(parts) >= 4 and parts[-3] in changed_ids and parts[-2] in types
+
+    if COMPOSITE_MEM_ENTRIES > 0:
+        with _composite_l1_lock:
+            for k in [k for k in _composite_l1 if _match(k)]:
+                del _composite_l1[k]
+    try:
+        keys = [
+            (k,) for (k,) in get_db().execute("SELECT cache_key FROM final_poster_cache")
+            if _match(k)
+        ]
+        if keys:
+            with _db_lock:
+                get_db().executemany("DELETE FROM final_poster_cache WHERE cache_key = ?", keys)
+                get_db().commit()
+        logger.info(
+            f"Invalidated {len(keys)} cached posters for {len(changed_ids)} "
+            f"{media_type} trending changes"
+        )
+        return len(keys)
+    except Exception as exc:
+        logger.error(f"Trending turnover invalidation error: {exc}")
+        return 0
 
 
 def get_cache_stats() -> dict:
@@ -1219,14 +1309,8 @@ def set_cached_trending_snapshot(
             if t_id not in rankings:
                 changed_ids.add(t_id)
                 
-        for t_id in changed_ids:
-            if media_type == "anime":
-                # Keyed "anilist:<id>", the anime namespace a composite key
-                # leads with, rather than by TMDB id.
-                invalidate_anime_posters(t_id)
-            else:
-                invalidate_final_posters(t_id, media_type)
-            
+        invalidate_trending_turnover(media_type, changed_ids)
+
     except Exception as exc:
         logger.error(f"Trending snapshot cache write error: {exc}")
 

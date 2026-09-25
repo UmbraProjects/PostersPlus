@@ -1391,7 +1391,7 @@ def _sash_body_cairo(
     arr    = np.frombuffer(buf, dtype=np.uint8).reshape((sh, stride))[:, : sl * 4]
     arr    = arr.reshape((sh, sl, 4))
     rgba   = arr[:, :, [2, 1, 0, 3]].copy()
-    return Image.fromarray(rgba, "RGBA")
+    return Image.fromarray(rgba)
 
 
 # Formerly used to auto-star awards whose winner and nominee shared the same
@@ -1735,7 +1735,7 @@ def draw_award_badge(
         # Lay blurred crop under the tinted frost layer (alpha ~210 = quite opaque)
         blurred_ss.putalpha(rr_mask_ss)
         frost = Image.new("RGBA", (bw, bh), (fr_r, fr_g, fr_b, 0))
-        frost.putalpha(Image.fromarray((rr_f * frost_opacity * 255).astype(np.uint8), "L"))
+        frost.putalpha(Image.fromarray((rr_f * frost_opacity * 255).astype(np.uint8)))
         badge_ss = Image.alpha_composite(blurred_ss, frost)
 
         # Text: dark on a light panel, light on a dark one (a matched panel can be

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import tempfile
 import threading
@@ -243,6 +244,11 @@ def normalise(setting: Setting, raw) -> str | None:
             number = float(value)
         except ValueError:
             raise ValueError("must be a number")
+        # float() takes "nan" and "inf".  NaN passes every bounds check (it
+        # compares false both ways) and inf passes an unbounded one, and either
+        # is saved only to break whatever sleeps or sizes on it after a restart.
+        if not math.isfinite(number):
+            raise ValueError("must be a finite number")
         _check_bounds(setting, number)
         return value
 

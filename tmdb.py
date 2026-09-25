@@ -197,7 +197,7 @@ def ensure_light_logo(logo: Image.Image,
     out[:, :, 0][visible] = 255
     out[:, :, 1][visible] = 255
     out[:, :, 2][visible] = 255
-    return Image.fromarray(out.astype(np.uint8), "RGBA")
+    return Image.fromarray(out.astype(np.uint8))
 
 
 # Experimental contrast-rescue tuning.  Lower = more conservative (only recolour
@@ -301,7 +301,7 @@ def _recolor_logo_solid(logo: Image.Image, rgb: tuple[int, int, int]) -> Image.I
     rgba[:, :, 0][vis] = rgb[0]
     rgba[:, :, 1][vis] = rgb[1]
     rgba[:, :, 2][vis] = rgb[2]
-    return Image.fromarray(rgba, "RGBA")
+    return Image.fromarray(rgba)
 
 
 # ---------------------------------------------------------------------------

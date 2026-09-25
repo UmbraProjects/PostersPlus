@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import ipaddress
 import logging
 import os
 import signal
@@ -71,10 +72,19 @@ ADMIN_KEY = _validated_key(os.environ.get("ADMIN_KEY", ""))
 # LOCKOUT_SECS without the key even being compared.  Per process, so a
 # multi-worker instance is a little more lenient; it is still nowhere near an
 # online guess of a 12+ character key.
+#
+# "Client address" is whatever uvicorn puts in request.client, and uvicorn
+# only believes X-Forwarded-For from FORWARDED_ALLOW_IPS (127.0.0.1 unless
+# set).  Behind a reverse proxy on another address every visitor is the
+# proxy, so anyone's eight bad keys lock the operator out too — the lockout
+# log line says so, and CONFIGURATION.md documents the variable.
 _FAIL_LIMIT   = 8
 _FAIL_WINDOW  = 600.0
 _LOCKOUT_SECS = 600.0
 _FAIL_DELAY   = 0.4
+# Bounds the two tables below: one entry per address that ever sent a bad key
+# would otherwise grow for the life of the process.
+_MAX_TRACKED  = 4096
 _failures: dict[str, list[float]] = {}
 _lockouts: dict[str, float] = {}
 
@@ -128,14 +138,53 @@ def _locked(ip: str) -> bool:
     return True
 
 
+def _sweep(now: float) -> None:
+    """Drop failure histories that have aged out of the window and lockouts
+    that have lapsed, then, if the tables are still over _MAX_TRACKED, the
+    addresses whose last failure is oldest.  An address that is currently
+    locked out keeps its lockout either way."""
+    for ip in [ip for ip, until in _lockouts.items() if now >= until]:
+        del _lockouts[ip]
+    for ip in [ip for ip, ts in _failures.items() if not ts or now - ts[-1] >= _FAIL_WINDOW]:
+        del _failures[ip]
+    overflow = len(_failures) - _MAX_TRACKED
+    if overflow > 0:
+        for ip in sorted(_failures, key=lambda k: _failures[k][-1])[:overflow]:
+            del _failures[ip]
+    overflow = len(_lockouts) - _MAX_TRACKED
+    if overflow > 0:
+        for ip in sorted(_lockouts, key=_lockouts.__getitem__)[:overflow]:
+            del _lockouts[ip]
+
+
 def _record_failure(ip: str) -> None:
     now = time.monotonic()
+    if len(_failures) >= _MAX_TRACKED or len(_lockouts) >= _MAX_TRACKED:
+        _sweep(now)
     recent = [t for t in _failures.get(ip, []) if now - t < _FAIL_WINDOW]
     recent.append(now)
     _failures[ip] = recent
     if len(recent) >= _FAIL_LIMIT:
         _lockouts[ip] = now + _LOCKOUT_SECS
-        logger.warning(f"Admin: {ip} locked out for {int(_LOCKOUT_SECS)}s after {len(recent)} bad keys")
+        logger.warning(
+            f"Admin: {ip} locked out for {int(_LOCKOUT_SECS)}s after {len(recent)} bad keys"
+            + (_PROXY_HINT if _looks_like_proxy(ip) else "")
+        )
+
+
+_PROXY_HINT = (
+    " — this is a private address, so if PostersPlus is behind a reverse proxy "
+    "every visitor shares it and is locked out too. Set FORWARDED_ALLOW_IPS to "
+    "the proxy's address so the real client address is used"
+)
+
+
+def _looks_like_proxy(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return addr.is_private and not addr.is_loopback
 
 
 def _key_matches(supplied: str) -> bool:
