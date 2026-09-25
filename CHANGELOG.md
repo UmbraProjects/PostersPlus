@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Hide Year, and an optional Admin link
+
+- **Rating → Labels → Hide Year** (`hide_year=true`) drops the release year
+  from the label in every rating mode and from the landscape info strip, and
+  can be set per shape (`landscape_hide_year`) like Hide Genre. Minimalist's
+  Year mode shows the score only as the colour of the separator before the
+  year, so with the year hidden it prints the score instead.
+- `SHOW_ADMIN_LINK` (Access & serving, off by default) adds an Admin link to
+  the configurator's header. It stays hidden while the dashboard is disabled,
+  so turning it on without an `ADMIN_KEY` shows nothing.
+
+### PublicMetaDB watchlist
+
+- `WATCHLIST_SOURCE=pmdb` reads the Watchlist sash from a
+  [PublicMetaDB](https://publicmetadb.com) account's watchlist, with a key
+  from Settings → API set as `PMDB_API_KEY`. `PMDB_LIST_ID` reads another
+  list instead, including someone else's public one.
+- PMDB lists carry only TMDB ids, so the sash appears wherever the title's
+  TMDB id is known — with a server or client TMDB key — and not on
+  Cinemeta-only renders.
+
 ### Faster poster rendering
 
 - A poster takes about 25% less CPU to render the first time and about 45%

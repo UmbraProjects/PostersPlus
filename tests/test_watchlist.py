@@ -369,6 +369,102 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
                 changed = await watchlist.refresh(client)
         self.assertEqual(changed.tmdb, frozenset({("1", "movie"), ("2", "show")}))
 
+    # PMDB shapes as documented at publicmetadb.com/api-docs.
+    def _pmdb_handler(self, calls, lists=None, pages=None, status=200):
+        lists = lists if lists is not None else [
+            {"id": "lst_custom", "name": "Sci-Fi", "type": "custom"},
+            {"id": "lst_watch", "name": "Watchlist", "type": "watchlist"},
+        ]
+        pages = pages or {1: [{"id": "li_1", "tmdb_id": 27205, "media_type": "movie"}]}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append((request.url.path, dict(request.url.params), request.headers.get("Authorization")))
+            if status != 200:
+                return httpx.Response(status, json={"error": "nope"})
+            if request.url.path == "/api/external/lists":
+                return httpx.Response(200, json={"items": lists, "total": len(lists), "page": 1,
+                                                 "perPage": 500, "totalPages": 1})
+            if request.url.path.endswith("/items"):
+                page = int(request.url.params["page"])
+                return httpx.Response(200, json={"list": {"id": "lst_watch"}, "items": pages.get(page, []),
+                                                 "total": 0, "page": page, "perPage": 500,
+                                                 "totalPages": len(pages)})
+            return httpx.Response(404, json={"error": "not found"})
+        return handler
+
+    async def _pmdb_refresh(self, handler, list_id=""):
+        with mock.patch.object(_cfg, "WATCHLIST_SOURCE", "pmdb"), \
+             mock.patch.object(_cfg, "PMDB_API_KEY", "pm-secret"), \
+             mock.patch.object(_cfg, "PMDB_LIST_ID", list_id):
+            async with _fake_client(handler) as client:
+                return await watchlist.refresh(client)
+
+    async def test_pmdb_finds_the_watchlist_and_pages_through_it(self):
+        calls = []
+        handler = self._pmdb_handler(calls, pages={
+            1: [{"id": "li_1", "tmdb_id": 27205, "media_type": "movie"}],
+            2: [{"id": "li_2", "tmdb_id": 1399, "media_type": "tv"},
+                {"id": "li_3", "tmdb_id": None, "media_type": "movie"},
+                {"id": "li_4", "tmdb_id": 5, "media_type": "person"}],
+        })
+        changed = await self._pmdb_refresh(handler)
+        self.assertEqual([c[0] for c in calls], ["/api/external/lists",
+                                                 "/api/external/lists/lst_watch/items",
+                                                 "/api/external/lists/lst_watch/items"])
+        self.assertEqual([c[1]["page"] for c in calls[1:]], ["1", "2"])
+        self.assertTrue(all(c[1]["perPage"] == "500" for c in calls))
+        self.assertTrue(all(c[2] == "Bearer pm-secret" for c in calls))
+        self.assertEqual(changed.tmdb, frozenset({("27205", "movie"), ("1399", "show")}))
+        self.assertEqual(changed.imdb, frozenset())
+        # TMDB-keyed only: the render path matches on (tmdb id, kind).
+        self.assertTrue(watchlist.is_listed("tt1375666", "27205", "movie"))
+        self.assertTrue(watchlist.is_listed(None, "1399", "series"))
+        self.assertFalse(watchlist.is_listed(None, "1399", "movie"))
+
+    async def test_pmdb_list_id_skips_the_lookup(self):
+        calls = []
+        await self._pmdb_refresh(self._pmdb_handler(calls), list_id="lst_other")
+        self.assertEqual([c[0] for c in calls], ["/api/external/lists/lst_other/items"])
+
+    async def test_pmdb_account_without_a_watchlist_is_empty_not_an_error(self):
+        calls = []
+        changed = await self._pmdb_refresh(self._pmdb_handler(calls, lists=[]))
+        self.assertEqual(watchlist._snapshot.count, 0)
+        self.assertIsNone(watchlist.status()["last_error"])
+        self.assertFalse(changed)
+
+    async def test_pmdb_bad_key_keeps_the_snapshot_and_never_reports_the_key(self):
+        watchlist._snapshot = Snapshot.from_entries([WatchlistEntry(None, "27205", "movie")], 1.0)
+        changed = await self._pmdb_refresh(self._pmdb_handler([], status=401))
+        self.assertIsNone(changed)
+        self.assertEqual(watchlist._snapshot.count, 1)
+        err = watchlist.status()["last_error"]
+        self.assertIn("401", err)
+        self.assertNotIn("pm-secret", err)
+
+    async def test_pmdb_rate_limit_is_reported_without_the_key(self):
+        changed = await self._pmdb_refresh(self._pmdb_handler([], status=429))
+        self.assertIsNone(changed)
+        err = watchlist.status()["last_error"]
+        self.assertIn("429", err)
+        self.assertNotIn("pm-secret", err)
+
+    async def test_pmdb_without_a_key_says_so(self):
+        with mock.patch.object(_cfg, "WATCHLIST_SOURCE", "pmdb"), \
+             mock.patch.object(_cfg, "PMDB_API_KEY", ""):
+            async with _fake_client(lambda r: httpx.Response(500)) as client:
+                self.assertIsNone(await watchlist.refresh(client))
+        self.assertIn("PMDB_API_KEY", watchlist.status()["last_error"])
+
+    def test_pmdb_is_a_recognised_source_with_its_own_signature(self):
+        with mock.patch.object(_cfg, "WATCHLIST_SOURCE", "PMDB"), \
+             mock.patch.object(_cfg, "PMDB_LIST_ID", ""):
+            self.assertEqual(watchlist.source_mode(), "pmdb")
+            self.assertTrue(watchlist.is_enabled())
+            self.assertEqual(watchlist._source_signature(), "pmdb:watchlist")
+            with mock.patch.object(_cfg, "PMDB_LIST_ID", "lst_x"):
+                self.assertEqual(watchlist._source_signature(), "pmdb:lst_x")
+
 
 if __name__ == "__main__":
     unittest.main()

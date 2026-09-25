@@ -1595,6 +1595,12 @@ class RequestConfig:
     bottom_gradient_opacity: float | None = None
     bottom_gradient_height: float | None = None
     hide_genre: bool = False
+    # Drops the release year from the label in every rating mode, and from the
+    # landscape info strip.  Minimalist's Year mode carries the score in the
+    # colour of the separator before the year, so with no year to hang it on
+    # that mode prints the score instead — otherwise hiding the year would
+    # quietly hide the rating too.
+    hide_year: bool = False
     # Drops every representation of the score from the label, in whichever
     # rating mode is drawing it — the printed number, the accent bar, the
     # score-coloured separator and the bar's rating fill alike.  A cue that
@@ -1703,6 +1709,7 @@ _LANDSCAPE_SPLIT_PARAMS: tuple[str, ...] = (
     "vignette_color_lightness",
     "vignette_color_blur",
     "hide_genre",
+    "hide_year",
     "hide_rating",
     "textless",
     "sash_mode",
@@ -2022,6 +2029,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.bottom_gradient_opacity = _f("bottom_gradient_opacity", cfg.bottom_gradient_opacity, 0.0, 255.0)
     cfg.bottom_gradient_height  = _f("bottom_gradient_height",  cfg.bottom_gradient_height,  0.0, 1.0)
     cfg.hide_genre = _b("hide_genre", cfg.hide_genre)
+    cfg.hide_year = _b("hide_year", cfg.hide_year)
     cfg.hide_rating = _b("hide_rating", cfg.hide_rating)
     cfg.hide_unreleased_rating = _b("hide_unreleased_rating", cfg.hide_unreleased_rating)
 
@@ -3251,7 +3259,12 @@ def build_poster(
 
     if cfg.hide_genre:
         genre_label = ""
-        
+    # Only the label reads release_year below, so blanking it here reads
+    # exactly like a title with no year — every layout already closes up
+    # around a missing one.
+    if cfg.hide_year:
+        release_year = None
+
     # Resolve the info-sash pick once, regardless of whether the diagonal sash
     # itself is rendered independently.
     #
@@ -3946,6 +3959,10 @@ def build_poster(
                     # shows the score with would survive the switch.
                     parts.append((str(release_year),
                                   None if not parts else "field" if cfg.hide_rating else "rfield"))
+                elif cfg.hide_year and _has_score:
+                    # No year to colour the separator before, so the score
+                    # is printed as Rating mode would print it.
+                    parts.append((_score_str, "rating" if parts else None))
             elif cfg.minimalist_append_mode == 1:
                 if _has_score:
                     parts.append((_score_str, "rating" if parts else None))
@@ -5477,6 +5494,8 @@ async def server_caps(access_key: str = ""):
 
     return {
         "access_key_required":   bool(_cfg.ACCESS_KEY),
+        # Operator opt-in, and only when there is a dashboard to link to.
+        "admin_link":            _cfg.SHOW_ADMIN_LINK and _admin.enabled(),
         "tmdb_key_set":          bool(_cfg.SERVER_TMDB_KEY),
         "mdblist_key_set":       bool(_cfg.SERVER_MDBLIST_KEYS),
         "mdblist_key_count":     len(_cfg.SERVER_MDBLIST_KEYS),

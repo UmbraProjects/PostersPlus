@@ -741,7 +741,8 @@ def build_landscape(
     # wanted here, and the same switch reads the same way in either shape.
     _draw_info_strip(image,
                      "" if cfg.hide_genre else (translate_genre(genre, cfg.logo_language) or genre),
-                     release_year, None if cfg.hide_rating else score,
+                     None if cfg.hide_year else release_year,
+                     None if cfg.hide_rating else score,
                      scale=getattr(cfg, "landscape_info_scale", 1.0),
                      logo_right=logo_right,
                      out_of_10=getattr(cfg, "landscape_score_out_of_10", False))

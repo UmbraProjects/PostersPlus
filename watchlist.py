@@ -29,6 +29,11 @@ Sources (WATCHLIST_SOURCE):
   trakt     GET api.trakt.tv/users/{TRAKT_USERNAME}/watchlist/{type} with a
             client id header only (public profile), or /sync/watchlist/{type}
             as the owner when TRAKT_ACCESS_TOKEN is set (private profile).
+  pmdb      GET publicmetadb.com/api/external/lists/{id}/items with a PMDB
+            API key (Bearer pm-...).  The list is the account's watchlist,
+            found by type on /api/external/lists, unless PMDB_LIST_ID names
+            another.  PMDB returns only a TMDB id and media type per item, so
+            these titles match on (TMDB id, kind) alone.
   <URL>     any MDBList list page, via its /json export — no key needed.
 
 The snapshot is persisted so a restart neither blanks the marker nor treats
@@ -47,6 +52,7 @@ import logging
 import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Iterable
+from urllib.parse import quote
 
 import httpx
 
@@ -74,6 +80,10 @@ _SIMKL_REFRESH_AHEAD_SECS = 86400
 _SIMKL_DEVICE_RETRY_SECS = 3600
 
 _TRAKT_API = "https://api.trakt.tv"
+
+_PMDB_API       = "https://publicmetadb.com/api/external"
+_PMDB_PAGE_SIZE = 500   # the documented maximum
+_PMDB_MAX_PAGES = 40
 
 _MDBLIST_API       = "https://api.mdblist.com"
 _MDBLIST_PAGE_SIZE = 500
@@ -155,12 +165,12 @@ def normalise_kind(media_type: str | None) -> Kind:
 
 
 def source_mode() -> str:
-    """"mdblist" | "simkl" | "trakt" | "url" | "" (disabled)."""
+    """"mdblist" | "simkl" | "trakt" | "pmdb" | "url" | "" (disabled)."""
     src = _cfg.WATCHLIST_SOURCE.strip()
     if not src:
         return ""
     low = src.lower()
-    if low in ("mdblist", "simkl", "trakt"):
+    if low in ("mdblist", "simkl", "trakt", "pmdb"):
         return low
     if low.startswith("http://") or low.startswith("https://"):
         return "url"
@@ -168,7 +178,7 @@ def source_mode() -> str:
 
 
 def is_enabled() -> bool:
-    return source_mode() in ("mdblist", "simkl", "trakt", "url")
+    return source_mode() in ("mdblist", "simkl", "trakt", "pmdb", "url")
 
 
 def is_listed(imdb_id: str | None, tmdb_id: str | None, media_type: str | None) -> bool:
@@ -279,6 +289,8 @@ def _source_signature() -> str:
         return "simkl:" + ",".join(sorted(_cfg.WATCHLIST_SIMKL_STATUSES))
     if mode == "trakt":
         return "trakt:" + (_cfg.TRAKT_USERNAME.lower() if not _cfg.TRAKT_ACCESS_TOKEN else "me")
+    if mode == "pmdb":
+        return "pmdb:" + (_cfg.PMDB_LIST_ID or "watchlist")
     return mode
 
 
@@ -396,6 +408,24 @@ def parse_trakt_items(items, kind: Kind) -> list[WatchlistEntry]:
         tmdb = _clean_tmdb(ids.get("tmdb"))
         if imdb or tmdb:
             out.append(WatchlistEntry(imdb, tmdb, kind))
+    return out
+
+
+def parse_pmdb_items(items) -> list[WatchlistEntry]:
+    """PMDB list items: {"id": "li_...", "tmdb_id": 27205, "media_type": "movie"|"tv"}.
+    No IMDb id is offered, so the entry is keyed on TMDB alone."""
+    out: list[WatchlistEntry] = []
+    if not isinstance(items, list):
+        return out
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        media_type = str(item.get("media_type") or "").lower()
+        if media_type not in ("movie", "tv"):
+            continue
+        tmdb = _clean_tmdb(item.get("tmdb_id"))
+        if tmdb:
+            out.append(WatchlistEntry(None, tmdb, normalise_kind(media_type)))
     return out
 
 
@@ -521,6 +551,68 @@ async def _fetch_trakt(client: httpx.AsyncClient) -> list[WatchlistEntry]:
             )
         resp.raise_for_status()
         entries.extend(parse_trakt_items(resp.json(), kind))
+    return entries
+
+
+# --- PMDB ------------------------------------------------------------------
+
+async def _pmdb_get(client: httpx.AsyncClient, path: str, page: int) -> dict:
+    # The key rides in a header, never the URL, so _describe_error's sanitised
+    # URL is safe to publish on /server-caps.
+    resp = await client.get(
+        f"{_PMDB_API}{path}",
+        params={"page": page, "perPage": _PMDB_PAGE_SIZE},
+        headers={"Authorization": f"Bearer {_cfg.PMDB_API_KEY}", "Accept": "application/json"},
+        timeout=20.0,
+    )
+    if resp.status_code == 401:
+        raise RuntimeError("PMDB rejected PMDB_API_KEY (HTTP 401) — create a key under Settings → API on publicmetadb.com")
+    if resp.status_code == 404 and path.startswith("/lists/"):
+        list_id = path.split("/")[2]
+        raise RuntimeError(f"PMDB has no list {list_id!r} visible to this key (HTTP 404)")
+    resp.raise_for_status()
+    payload = resp.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"PMDB {path} returned an unexpected response")
+    return payload
+
+
+async def _pmdb_pages(client: httpx.AsyncClient, path: str):
+    for page in range(1, _PMDB_MAX_PAGES + 1):
+        payload = await _pmdb_get(client, path, page)
+        items = payload.get("items")
+        yield items if isinstance(items, list) else []
+        try:
+            total_pages = int(payload.get("totalPages") or 1)
+        except (TypeError, ValueError):
+            total_pages = 1
+        if page >= total_pages or not items:
+            break
+
+
+async def _pmdb_watchlist_id(client: httpx.AsyncClient) -> str | None:
+    logger.info("External API Call: PMDB lists")
+    async for lists in _pmdb_pages(client, "/lists"):
+        for lst in lists:
+            if isinstance(lst, dict) and lst.get("type") == "watchlist" and lst.get("id"):
+                return str(lst["id"])
+    return None
+
+
+async def _fetch_pmdb(client: httpx.AsyncClient) -> list[WatchlistEntry]:
+    if not _cfg.PMDB_API_KEY:
+        raise RuntimeError("WATCHLIST_SOURCE=pmdb needs PMDB_API_KEY")
+    # Looked up every cycle rather than remembered: it is one call, and a
+    # watchlist deleted and recreated on PMDB gets a new id.
+    list_id = _cfg.PMDB_LIST_ID or await _pmdb_watchlist_id(client)
+    if not list_id:
+        # A new account has no watchlist until something is added to it.
+        logger.info("Watchlist: the PMDB account has no watchlist yet")
+        return []
+    entries: list[WatchlistEntry] = []
+    logger.info(f"External API Call: PMDB list items ({list_id})")
+    async for items in _pmdb_pages(client, f"/lists/{quote(list_id, safe='')}/items"):
+        entries.extend(parse_pmdb_items(items))
     return entries
 
 
@@ -881,6 +973,8 @@ async def refresh(client: httpx.AsyncClient) -> SnapshotDiff | None:
             entries = await _fetch_simkl(client)
         elif mode == "trakt":
             entries = await _fetch_trakt(client)
+        elif mode == "pmdb":
+            entries = await _fetch_pmdb(client)
         elif mode == "url":
             entries = await _fetch_mdblist_url(client)
         else:
@@ -913,7 +1007,7 @@ async def watchlist_refresh_loop(
         if source_mode() == "invalid":
             logger.error(
                 f"Watchlist: WATCHLIST_SOURCE={_cfg.WATCHLIST_SOURCE!r} is not mdblist, simkl, "
-                "trakt or an MDBList list URL — feature disabled"
+                "trakt, pmdb or an MDBList list URL — feature disabled"
             )
         return
     load_persisted()

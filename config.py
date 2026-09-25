@@ -64,6 +64,10 @@ TMDB_LOGO_CACHE_DIR   = "/app/cache/tmdb_logos" # base logos from TMDB
 
 PUBLIC_URL            = _env('PUBLIC_URL', "", group='Access & serving', kind='url', label='Public URL', help="The address clients reach this instance on, e.g. https://posters.example.com. Used for the poster links the trending catalogs addon hands out. Blank derives it from each request's Host / X-Forwarded-Host / X-Forwarded-Proto headers, which works behind most proxies but lets a forged header change the links in a response a shared cache might keep.", placeholder='https://posters.example.com', advanced=True).strip().rstrip("/")
 ACCESS_KEY            = _env('ACCESS_KEY', "", group='Access & serving', kind='secret', label='Access key', help='Shared secret every poster and configurator request must carry as access_key. Leave blank for open access.') or None
+# Off by default: on a public instance an Admin link in every visitor's header
+# only invites people to try keys against the dashboard.  _flag isn't defined
+# yet at this point, hence the inline parse.
+SHOW_ADMIN_LINK       = _env('SHOW_ADMIN_LINK', "false", group='Access & serving', kind='bool', label='Admin link in configurator', help="Show an Admin link in the configurator's header, pointing at this dashboard. Off by default so visitors to a public instance aren't invited to try it; the dashboard still needs ADMIN_KEY either way, and the link stays hidden while the dashboard is disabled.").strip().lower() in ("1", "true", "yes")
 QUALITY_SOURCE        = _env('QUALITY_SOURCE', "aiostreams", group='Quality source', kind='choice', label='Quality source', help='Where stream-quality badges come from. QualiCache never scrapes on the request path; a cold title returns pending instead of blocking.', choices=('aiostreams', 'scraper', 'qualicache')).lower().strip()
 AIOSTREAMS_URL        = _env('AIOSTREAMS_URL', "", group='Quality source', show_if=('QUALITY_SOURCE', 'aiostreams'), kind='url', label='AIOStreams URL', help='Base URL of your AIOStreams instance. Used when the quality source is aiostreams.', placeholder='https://aiostreams.example.com')
 AIOSTREAMS_AUTH       = _env('AIOSTREAMS_AUTH', "", group='Quality source', show_if=('QUALITY_SOURCE', 'aiostreams'), kind='secret', label='AIOStreams auth', help='AIOStreams credentials as Base64 user:password.')
@@ -362,15 +366,18 @@ TRENDING_SOURCE_MAX_ITEMS    = max(1, int(_env('TRENDING_SOURCE_MAX_ITEMS', "500
 #             app (SIMKL_CLIENT_ID); the account is linked once through the
 #             device/PIN flow, whose link is printed in the log on first run.
 #   trakt     TRAKT_USERNAME's public watchlist, read with TRAKT_CLIENT_ID.
+#   pmdb      the PublicMetaDB watchlist of the account behind PMDB_API_KEY
+#             (or the list PMDB_LIST_ID names).
 #   <URL>     any MDBList list page — a shared "to watch" list, for example.
 # Unset (the default) disables the feature entirely: no fetch, no sash.
 # -----------------------------------------------------------------------
 APP_VERSION                  = "1.2.0"
-WATCHLIST_SOURCE             = _env('WATCHLIST_SOURCE', "", group='Watchlist', kind='text', label='Watchlist source', help="Self-hosted only: marks every title in one user's watchlist with a Watchlist sash. mdblist (the watchlist of the MDBList key's account, also the free route for Trakt, which MDBList mirrors), simkl, trakt, or any MDBList list page URL. Blank disables the feature.", placeholder='mdblist, simkl, trakt or a list URL').strip()
+WATCHLIST_SOURCE             = _env('WATCHLIST_SOURCE', "", group='Watchlist', kind='text', label='Watchlist source', help="Self-hosted only: marks every title in one user's watchlist with a Watchlist sash. mdblist (the watchlist of the MDBList key's account, also the free route for Trakt, which MDBList mirrors), simkl, trakt, pmdb (a PublicMetaDB watchlist), or any MDBList list page URL. Blank disables the feature.", placeholder='mdblist, simkl, trakt, pmdb or a list URL').strip()
 # How often the source is re-checked.  Every cycle is one cheap call (MDBList:
 # one page per 500 items; SIMKL: /sync/activities, the list itself only when
-# it changed; Trakt: two list calls), so this is safe well below the default.
-WATCHLIST_REFRESH_MINUTES    = max(1, int(_env('WATCHLIST_REFRESH_MINUTES', "30", group='Watchlist', show_if=('WATCHLIST_SOURCE', '*'), kind='int', label='Refresh interval (minutes)', help="How often the watchlist source is re-checked. Each check is one cheap call (one MDBList page per 500 titles; SIMKL's activities timestamp, with the list only re-read when it changed; two Trakt calls).", min=1, max=1440)))
+# it changed; Trakt: two list calls; PMDB: the list lookup plus one page per
+# 500 items), so this is safe well below the default.
+WATCHLIST_REFRESH_MINUTES    = max(1, int(_env('WATCHLIST_REFRESH_MINUTES', "30", group='Watchlist', show_if=('WATCHLIST_SOURCE', '*'), kind='int', label='Refresh interval (minutes)', help="How often the watchlist source is re-checked. Each check is one cheap call (one MDBList page per 500 titles; SIMKL's activities timestamp, with the list only re-read when it changed; two Trakt calls; one PMDB list lookup plus one page per 500 titles, well inside PMDB's free-tier hourly limit at the default interval).", min=1, max=1440)))
 # SIMKL: which of the account's lists count as "the watchlist".  Any of
 # plantowatch, watching, hold (the last two exist for TV/anime only).
 WATCHLIST_SIMKL_STATUSES     = [
@@ -390,6 +397,10 @@ TRAKT_USERNAME               = _env('TRAKT_USERNAME', "", group='Watchlist', sho
 # Optional: reads /sync/watchlist as the token's owner instead of the public
 # profile, which is what a private profile needs.
 TRAKT_ACCESS_TOKEN           = _env('TRAKT_ACCESS_TOKEN', "", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'trakt'), kind='secret', label='Trakt access token', help="Reads /sync/watchlist as the token's owner instead of the public profile; needed for a private profile.", advanced=True).strip()
+PMDB_API_KEY                 = _env('PMDB_API_KEY', "", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'pmdb'), kind='secret', label='PMDB API key', help='A PublicMetaDB API key (pm-...), created under Settings → API on publicmetadb.com. Only read access is used.').strip()
+# Blank reads the account's watchlist; an id (lst_...) reads that list instead,
+# which can be any list the key can see, including someone else's public one.
+PMDB_LIST_ID                 = _env('PMDB_LIST_ID', "", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'pmdb'), kind='text', label='PMDB list id', help="Read this PMDB list (lst_...) instead of the account's watchlist. Any list the key can see, including a public one.", advanced=True, placeholder='lst_...').strip()
 # Quality (AIOStreams) TTL — separate from rating TTL because stream availability
 # for older titles is very stable.  New content keeps the 1-day window so fresh
 # encodes are picked up quickly; old content is cached for much longer.

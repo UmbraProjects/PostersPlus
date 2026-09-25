@@ -271,7 +271,7 @@ Rotten Tomatoes, Metacritic, Popcornmeter, Roger Ebert).
 
 ## Watchlist marker
 
-The everyday settings (`WATCHLIST_SOURCE`, `SIMKL_CLIENT_ID`, `TRAKT_CLIENT_ID`, `TRAKT_USERNAME`) are in [CONFIGURATION.md](CONFIGURATION.md#watchlist-marker). These are the rest.
+The everyday settings (`WATCHLIST_SOURCE`, `SIMKL_CLIENT_ID`, `TRAKT_CLIENT_ID`, `TRAKT_USERNAME`, `PMDB_API_KEY`) are in [CONFIGURATION.md](CONFIGURATION.md#watchlist-marker). These are the rest.
 
 ### `WATCHLIST_REFRESH_MINUTES`
 
@@ -302,6 +302,12 @@ Default: unset
 Reads `/sync/watchlist` as the token's owner instead of `TRAKT_USERNAME`'s public profile — what a private profile needs. Obtain it through your own Trakt app's device flow; PostersPlus does not run one for Trakt.
 
 Default: unset
+
+### `PMDB_LIST_ID`
+
+Reads this PublicMetaDB list (its id, `lst_...`) instead of the `PMDB_API_KEY` account's watchlist. Any list the key can see works, including someone else's public list. Only used when `WATCHLIST_SOURCE` is `pmdb`.
+
+Default: unset (the account's watchlist)
 
 ---
 

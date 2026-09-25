@@ -130,6 +130,7 @@
 
   .header-github,
   .header-discord,
+  .header-admin,
   .header-theme {
     display: flex;
     align-items: center;
@@ -157,10 +158,14 @@
   }
   .header-github:hover,
   .header-discord:hover,
+  .header-admin:hover,
   .header-theme:hover { opacity: 1; color: var(--silver); }
   .header-github svg,
   .header-discord svg,
+  .header-admin svg,
   .header-theme svg { flex-shrink: 0; display: block; }
+  /* display:flex above would otherwise beat the hidden attribute. */
+  .header-admin[hidden] { display: none; }
 
   /* Right-side cluster: what's-new chip + github link */
   .header-right {
@@ -1879,12 +1884,14 @@
     .logo-sep, .logo-sub { display: none; }
     .header-github,
     .header-discord,
+    .header-admin,
     .header-theme { opacity: 0.6; margin-top: 0; }
 
     /* Mobile header right cluster: icons only — there isn't room for the
        text labels next to a half-width preview poster. */
     .github-label,
     .discord-label,
+    .admin-label,
     .theme-label { display: none; }
 
     .two-col, .inline-grid, .field-row { grid-template-columns: 1fr; }
@@ -2123,6 +2130,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
         </svg>
         <span class="theme-label">Theme</span>
       </button>
+      <!-- Shown only when the operator turns on SHOW_ADMIN_LINK and the
+           dashboard is enabled (serverCaps.admin_link). -->
+      <a class="header-admin" id="header-admin" href="/admin" target="_blank" rel="noopener" hidden>
+        <svg width="14" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3z"/>
+        </svg>
+        <span class="admin-label">Admin</span>
+      </a>
       <!-- Placeholder Discord URL — operators (e.g. ElfHosted) can point this at their own community link. -->
       <a class="header-discord" href="https://discord.gg/wEgTPNXUMU" target="_blank" rel="noopener">
         <svg width="18" height="14" viewBox="0 0 256 199" fill="currentColor" aria-hidden="true">
@@ -2416,7 +2431,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
-              <!-- The Hide Genre, Hide Rating and Textless switches move in
+              <!-- The Hide Genre, Hide Year, Hide Rating and Textless switches move in
                    here while the tabs that own them are hidden (see
                    updateShapeFields): one control, one parameter, shared by
                    both shapes. -->
@@ -2842,6 +2857,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <span class="toggle-label" data-tip="Removes the genre text and its associated spacers.">Hide Genre</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-hide-genre" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div id="hide-year-home"></div>
+              <div class="toggle-row" id="hide-year-row">
+                <span class="toggle-label" data-tip="Removes the release year and its separator. Minimalist's Year mode shows the score as the colour of the separator before the year, so with the year hidden it prints the score instead.">Hide Year</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-hide-year" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
@@ -3912,6 +3935,7 @@ async function fetchServerCaps() {
     }
     updateKeyBadges();
     updateImdbSourceAvailability();
+    document.getElementById('header-admin').hidden = !serverCaps.admin_link;
     
     if (serverCaps.trending_fetch_count) {
       const trSash = SASH_SLOTS.find(s => s.id === 'trending');
@@ -3945,7 +3969,7 @@ async function fetchServerCaps() {
 function applyWatchlistStatus(wl) {
   const wlSash = SASH_SLOTS.find(s => s.id === 'watchlist');
   if (!wlSash) return;
-  const NAMES = { mdblist: 'MDBList', simkl: 'SIMKL', trakt: 'Trakt', url: 'MDBList list' };
+  const NAMES = { mdblist: 'MDBList', simkl: 'SIMKL', trakt: 'Trakt', pmdb: 'PMDB', url: 'MDBList list' };
   wlSash.label = wl.source && NAMES[wl.source]
     ? `Watchlist (${NAMES[wl.source]}, ${wl.titles} titles)`
     : 'Watchlist (not configured on this server)';
@@ -5139,6 +5163,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     // URL an absent landscape_hide_genre falls back to hide_genre, so "off"
     // has to be said when the other shape says "on".  Defaults are dropped.
     set('hide_genre',  on('tog-hide-genre')  ? 'true' : 'false');
+    set('hide_year',   on('tog-hide-year')   ? 'true' : 'false');
     set('hide_rating', on('tog-hide-rating') ? 'true' : 'false');
     set('textless',    on('tog-textless')    ? 'true' : 'false');
     set('sash_mode',   v['cfg-sash-mode'] || 'sash');
@@ -6162,6 +6187,7 @@ const _SHARED_PARAM = {
   'cfg-vignette-light':        'vignette_color_lightness',
   'cfg-vignette-blur':         'vignette_color_blur',
   'tog-hide-genre':            'hide_genre',
+  'tog-hide-year':             'hide_year',
   'tog-hide-rating':           'hide_rating',
   'tog-textless':              'textless',
   'cfg-sash-mode':             'sash_mode',
@@ -6171,7 +6197,7 @@ const _LANDSCAPE_SHARED_DEFAULTS = {
   'tog-vignette-color-bottom': true, 'tog-vignette-ramp': true, 'tog-vignette-local': false,
   'cfg-vignette-style': 'shade',
   'cfg-vignette-sat': '2.00', 'cfg-vignette-light': '1.30', 'cfg-vignette-blur': '1.00',
-  'tog-hide-genre': false, 'tog-hide-rating': false, 'tog-textless': false, 'cfg-sash-mode': 'sash',
+  'tog-hide-genre': false, 'tog-hide-year': false, 'tog-hide-rating': false, 'tog-textless': false, 'cfg-sash-mode': 'sash',
 };
 const SHAPE_STASH_KEY = 'postersplus_shape_stash';
 let _shapeStash = { portrait: null, landscape: null };   // null = that shape's defaults
@@ -6259,12 +6285,13 @@ function toggleShape() {
 
 // Tabs the landscape renderer reads nothing from.  Hidden outright rather than
 // greyed: a visible control that does nothing is a bug report waiting to be
-// filed.  The switches it does read from those tabs (Hide Genre, Hide Rating,
+// filed.  The switches it does read from those tabs (Hide Genre, Hide Year, Hide Rating,
 // Textless) are docked into the Landscape group meanwhile — moved, not copied,
 // so there is one control and one parameter whichever shape is showing.
 const _PORTRAIT_ONLY_TABS = ['rating', 'logo', 'quality'];
 const _DOCKED_ROWS = [
   { id: 'hide-genre-row',  home: 'hide-genre-home' },
+  { id: 'hide-year-row',   home: 'hide-year-home' },
   { id: 'hide-rating-row', home: 'hide-rating-home' },
   { id: 'hide-unreleased-rating-row', home: 'hide-unreleased-rating-home' },
   { id: 'textless-row',    home: 'textless-home' },
@@ -7062,6 +7089,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     if (['shade','muted','reference'].includes(_vs)) _setEl('cfg-vignette-style', _vs); }
   if (p.has('notch_vignette_color'))      _setEl('tog-notch-vignette-color', p.get('notch_vignette_color'));
   if (p.has('hide_genre')) _setEl('tog-hide-genre', p.get('hide_genre'));
+  if (p.has('hide_year')) _setEl('tog-hide-year', p.get('hide_year'));
   if (p.has('hide_rating')) _setEl('tog-hide-rating', p.get('hide_rating'));
   // shape is seeded from the server defaults above, so an ordinary URL without
   // it lands on portrait.  A preset carries no shape and is not a reason to

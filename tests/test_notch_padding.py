@@ -101,10 +101,16 @@ class NotchPaddingGeometryTests(unittest.TestCase):
 
     def test_font_size_is_unaffected(self):
         # The whole point: the label must render at exactly the same scale.
+        # Measured as ink height, which can move by a row without the font
+        # changing: the label is centred, so a pad can land it on a half pixel
+        # (y=88.5 at 1.0, whole pixels at 0.9 / 0.75), and Pillow 11 — what
+        # requirements.txt installs — anti-aliases that edge row across the
+        # threshold where Pillow 12 does not.  A font that scaled with the badge
+        # would be off by a fifth or more, so a pixel of slack still catches it.
         baseline = _metrics(_render(1.0))["text_h"]
         for pad in (0.9, 0.75, 0.6, 0.5):
             with self.subTest(pad=pad):
-                self.assertEqual(_metrics(_render(pad))["text_h"], baseline)
+                self.assertAlmostEqual(_metrics(_render(pad))["text_h"], baseline, delta=1)
 
     def test_badge_width_is_unaffected(self):
         # Horizontal padding derives from base_h, so width must not move either.
