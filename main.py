@@ -5166,11 +5166,14 @@ def _trending_addon_guard(key: str | None) -> None:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
 
-def _trending_addon_manifest() -> dict:
+def _trending_addon_manifest(base: str) -> dict:
     return {
         "id": "community.postersplus.trending",
-        "version": "1.0.0",
+        "version": "1.0.1",
         "name": "Posters+ Trending",
+        # Absolute: Stremio resolves the logo on its own, not against the
+        # manifest's URL.  /static is public, so no access key rides on it.
+        "logo": f"{base}/static/trending-logo.png",
         "description": (
             "The trending lists behind the Posters+ Trending sashes, so a row's "
             "order matches the \"#N Today\" on its posters."
@@ -5210,6 +5213,10 @@ def _decode_addon_cfg(segment: str) -> list[tuple[str, str]]:
         raise HTTPException(status_code=400, detail="Unreadable addon config")
     return [(k, v) for k, v in parse_qsl(query, keep_blank_values=True)
             if k not in _ADDON_CFG_IDENTITY]
+
+
+# On a response built from _public_base without PUBLIC_URL set.
+_FORWARDED_VARY = "Host, X-Forwarded-Host, X-Forwarded-Proto"
 
 
 def _public_base(request: Request) -> str:
@@ -5375,7 +5382,10 @@ async def trending_addon(rest: str, request: Request):
     _trending_addon_guard(key)
 
     if tail is None:
-        return JSONResponse(_trending_addon_manifest(), headers=_ADDON_HEADERS)
+        response = JSONResponse(_trending_addon_manifest(_public_base(request)), headers=_ADDON_HEADERS)
+        if not _cfg.PUBLIC_URL:
+            response.headers["Vary"] = _FORWARDED_VARY
+        return response
 
     if len(tail) == 2 and tail[1].endswith(".json"):
         ctype, cid, extra = tail[0], tail[1][:-5], None
@@ -5389,7 +5399,7 @@ async def trending_addon(rest: str, request: Request):
         poster_cfg = (_public_base(request), _decode_addon_cfg(cfg_seg), key)
     response = await _trending_catalog(key, ctype, cid, extra, poster_cfg)
     if poster_cfg is not None and not _cfg.PUBLIC_URL:
-        response.headers["Vary"] = "Host, X-Forwarded-Host, X-Forwarded-Proto"
+        response.headers["Vary"] = _FORWARDED_VARY
     return response
 
 

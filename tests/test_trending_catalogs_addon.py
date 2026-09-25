@@ -68,6 +68,21 @@ class ManifestTests(_AddonTest):
         main._cfg.ACCESS_KEY = ""
         self.assertEqual(self.client.get("/trending/manifest.json").status_code, 200)
 
+    def test_logo_is_an_absolute_url_that_is_served(self):
+        manifest = self.client.get(
+            "/trending/sekrit/manifest.json",
+            headers={"X-Forwarded-Proto": "https", "X-Forwarded-Host": "posters.example.com"},
+        ).json()
+        self.assertEqual(manifest["logo"], "https://posters.example.com/static/trending-logo.png")
+        logo = self.client.get("/static/trending-logo.png")
+        self.assertEqual(logo.status_code, 200)
+        self.assertEqual(logo.headers["content-type"], "image/png")
+
+    def test_logo_uses_public_url_when_set(self):
+        with mock.patch.object(main._cfg, "PUBLIC_URL", "https://posters.example.org"):
+            manifest = self.client.get("/trending/sekrit/manifest.json").json()
+        self.assertEqual(manifest["logo"], "https://posters.example.org/static/trending-logo.png")
+
 
 class CatalogTests(_AddonTest):
     def test_movie_catalog_is_the_snapshot_in_rank_order(self):

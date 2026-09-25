@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Trending catalogs addon has a logo
+
+- The addon's manifest now points to a Posters+ Trending logo, so it no
+  longer shows up blank in Stremio's addon list. Its address comes from
+  `PUBLIC_URL` when set, otherwise from the request, like the poster links.
+
 ### Reliability and hardening
 
 - Errors reported on `/server-caps` and `/stats` show less detail.
