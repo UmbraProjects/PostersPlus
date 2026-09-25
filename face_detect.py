@@ -35,6 +35,10 @@ _MODEL_PATH = _cfg.YUNET_MODEL_PATH or os.path.join(
 )
 _SCORE_THRESHOLD = 0.6
 
+# Part of every face_box_cache key, so a different model or threshold never
+# reuses boxes another detector found.
+DETECTOR_SIGNATURE = f"yunet:{os.path.basename(_MODEL_PATH)}:{_SCORE_THRESHOLD}"
+
 _detector = None
 _load_failed = False
 _lock = threading.Lock()
@@ -91,6 +95,12 @@ def detect_faces(image) -> list[tuple[float, float, float]]:
     """
     return [(x + fw / 2.0, fw, max(score, 0.0) ** 3 * fw * fh)
             for x, _y, fw, fh, score in detect_face_boxes(image)]
+
+
+def available() -> bool:
+    """Whether a detector is loaded — so an empty result can be told apart from
+    "detection unavailable", which must not be cached as "no faces"."""
+    return _ensure_detector() is not None
 
 
 def detect_face_boxes(image) -> list[tuple[float, float, float, float, float]]:

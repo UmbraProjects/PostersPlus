@@ -802,6 +802,8 @@ from cache import (
     get_cached_rating,
     get_cached_final_poster_entry,
     get_cached_final_poster_l1,
+    get_cached_face_boxes,
+    set_cached_face_boxes,
     set_cached_final_poster,
     delete_cached_final_poster,
     get_cached_tmdb_poster,
@@ -2669,8 +2671,18 @@ def _fog_faces(poster: Image.Image) -> list[tuple[float, float, float, float]]:
     face_detect.detect_faces), and dropping skin-coloured pixels there would take
     a real colour out of the vote.  Empty when detection is unavailable."""
     try:
-        from face_detect import detect_face_boxes
-        return [(x, y, w, h) for x, y, w, h, score in detect_face_boxes(poster)
+        import face_detect
+        # Cached by the pixels themselves: the same art comes back for every
+        # settings variant, rank change and cache bust, and YuNet was a fifth
+        # of a vignette render (serialised across render threads, too).
+        key = f"{face_detect.DETECTOR_SIGNATURE}:{poster.mode}:{poster.width}x{poster.height}:" + \
+            hashlib.blake2b(poster.tobytes(), digest_size=16).hexdigest()
+        boxes = get_cached_face_boxes(key)
+        if boxes is None:
+            boxes = face_detect.detect_face_boxes(poster)
+            if face_detect.available():
+                set_cached_face_boxes(key, boxes)
+        return [(x, y, w, h) for x, y, w, h, score in boxes
                 if score >= _FOG_FACE_MIN_SCORE]
     except Exception:
         return []
@@ -2939,11 +2951,25 @@ def _vignette_frost_band(
 
     stack = np.stack([np.asarray(band, dtype=np.float32)]
                      + [_blurred(radius * f) for f in _VIGNETTE_FROST_LEVELS[1:]])
+    # The bands' ramps are vertical, so depth is one value per row and the
+    # two levels each pixel blends between can be picked per row: plain row
+    # indexing instead of a per-pixel gather, same arithmetic, same result.
+    # A ramp that varies along a row still takes the per-pixel path.
+    if (depth == depth[:, :1]).all():
+        depth = depth[:, 0]
+        rows = np.arange(depth.shape[0])
+    else:
+        rows = None
     pos  = depth * (len(_VIGNETTE_FROST_LEVELS) - 1)
     lo   = np.minimum(pos.astype(np.int32), len(_VIGNETTE_FROST_LEVELS) - 2)
-    frac = (pos - lo)[..., None]
-    a = np.take_along_axis(stack, lo[None, ..., None], axis=0)[0]
-    b = np.take_along_axis(stack, lo[None, ..., None] + 1, axis=0)[0]
+    if rows is not None:
+        frac = (pos - lo)[:, None, None]
+        a = stack[lo, rows]
+        b = stack[lo + 1, rows]
+    else:
+        frac = (pos - lo)[..., None]
+        a = np.take_along_axis(stack, lo[None, ..., None], axis=0)[0]
+        b = np.take_along_axis(stack, lo[None, ..., None] + 1, axis=0)[0]
     out = a + (b - a) * frac
     image.paste(Image.fromarray(np.clip(out + 0.5, 0, 255).astype(np.uint8)), (x0, y0))
 
@@ -3583,8 +3609,15 @@ def build_poster(
         MAX_LINES      = 2
         FONT_PATH      = os.path.join(_FONTS_DIR, _font_file)
 
+        def _bbox(text: str, current_font):
+            # Memoised for the title font; anything else (the load_default()
+            # fallback) is measured directly.
+            if getattr(current_font, "path", None) == FONT_PATH:
+                return _text_bbox(FONT_PATH, current_font.size, text)
+            return draw.textbbox((0, 0), text, font=current_font)
+
         def _line_width(text: str, current_font) -> int:
-            bbox = draw.textbbox((0, 0), text, font=current_font)
+            bbox = _bbox(text, current_font)
             return int(bbox[2] - bbox[0])
 
         def _wrap_lines(text: str, current_font) -> list[str]:
@@ -3607,7 +3640,7 @@ def build_poster(
 
         def _measure_block(lines_to_measure: list[str], current_font, line_gap: int) -> tuple[int, int, list[tuple[str, tuple[int, int, int, int]]]]:
             line_boxes = [
-                (line, draw.textbbox((0, 0), line, font=current_font))
+                (line, _bbox(line, current_font))
                 for line in lines_to_measure
             ]
             if not line_boxes:
@@ -4997,6 +5030,35 @@ def _load_font(path: str, size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(path, size)
 
 
+# The fallback title's fit loop measures the same strings over and over — each
+# final line was already measured while wrapping, each word while ruling sizes
+# out — and a re-render measures them all again.  Layout is ~135 us a call and
+# was a tenth of build_poster, so bboxes are kept by (font file, size, text).
+# Any RGB/RGBA draw measures in the same "L" font mode as the poster's own.
+_MEASURE_DRAW = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+
+
+@lru_cache(maxsize=16384)
+def _text_bbox(font_path: str, size: int, text: str) -> tuple[float, float, float, float]:
+    return _MEASURE_DRAW.textbbox((0, 0), text, font=_load_font(font_path, size))
+
+
+# libwebp's effort level.  Pillow's default (4) spends ~55 ms on a 500x750
+# poster; 2 takes ~23 ms for files about 1.5% larger at the same quality, and
+# encoding was a fifth of all render CPU.  3 is no faster than 4.
+_WEBP_METHOD = 2
+
+
+def _encode_poster(img: Image.Image) -> bytes:
+    """Encode a finished composite in the configured output format."""
+    buf = io.BytesIO()
+    if _cfg.IMAGE_FORMAT == "webp":
+        img.convert("RGB").save(buf, format="WEBP", quality=_cfg.WEBP_QUALITY, method=_WEBP_METHOD)
+    else:
+        img.convert("RGB").save(buf, format=_cfg.IMAGE_FORMAT.upper(), quality=_cfg.JPEG_QUALITY)
+    return buf.getvalue()
+
+
 # ── Genre fallback backgrounds ────────────────────────────────────────────
 # Atmospheric 500x750 PNGs (procedurally generated by genre_backgrounds.py, or
 # hand-made overrides dropped into the same folder) used as the base for no-art
@@ -5708,12 +5770,8 @@ async def debug_canvas(genre: str = "Action", title: str = "Sample Title",
     _score = int(score) if score.isdigit() else "—"
 
     def _render() -> bytes:
-        img = build_poster(canvas, _score, genre, cfg, fallback_title=title,
-                           release_year=(year or None), no_poster=True)
-        buf = io.BytesIO()
-        _quality = _cfg.WEBP_QUALITY if _cfg.IMAGE_FORMAT == "webp" else _cfg.JPEG_QUALITY
-        img.convert("RGB").save(buf, format=_cfg.IMAGE_FORMAT.upper(), quality=_quality)
-        return buf.getvalue()
+        return _encode_poster(build_poster(canvas, _score, genre, cfg, fallback_title=title,
+                                           release_year=(year or None), no_poster=True))
 
     # A full composite, so it takes a render slot and runs off the loop like a
     # /poster render: on an open instance this endpoint is as reachable as that.
@@ -8073,10 +8131,7 @@ async def get_poster(
         def _composite_and_encode() -> bytes:
             _render = build_landscape if _is_landscape else build_poster
             result = _render(image, score, genre, _render_cfg, **_bp_args)
-            buf = io.BytesIO()
-            _quality = _cfg.WEBP_QUALITY if _cfg.IMAGE_FORMAT == "webp" else _cfg.JPEG_QUALITY
-            result.convert("RGB").save(buf, format=_cfg.IMAGE_FORMAT.upper(), quality=_quality)
-            return buf.getvalue()
+            return _encode_poster(result)
 
         img_bytes = await asyncio.get_running_loop().run_in_executor(
             None, _composite_and_encode

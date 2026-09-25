@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Faster poster rendering
+
+- A poster takes about 25% less CPU to render the first time and about 45%
+  less when its art has been rendered before (a different client or setting,
+  a trending change, a cache refresh). On a 4-core server a cold catalog grid
+  now renders about twice as fast. Rendered posters are unchanged pixel for
+  pixel.
+- WebP posters are encoded with less compression effort: about half the time
+  for files about 1.5% larger.
+- The faces the tinted vignette avoids are detected once per image and
+  remembered, instead of on every render.
+- The vignette's blur, the text-title fitting and the notch sash reuse work
+  that doesn't change between renders.
+
 ### Trending catalogs addon has a logo
 
 - The addon's manifest now points to a Posters+ Trending logo, so it no

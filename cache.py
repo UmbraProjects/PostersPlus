@@ -301,6 +301,18 @@ def init_db() -> None:
         )
     """)
 
+    # Face boxes the tinted vignette keeps out of its colour vote, keyed by a
+    # hash of the art they were found in.  YuNet costs a fifth of a vignette
+    # render, and the same art is rendered again for every settings variant,
+    # rank change and cache bust.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS face_box_cache (
+            cache_key  TEXT PRIMARY KEY,
+            boxes_json TEXT    NOT NULL,
+            cached_at  INTEGER NOT NULL
+        )
+    """)
+
     # Small generic key/value store for app-level bookkeeping (e.g. the last
     # cache-warm cycle's timestamp) that doesn't warrant its own table.
     conn.execute("""
@@ -728,7 +740,7 @@ def get_cache_stats() -> dict:
             "rating_cache", "quality_cache", "trending_cache",
             "tmdb_metadata_cache", "final_poster_cache",
             "digital_release_cache", "release_status_cache",
-            "movie_release_info_cache", "text_detection_cache",
+            "movie_release_info_cache", "text_detection_cache", "face_box_cache",
         ):
             try:
                 (n,) = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
@@ -846,6 +858,11 @@ def prune_caches() -> None:
             )
             if r.rowcount:
                 logger.info(f"Pruned {r.rowcount} old text-detection cache entries")
+            r = db.execute(
+                "DELETE FROM face_box_cache WHERE cached_at < ?", (detection_cutoff,)
+            )
+            if r.rowcount:
+                logger.info(f"Pruned {r.rowcount} old face-box cache entries")
 
             # Each tvdb_cache row stores its own TTL, so expiry is per-row rather
             # than a single cutoff.
@@ -2003,6 +2020,33 @@ def set_cached_text_detection(cache_key: str, has_text: bool) -> None:
             get_db().commit()
     except Exception as exc:
         logger.error(f"Text-detection cache write error: {exc}")
+
+
+def get_cached_face_boxes(cache_key: str) -> "list[tuple[float, ...]] | None":
+    """Cached face boxes [(x, y, w, h, score), …] for an image hash, or None if
+    absent.  Like text detection, never stale: the key covers the pixels and
+    the detector."""
+    try:
+        row = get_db().execute(
+            "SELECT boxes_json FROM face_box_cache WHERE cache_key = ?", (cache_key,)
+        ).fetchone()
+        return None if row is None else [tuple(box) for box in json.loads(row[0])]
+    except Exception as exc:
+        logger.error(f"Face-box cache read error: {exc}")
+        return None
+
+
+def set_cached_face_boxes(cache_key: str, boxes: "list[tuple[float, ...]]") -> None:
+    try:
+        with _db_lock:
+            get_db().execute(
+                "INSERT OR REPLACE INTO face_box_cache (cache_key, boxes_json, cached_at) "
+                "VALUES (?, ?, ?)",
+                (cache_key, json.dumps([list(box) for box in boxes]), int(time.time())),
+            )
+            get_db().commit()
+    except Exception as exc:
+        logger.error(f"Face-box cache write error: {exc}")
 
 
 # ---------------------------------------------------------------------------

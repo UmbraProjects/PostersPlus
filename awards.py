@@ -2,8 +2,11 @@
 import os
 import math
 import numpy as np
+from functools import lru_cache
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from typing import Any
+
+_FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 
 try:
     import cairo as _cairo
@@ -1551,6 +1554,42 @@ def dominant_frost_rgb(
     return rgb
 
 
+# The notch is drawn at 3x on every render, but its font, its shape and its
+# label depend only on sizes and text — never on the poster underneath — so
+# those parts are kept and only the frosted body (which is the poster, blurred)
+# is redone.  The label layers are RGBA at 3x, 0.3-0.7 MB each, hence the
+# small cap: enough for the award, status and trending labels a catalog
+# actually repeats.
+@lru_cache(maxsize=16)
+def _notch_font(size_ss: int):
+    try:
+        return ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), size_ss)
+    except IOError:
+        return ImageFont.load_default()
+
+
+@lru_cache(maxsize=32)
+def _notch_shape(bw: int, bh: int, r_ss: int, frost_opacity: float) -> tuple[Image.Image, Image.Image]:
+    """(shape mask, frost alpha): square top, rounded bottom corners."""
+    mask = Image.new("L", (bw, bh), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [(0, 0), (bw - 1, bh - 1)], radius=r_ss, fill=255,
+        corners=(False, False, True, True)
+    )
+    rr_f = np.array(mask, dtype=np.float32) / 255
+    return mask, Image.fromarray((rr_f * frost_opacity * 255).astype(np.uint8))
+
+
+@lru_cache(maxsize=32)
+def _notch_label_layer(label: str, size_ss: int, bw: int, bh: int,
+                       ink: tuple[int, int, int, int]) -> Image.Image:
+    layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    td = ImageDraw.Draw(layer)
+    tx, ty = _text_center(td, label, _notch_font(size_ss), bw / 2, bh / 2)
+    td.text((tx, ty), label, font=_notch_font(size_ss), fill=ink)
+    return layer
+
+
 def draw_award_badge(
     image: Image.Image,
     label: str,
@@ -1635,12 +1674,8 @@ def draw_award_badge(
     base_h = int(height * 0.075 * size_ratio_h)
 
     # ── Font: fixed size so every label renders at the same scale ────────────
-    _fonts_dir   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
     font_size_ss = int(base_h * font_size_ratio) * SS
-    try:
-        font = ImageFont.truetype(os.path.join(_fonts_dir, "Inter-Bold.ttf"), font_size_ss)
-    except IOError:
-        font = ImageFont.load_default()
+    font = _notch_font(font_size_ss)
 
     # Measure rendered text at SS resolution — the ink extents drive both the
     # badge width and the vertical padding floor below.
@@ -1725,27 +1760,21 @@ def draw_award_badge(
         fr_r, fr_g, fr_b = _frosted_tint(dr, dg, db, frost_saturation, frost_reference)
 
         # Notch shape mask (square top, rounded bottom)
-        rr_mask_ss = Image.new("L", (bw, bh), 0)
-        ImageDraw.Draw(rr_mask_ss).rounded_rectangle(
-            [(0, 0), (bw - 1, bh - 1)], radius=r_ss, fill=255,
-            corners=(False, False, True, True)
-        )
-        rr_f = np.array(rr_mask_ss, dtype=np.float32) / 255
+        rr_mask_ss, frost_alpha = _notch_shape(bw, bh, r_ss, frost_opacity)
 
         # Lay blurred crop under the tinted frost layer (alpha ~210 = quite opaque)
         blurred_ss.putalpha(rr_mask_ss)
         frost = Image.new("RGBA", (bw, bh), (fr_r, fr_g, fr_b, 0))
-        frost.putalpha(Image.fromarray((rr_f * frost_opacity * 255).astype(np.uint8)))
+        frost.putalpha(frost_alpha)
         badge_ss = Image.alpha_composite(blurred_ss, frost)
 
         # Text: dark on a light panel, light on a dark one (a matched panel can be
         # either — every other frost is light by construction).
-        txt_layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
-        td = ImageDraw.Draw(txt_layer)
-        tx, ty = _text_center(td, label, font, bw / 2, text_cy_ss)
         # (text_color is deliberately not consulted here: this style has always
         # ignored it, and honouring it now would restyle existing posters.)
-        td.text((tx, ty), label, font=font, fill=(*_frost_ink(fr_r, fr_g, fr_b), 245))
+        txt_layer = _notch_label_layer(
+            label, font_size_ss, bw, bh, (*_frost_ink(fr_r, fr_g, fr_b), 245)
+        )
         badge_ss = Image.alpha_composite(badge_ss, txt_layer)
 
         badge_final = badge_ss.resize((badge_w, badge_h), Image.Resampling.LANCZOS)
