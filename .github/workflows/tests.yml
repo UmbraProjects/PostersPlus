@@ -46,5 +46,11 @@ jobs:
           pip uninstall -y opencv-python
           pip install --force-reinstall --no-deps 'opencv-python-headless>=4.8,<5'
 
+      - name: Create the cache directory
+        # The app keeps its SQLite cache, settings file and image caches under
+        # /app/cache (the image creates it; see dockerfile), and the suite
+        # exercises those paths for real.  The runner has no /app at all.
+        run: sudo mkdir -p /app/cache && sudo chown -R "$USER" /app
+
       - name: Run tests
         run: python -m pytest -q
