@@ -116,7 +116,8 @@ class NotchCacheTests(unittest.TestCase):
             with self.subTest(style=style):
                 awards._notch_font.cache_clear()
                 awards._notch_shape.cache_clear()
-                awards._notch_label_layer.cache_clear()
+                awards._notch_shape_1x.cache_clear()
+                awards._notch_label_layer_1x.cache_clear()
                 first = self._badge(notch_style=style)
                 again = self._badge(notch_style=style)
                 np.testing.assert_array_equal(first, again)

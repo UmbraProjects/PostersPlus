@@ -791,6 +791,11 @@ from age_badge import draw_quality_age_badge, draw_quality_corner_bookmark, draw
 from landscape import build_landscape
 from awards import dominant_frost_rgb
 from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards, reconcile_cached_awards
+import awards as _awards_mod
+if not _awards_mod._HAS_SKIA:
+    # Still correct, just ~3x slower per sash — worth saying once, since the
+    # usual cause is an image missing the libEGL/libGL stubs (see dockerfile).
+    logger.warning("skia unavailable — diagonal sashes use the slower PIL fallback")
 from festivals import match_festival_keyword
 from i18n import load_languages, translate_genre, translate_sash
 from cache import (
@@ -5575,7 +5580,9 @@ _configurator_etag: str | None = None
 # "8": the diagonal sash is drawn straight onto the corner instead of as a
 #      rotated strip, and the frost/notch blurs upscale bilinearly — sub-pixel
 #      differences only, but bumped so clients pick up the faster renderer.
-_RENDER_CACHE_VERSION = "8"
+# "9": the sash is drawn by Skia at 1x and the frosted notch at 1x — label
+#      glyphs are anti-aliased differently, so cached composites are re-drawn.
+_RENDER_CACHE_VERSION = "9"
 
 # How far ahead of TMDB's scheduled digital date an r/movieleaks post is still
 # believed (see _leak_confirmed in get_poster).  Genuine early releases beat the

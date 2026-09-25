@@ -1,6 +1,7 @@
 """sash_side=left moves the diagonal sash into the top-left corner, and the
 quality bookmark (normally top-left) steps over to the top-right for it."""
 import unittest
+from unittest import mock
 
 import numpy as np
 from PIL import Image
@@ -33,6 +34,36 @@ class SashSideRenderingTests(unittest.TestCase):
         # mirror-image footprints.
         mirrored = right.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
         self.assertEqual(left.getbbox(), mirrored.getbbox())
+
+
+class SashFallbackRenderingTests(SashSideRenderingTests):
+    """The same corner checks on the PIL path, which draws every sash when
+    skia cannot be loaded."""
+
+    def setUp(self):
+        patcher = mock.patch.object(awards, "_HAS_SKIA", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+@unittest.skipUnless(awards._HAS_SKIA, "skia unavailable")
+class SkiaMatchesFallbackTests(unittest.TestCase):
+    """Skia and the PIL fallback lay the sash out identically; only edge and
+    glyph anti-aliasing may differ."""
+
+    def test_same_sash_either_way(self):
+        art = Image.new("RGBA", (500, 750), (40, 90, 140, 255))
+        for side in ("right", "left"):
+            for kw in ({}, {"muted": True}, {"sash_type": "cast", "star": True}):
+                with self.subTest(side=side, **kw):
+                    fast = np.asarray(awards.draw_award_sash(art, "Oscar Winner", side=side, **kw), dtype=np.int16)
+                    with mock.patch.object(awards, "_HAS_SKIA", False):
+                        slow = np.asarray(awards.draw_award_sash(art, "Oscar Winner", side=side, **kw), dtype=np.int16)
+                    diff = np.abs(fast - slow)
+                    self.assertLess(diff.mean(), 1.0)
+                    # Anything beyond anti-aliasing (a band or label in a
+                    # different place) would change far more than 2% of pixels.
+                    self.assertLess((diff.max(axis=2) > 48).mean(), 0.02)
 
 
 class BookmarkSideTests(unittest.TestCase):

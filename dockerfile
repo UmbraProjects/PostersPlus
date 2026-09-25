@@ -28,6 +28,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \
     && rm -rf /var/lib/apt/lists/*
 
+# skia-python links libEGL.so.1 and libGL.so.1, though the sash is drawn on the
+# CPU and never opens a GL context.  The libegl1/libgl1 packages depend on
+# Mesa's drivers, which bring LLVM: ~185 MB for code that is never run.  Only
+# glvnd's four dispatch libraries are needed for the module to load, so they
+# are unpacked from their packages directly (~3 MB).  Nothing else links them.
+RUN apt-get update \
+    && cd /tmp \
+    && apt-get download libegl1 libgl1 libglx0 libglvnd0 \
+    && for deb in ./*.deb; do dpkg -x "$deb" /; done \
+    && ldconfig \
+    && rm -f ./*.deb \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /wheels /wheels
 # RapidOCR's GUI OpenCV dependency is API-compatible with the headless wheel we
 # intentionally install. Normalize its installed metadata so `pip check` and

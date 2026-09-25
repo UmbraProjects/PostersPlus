@@ -8,6 +8,9 @@ Pillow>=10.0,<12
 httpx>=0.25,<1.0
 numpy>=1.26,<3
 pycairo>=1.25,<2
+# Draws the diagonal sash at 1x with native anti-aliasing (CPU raster only).
+# The module links libEGL/libGL, which the dockerfile provides as bare stubs.
+skia-python>=144.0,<145
 # Rasterises SVG title logos (TMDB serves many of its highest-voted logos as SVG).
 # Pulls cairocffi/tinycss2/cssselect2; cairo runtime lib is already in the image.
 cairosvg>=2.7,<3

@@ -14,6 +14,17 @@ try:
 except ImportError:
     _HAS_CAIRO = False
 
+# Skia draws the diagonal sash at 1x with its own anti-aliasing (see
+# _sash_skia).  Without it — the wheel missing, or libEGL/libGL absent so the
+# module cannot load — the sash falls back to the PIL path, supersampled at 3x:
+# the same sash, ~3x the cost.
+try:
+    import skia as _skia
+    _SKIA_TYPEFACE = _skia.Typeface.MakeFromFile(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"))
+    _HAS_SKIA = _SKIA_TYPEFACE is not None
+except (ImportError, OSError):
+    _HAS_SKIA = False
+
 
 # ---------------------------------------------------------------------------
 # Sentinel
@@ -1524,12 +1535,29 @@ def _notch_shape(bw: int, bh: int, r_ss: int, frost_opacity: float) -> tuple[Ima
 
 
 @lru_cache(maxsize=32)
-def _notch_label_layer(label: str, size_ss: int, bw: int, bh: int,
-                       ink: tuple[int, int, int, int]) -> Image.Image:
-    layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
-    td = ImageDraw.Draw(layer)
-    tx, ty = _text_center(td, label, _notch_font(size_ss), bw / 2, bh / 2)
-    td.text((tx, ty), label, font=_notch_font(size_ss), fill=ink)
+def _notch_shape_1x(w: int, h: int, radius: int, frost_opacity: float) -> tuple[Image.Image, Image.Image]:
+    """The frosted notch's (shape mask, frost alpha) at 1x.  PIL's rounded
+    rectangle has no anti-aliasing, so the shape is drawn at 3x and box-reduced
+    once; after that it is a cache hit, like the rest of the shape."""
+    mask3, alpha3 = _notch_shape(w * 3, h * 3, radius * 3, frost_opacity)
+    return mask3.reduce(3), alpha3.reduce(3)
+
+
+@lru_cache(maxsize=64)
+def _notch_label_layer_1x(label: str, size_ss: int, ss: int, w: int, h: int,
+                          ink: tuple[int, int, int, int]) -> Image.Image:
+    """The frosted notch's label at 1x, anti-aliased by FreeType itself.
+
+    Positioned where the 3x layout puts it — the centre from _text_center at
+    3x, divided down — and drawn from that baseline, rather than re-centred with
+    1x metrics: those round to whole pixels (int(ascent * 0.22) above all) and
+    sat the label a pixel high."""
+    font3 = _notch_font(size_ss)
+    tx, ty = _text_center(ImageDraw.Draw(Image.new("L", (1, 1))), label, font3, w * ss / 2, h * ss / 2)
+    baseline = (ty + font3.getmetrics()[0]) / ss
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(layer).text((tx / ss, baseline), label, font=_notch_font(size_ss // ss),
+                               fill=ink, anchor="ls")
     return layer
 
 
@@ -1569,7 +1597,8 @@ def draw_award_badge(
       frosted — highly opaque blurred poster pixels, dark text
 
     sash_type colour wiring is retained for future use.
-    Uses Cairo (sub-pixel AA, gradient) with PIL fallback. 3× LANCZOS downscale.
+    Uses Cairo (sub-pixel AA, gradient) with PIL fallback. 3× LANCZOS downscale,
+    except frosted, which is drawn at 1× (see that branch).
     """
     width, height = image.size
 
@@ -1683,10 +1712,11 @@ def draw_award_badge(
         crop_y = max(0, by_composite)
         region = image.crop((bx, crop_y, bx + badge_w, crop_y + badge_h))
         blur_r = max(4, int(badge_h * 0.35))
-        blurred = region.filter(ImageFilter.GaussianBlur(radius=blur_r))
-        # Bilinear: the crop is already a heavy blur, so LANCZOS's extra taps add
-        # cost and nothing visible.
-        blurred_ss = blurred.resize((bw, bh), Image.Resampling.BILINEAR).convert("RGBA")
+        # Drawn at 1x.  The 3x pass bought nothing here: the body is a blurred
+        # crop (upscaling it 3x and back is a costly identity), the frost is a
+        # flat colour, the shape mask is anti-aliased once and cached, and the
+        # label is anti-aliased by FreeType.  ~1.4 ms instead of ~7.8 ms.
+        blurred = region.filter(ImageFilter.GaussianBlur(radius=blur_r)).convert("RGBA")
 
         # Dominant colour of the actual poster region (a real cluster, not a
         # muddy mean — see dominant_frost_rgb).  tint_rgb (when supplied) overrides
@@ -1705,26 +1735,24 @@ def draw_award_badge(
         fr_r, fr_g, fr_b = _frosted_tint(dr, dg, db, frost_saturation, frost_reference)
 
         # Notch shape mask (square top, rounded bottom)
-        rr_mask_ss, frost_alpha = _notch_shape(bw, bh, r_ss, frost_opacity)
+        mask, frost_alpha = _notch_shape_1x(badge_w, badge_h, radius, frost_opacity)
 
         # Lay blurred crop under the tinted frost layer (alpha ~210 = quite opaque)
-        blurred_ss.putalpha(rr_mask_ss)
-        frost = Image.new("RGBA", (bw, bh), (fr_r, fr_g, fr_b, 0))
+        blurred.putalpha(mask)
+        frost = Image.new("RGBA", (badge_w, badge_h), (fr_r, fr_g, fr_b, 0))
         frost.putalpha(frost_alpha)
-        badge_ss = Image.alpha_composite(blurred_ss, frost)
+        badge = Image.alpha_composite(blurred, frost)
 
         # Text: dark on a light panel, light on a dark one (a matched panel can be
         # either — every other frost is light by construction).
         # (text_color is deliberately not consulted here: this style has always
         # ignored it, and honouring it now would restyle existing posters.)
-        txt_layer = _notch_label_layer(
-            label, font_size_ss, bw, bh, (*_frost_ink(fr_r, fr_g, fr_b), 245)
-        )
-        badge_ss = Image.alpha_composite(badge_ss, txt_layer)
+        badge = Image.alpha_composite(badge, _notch_label_layer_1x(
+            label, font_size_ss, SS, badge_w, badge_h, (*_frost_ink(fr_r, fr_g, fr_b), 245)
+        ))
 
-        badge_final = badge_ss.resize((badge_w, badge_h), Image.Resampling.LANCZOS)
         result = image.copy()
-        result.alpha_composite(badge_final, (bx, by_composite))
+        result.alpha_composite(badge, (bx, by_composite))
         return result
 
     if notch_style == "black":
@@ -1951,6 +1979,68 @@ def _frosted_tint(
     return (int(tr*255*0.6 + 255*0.4), int(tg*255*0.6 + 255*0.4), int(tb*255*0.6 + 255*0.4))
 
 
+def _sash_skia(
+    size: tuple[int, int],
+    centre: tuple[float, float],
+    origin: tuple[int, int],
+    angle: float,
+    strip: tuple[int, int],
+    bands: tuple[float, float],
+    colours: tuple[tuple[int, ...], ...],
+    label: str,
+    font_ss: Any,
+    ss: int,
+    text_rgb: tuple[int, int, int],
+) -> Image.Image:
+    """The sash's band and label, drawn at 1x by Skia onto a ``size`` canvas.
+
+    Skia anti-aliases the turned rectangles and the turned text itself, so
+    nothing is supersampled: the strip is drawn in its own coordinates under a
+    rotate transform, straight onto a canvas covering only the corner.  Same
+    geometry and colours as the PIL path; the label keeps the PIL path's
+    centring (measured with the 3x font) and is drawn from that baseline."""
+    w, h = size
+    length, height = strip
+    edge, margin = bands
+    hi, lo, border, dark = colours
+    info = _skia.ImageInfo.Make(w, h, _skia.kRGBA_8888_ColorType, _skia.kUnpremul_AlphaType)
+    surface = _skia.Surface.MakeRaster(info)
+    c = surface.getCanvas()
+    c.clear(_skia.ColorTRANSPARENT)
+    c.translate(centre[0] - origin[0], centre[1] - origin[1])
+    c.rotate(angle)
+    c.translate(-length / 2, -height / 2)
+
+    col = lambda t: _skia.Color(t[0], t[1], t[2], t[3])
+    # kSrc: each band replaces what is under it, as PIL's fills do — the dark
+    # centre keeps its own 245 alpha rather than blending onto the gradient.
+    p = _skia.Paint(AntiAlias=True, BlendMode=_skia.BlendMode.kSrc)
+    p.setColor(col(border))
+    c.drawRect(_skia.Rect(0, 0, length, height), p)
+    # lo at the band's edges rising to hi at its middle — the PIL path's rows.
+    p.setShader(_skia.GradientShader.MakeLinear(
+        [_skia.Point(0, 0), _skia.Point(0, height)], [col(lo), col(hi), col(lo)], [0.0, 0.5, 1.0]))
+    c.drawRect(_skia.Rect(0, edge, length, height - edge), p)
+    c.drawRect(_skia.Rect(0, margin, length, height - margin),
+               _skia.Paint(AntiAlias=True, BlendMode=_skia.BlendMode.kSrc, Color=col(dark)))
+
+    tx, ty = _text_center(ImageDraw.Draw(Image.new("L", (1, 1))), label, font_ss,
+                          length * ss / 2, height * ss / 2)
+    x, baseline = tx / ss, (ty + font_ss.getmetrics()[0]) / ss
+    font = _skia.Font(_SKIA_TYPEFACE, font_ss.size / ss)
+    font.setSubpixel(True)
+    font.setEdging(_skia.Font.Edging.kAntiAlias)
+    tp = _skia.Paint(AntiAlias=True)
+    tp.setColor(_skia.Color(0, 0, 0, 180))
+    c.drawString(label, x + 2, baseline + 2, font, tp)
+    tp.setColor(_skia.Color(*text_rgb, 225))
+    c.drawString(label, x, baseline, font, tp)
+
+    out = np.empty((h, w, 4), dtype=np.uint8)
+    surface.readPixels(info, out)
+    return Image.fromarray(out)             # (h, w, 4) uint8 → RGBA
+
+
 def draw_award_sash(
     image: Image.Image,
     label: str,
@@ -1970,9 +2060,10 @@ def draw_award_sash(
     width, height = image.size
     left = side == "left"
 
-    # SS = supersample factor.  The band is drawn at SS× and box-reduced, which
-    # anti-aliases its edges and the label.  2× leaves visibly stepped edges on
-    # the diagonal; 3× does not.
+    # SS = the PIL fallback's supersample factor: it draws the band at SS× and
+    # box-reduces it, which anti-aliases the edges and label (2× leaves visibly
+    # stepped edges on the diagonal; 3× does not).  The Skia path draws at 1×
+    # but keeps the SS-based sizes and centring, so both lay the sash out alike.
     SS          = 3
     sash_length = int(width * length_ratio)
     sash_height = int(width * height_ratio)
@@ -2023,9 +2114,10 @@ def draw_award_sash(
     # clockwise in the top-left (reads uphill) — and hung so 68 % of its turned
     # bounding box overlaps the poster.  Rather than draw that strip and rotate
     # it (a ~1350² px bicubic resample of mostly empty canvas, which was most of
-    # the render's time), the band's edges are mapped straight onto a canvas
-    # covering only the part of the poster it touches, and only the small label
-    # layer is rotated.
+    # the render's time), the band goes straight onto a canvas covering only the
+    # part of the poster it touches: Skia draws it there turned, at 1×; the PIL
+    # fallback maps its edges there as polygons at SS× and rotates only the
+    # small label layer.
     _a = math.radians(45)
     rw = math.ceil((sl + sh) * math.cos(_a))          # turned bounding box at SS
     sw = rw // SS
@@ -2055,18 +2147,6 @@ def draw_award_sash(
     def _band(v0: float, v1: float) -> list[tuple[float, float]]:
         return [_q(0, v0), _q(sl, v0), _q(sl, v1), _q(0, v1)]
 
-    canvas = Image.new("RGBA", ((ex - ox) * SS, (ey - oy) * SS), (0, 0, 0, 0))
-    d = ImageDraw.Draw(canvas)
-    # Border, then the gradient rows between border and centre, then the dark
-    # centre.  Each is a band nested inside the last, so the thin diagonal
-    # gradient rows overlap rather than abut and can never leave a gap.
-    d.polygon(_band(0, sh), fill=border_colour)
-    half = sh // 2
-    for y in range(edge + 1, margin):
-        t = y / half
-        d.polygon(_band(y, sh - y), fill=tuple(int(lo[i] * (1 - t) + hi[i] * t) for i in range(4)))
-    d.polygon(_band(margin, sh - margin), fill=dark)
-
     base_size     = sash_height * 0.4
     adjusted_size = sash_height * 0.85 / (len(label) ** 0.35)
     font_size     = int(min(base_size, adjusted_size)) * SS
@@ -2077,29 +2157,48 @@ def draw_award_sash(
     except IOError:
         font = ImageFont.load_default()
 
-    # Label: drawn level on a layer just wide enough for it, centred on the band,
-    # then that layer alone is turned and laid on the band.
-    _probe = ImageDraw.Draw(Image.new("L", (1, 1)))
-    _bb    = _probe.textbbox((0, 0), label, font=font)
-    lw     = max(1, int(_bb[2] - _bb[0] + 8 * SS))
-    text_layer = Image.new("RGBA", (lw, sh), (0, 0, 0, 0))
-    td         = ImageDraw.Draw(text_layer)
-
     _txt_rgb = text_color if text_color is not None else (225, 225, 225)
-    tx, ty = _text_center(td, label, font, lw / 2, sh / 2)
-    td.text((tx + 2 * SS, ty + 2 * SS), label, font=font, fill=(0, 0, 0, 180))
-    td.text((tx, ty),                   label, font=font, fill=(*_txt_rgb, 225))
+    if _HAS_SKIA:
+        sash = _sash_skia(
+            (ex - ox, ey - oy), _to_poster(sl / 2, sh / 2), (ox, oy), -45 if left else 45,
+            (sash_length, sash_height), (edge / SS, margin / SS), (hi, lo, border_colour, dark),
+            label, font, SS, _txt_rgb,
+        )
+    else:
+        canvas = Image.new("RGBA", ((ex - ox) * SS, (ey - oy) * SS), (0, 0, 0, 0))
+        d = ImageDraw.Draw(canvas)
+        # Border, then the gradient rows between border and centre, then the dark
+        # centre.  Each is a band nested inside the last, so the thin diagonal
+        # gradient rows overlap rather than abut and can never leave a gap.
+        d.polygon(_band(0, sh), fill=border_colour)
+        half = sh // 2
+        for y in range(edge + 1, margin):
+            t = y / half
+            d.polygon(_band(y, sh - y), fill=tuple(int(lo[i] * (1 - t) + hi[i] * t) for i in range(4)))
+        d.polygon(_band(margin, sh - margin), fill=dark)
 
-    text_layer = text_layer.rotate(45 if left else -45, expand=True, resample=Image.Resampling.BICUBIC)
-    cx, cy = _q(sl / 2, sh / 2)
-    lx, ly = round(cx - text_layer.width / 2), round(cy - text_layer.height / 2)
-    sx0, sy0 = max(0, -lx), max(0, -ly)
-    sx1 = min(text_layer.width, canvas.width - lx)
-    sy1 = min(text_layer.height, canvas.height - ly)
-    if sx1 > sx0 and sy1 > sy0:
-        canvas.alpha_composite(text_layer, (lx + sx0, ly + sy0), (sx0, sy0, sx1, sy1))
+        # Label: drawn level on a layer just wide enough for it, centred on the band,
+        # then that layer alone is turned and laid on the band.
+        _probe = ImageDraw.Draw(Image.new("L", (1, 1)))
+        _bb    = _probe.textbbox((0, 0), label, font=font)
+        lw     = max(1, int(_bb[2] - _bb[0] + 8 * SS))
+        text_layer = Image.new("RGBA", (lw, sh), (0, 0, 0, 0))
+        td         = ImageDraw.Draw(text_layer)
 
-    sash = canvas.reduce(SS)
+        tx, ty = _text_center(td, label, font, lw / 2, sh / 2)
+        td.text((tx + 2 * SS, ty + 2 * SS), label, font=font, fill=(0, 0, 0, 180))
+        td.text((tx, ty),                   label, font=font, fill=(*_txt_rgb, 225))
+
+        text_layer = text_layer.rotate(45 if left else -45, expand=True, resample=Image.Resampling.BICUBIC)
+        cx, cy = _q(sl / 2, sh / 2)
+        lx, ly = round(cx - text_layer.width / 2), round(cy - text_layer.height / 2)
+        sx0, sy0 = max(0, -lx), max(0, -ly)
+        sx1 = min(text_layer.width, canvas.width - lx)
+        sy1 = min(text_layer.height, canvas.height - ly)
+        if sx1 > sx0 and sy1 > sy0:
+            canvas.alpha_composite(text_layer, (lx + sx0, ly + sy0), (sx0, sy0, sx1, sy1))
+
+        sash = canvas.reduce(SS)
 
     if muted:
         # Scale alpha to ~80% — sits level with the art rather than above it,
