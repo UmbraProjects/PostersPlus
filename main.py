@@ -17,6 +17,7 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
+from typing import Callable
 from functools import lru_cache, partial
 from html import escape as _html_escape
 from urllib.parse import parse_qsl, quote, urlencode
@@ -807,6 +808,8 @@ from cache import (
     get_cached_rating,
     get_cached_final_poster_entry,
     get_cached_final_poster_l1,
+    get_cached_final_poster_render_meta,
+    get_cached_final_poster_render_meta_l1,
     get_cached_face_boxes,
     set_cached_face_boxes,
     set_cached_final_poster,
@@ -3918,7 +3921,9 @@ def build_poster(
             # The whole label is the score and its star here, so hiding the
             # rating leaves the genre alone — and nothing at all when the genre
             # is hidden too, which is a valid way to ask for a bare poster.
-            if cfg.hide_rating:
+            # A missing score reads the same way: "★ N/A" says nothing the
+            # absence of a star doesn't.
+            if cfg.hide_rating or score in ("N/A", None):
                 label = genre_label
             elif genre_label:
                 label = f"{genre_label} ★ {_score_text}"
@@ -4090,13 +4095,13 @@ def build_poster(
                 glyph = _sep_glyph(kind)
                 if kind == "rfield":
                     # The rating shown as a colour.  Both shapes take the same
-                    # score lookup, and both are skipped when there is no score
-                    # to colour them with — a neutral mark in this slot would
-                    # read as a rating rather than as the absence of one.
+                    # score lookup.  With no score to colour them with they are
+                    # drawn a neutral mid-light grey — a text-coloured mark in
+                    # this slot would read as a rating rather than as the
+                    # absence of one, and black vanishes on dark art.  Kept
+                    # clear of the Metal palette's grey (<50) and silver tiers.
                     _sc = _score_int(score)
-                    if _sc is None:
-                        continue
-                    _fill = score_color_for_mode(
+                    _fill = (175, 175, 175) if _sc is None else score_color_for_mode(
                         _sc, cfg.score_color_mode, cfg.score_custom_palette)[0]
                 else:
                     # Unless this separator is carrying the rating in Year
@@ -5584,6 +5589,87 @@ _configurator_etag: str | None = None
 #      glyphs are anti-aliased differently, so cached composites are re-drawn.
 _RENDER_CACHE_VERSION = "9"
 
+
+# Targeted invalidation, for drawing changes that only some posters show.
+#
+# Bumping _RENDER_CACHE_VERSION re-renders every composite on the instance,
+# which on a public one is a lot of work to redo for a change that most
+# posters don't show.  A revision here names the posters it changes instead:
+#   applies(cfg)      — the settings it touches.  Checked on every cache hit
+#                       with nothing but the parsed config, so a request no
+#                       revision applies to pays nothing extra.
+#   stale(cfg, facts) — whether a poster cached before the revision drew
+#                       something it changes.  *facts* is what the render
+#                       recorded about itself (_render_facts); None for a
+#                       composite cached before facts were recorded, which
+#                       the revision decides about on its own terms.
+# A composite cached at an older revision that both say yes to is treated as a
+# miss and re-rendered; everything else keeps its entry.  Each composite stores
+# the revision it was made at, so it is only ever checked against revisions
+# newer than itself.  A revision that needs a fact nobody records yet has to
+# add it to _render_facts too — every poster cached before then reads as not
+# having it.
+#
+# Use _RENDER_CACHE_VERSION for a change that alters every poster; add a
+# revision here when it can say which ones.  Revisions are append-only: rev
+# numbers are compared, so never renumber or remove one.
+@dataclass(frozen=True)
+class _RenderRevision:
+    rev: int
+    applies: Callable[["RequestConfig"], bool]
+    stale: Callable[["RequestConfig", "dict | None"], bool]
+
+
+def _score_unrated(facts: "dict | None") -> bool:
+    """The poster was drawn with no score to show, and the rating not hidden."""
+    return (facts is not None
+            and not facts.get("rating_hidden")
+            and "score" in facts and facts["score"] in ("N/A", None))
+
+
+_RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
+    # 1: Clean mode shows the bare genre instead of "★ N/A", and Minimalist's
+    #    Year mode draws its rating separator black instead of leaving a gap.
+    #    Only unrated posters change.  Composites from before facts were
+    #    recorded are kept: they can't say whether they were unrated, and
+    #    re-rendering every Clean and Minimalist poster to find out costs more
+    #    than letting the few unrated ones age out with the composite TTL.
+    _RenderRevision(
+        rev=1,
+        applies=lambda cfg: cfg.shape != "landscape" and not cfg.hide_rating and (
+            cfg.rating_display_mode == 2
+            or (cfg.rating_display_mode == 3 and cfg.minimalist_append_mode == 0)
+        ),
+        stale=lambda cfg, facts: _score_unrated(facts),
+    ),
+)
+_RENDER_REVISION = max((r.rev for r in _RENDER_REVISIONS), default=0)
+
+
+def _render_facts(score, render_cfg: "RequestConfig") -> dict:
+    """What a render drew, as far as _RENDER_REVISIONS needs to know, stored
+    with its composite.  Kept to plain JSON values."""
+    return {
+        "score": score if isinstance(score, (int, str)) or score is None else str(score),
+        "rating_hidden": bool(render_cfg.hide_rating),
+    }
+
+
+def _revisions_applying(cfg: "RequestConfig") -> "list[_RenderRevision]":
+    return [r for r in _RENDER_REVISIONS if r.applies(cfg)]
+
+
+def _composite_is_stale(
+    revisions: "list[_RenderRevision]", cfg: "RequestConfig",
+    cached_rev: int, facts: "dict | None",
+) -> "int | None":
+    """The revision a cached composite is out of date for, or None if it is
+    current."""
+    for r in revisions:
+        if r.rev > cached_rev and r.stale(cfg, facts):
+            return r.rev
+    return None
+
 # How far ahead of TMDB's scheduled digital date an r/movieleaks post is still
 # believed (see _leak_confirmed in get_poster).  Genuine early releases beat the
 # published date by days; a post further ahead than this is far likelier a fake
@@ -6594,6 +6680,20 @@ async def get_poster(
             )
         if _force_refresh:
             logger.info(f"Force refresh (nocache) for {final_cache_key} — bypassing cache read")
+        # A hit may predate a drawing change it shows (_RENDER_REVISIONS).
+        # Only looked into when a revision covers these settings at all, so
+        # the common hit pays nothing for it.
+        if _cached_entry is not None:
+            _revisions = _revisions_applying(rcfg)
+            if _revisions:
+                _meta = get_cached_final_poster_render_meta_l1(final_cache_key) or await _db_call(
+                    get_cached_final_poster_render_meta, final_cache_key
+                )
+                _stale_rev = _meta and _composite_is_stale(_revisions, rcfg, *_meta)
+                if _stale_rev:
+                    logger.info(f"Final poster cache stale for {final_cache_key} "
+                                f"(render revision {_stale_rev}) — re-rendering")
+                    _cached_entry = None
         if _cached_entry is not None:
             cached_jpeg, _cached_expires_at = _cached_entry
             logger.info(f"Final poster cache hit for {final_cache_key}")
@@ -8307,7 +8407,9 @@ async def get_poster(
                 final_cache_key,
                 img_bytes,
                 request_params=_sanitize_request_params(request.url.query),
-                ttl_override=_ttl_override
+                ttl_override=_ttl_override,
+                render_rev=_RENDER_REVISION,
+                render_facts=_render_facts(score, _render_cfg),
             )
             logger.info(f"Final poster cached for {final_cache_key}")
 

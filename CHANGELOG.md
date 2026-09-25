@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Unrated posters in Clean and Minimalist
+
+- Clean mode shows just the genre when a title has no rating, instead of
+  "★ N/A".
+- Minimalist with append set to Year draws the rating separator light grey when
+  there is no rating, instead of leaving a gap between genre and year.
+- Cached composites now record the drawing revision that made them and a few
+  facts about what they show (for now, the score). A drawing change that only
+  affects some posters re-renders just those, rather than the whole cache.
+  Posters cached before this update have no facts, so unrated ones keep the
+  old look until they expire (`COMPOSITE_CACHE_TTL`).
+
 ### Backdrop for fake textless posters
 
 - `TEXTLESS_BACKDROP_FALLBACK` (Text detection, on by default): when a

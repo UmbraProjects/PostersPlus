@@ -376,6 +376,12 @@ def init_db() -> None:
     # predate the column and fall back to cached_at + TTL + jitter.
     _add_column_if_missing(conn, "final_poster_cache", "expires_at", "INTEGER")
 
+    # Render revision and facts, for invalidating only the composites a drawing
+    # change affects (see _RENDER_REVISIONS in main.py).  NULL rows predate the
+    # columns: revision 0, no facts recorded.
+    _add_column_if_missing(conn, "final_poster_cache", "render_rev", "INTEGER")
+    _add_column_if_missing(conn, "final_poster_cache", "render_facts", "TEXT")
+
     # Which source a trending snapshot came from.  Without this, changing
     # TRENDING_SOURCE_* had no visible effect until the snapshot aged out on its
     # own — up to a day of an operator setting the variable, restarting, seeing
@@ -419,17 +425,17 @@ def _quality_ttl(release_date: str | None) -> int:
 
 # L1: bounded in-memory LRU — most-recently-used composites served without
 # any SQLite read, keeping the hot set off the OS page cache.  Each value is
-# (expires_at, jpeg_bytes): L1 carries the same deadline as its L2 row, because
-# an entry that never ages out in RAM would happily serve a Cinema sash for as
-# long as the LRU kept it resident.
-_composite_l1: OrderedDict[str, tuple[int, bytes]] = OrderedDict()
+# (expires_at, jpeg_bytes, render_rev, render_facts): L1 carries the same
+# deadline as its L2 row, because an entry that never ages out in RAM would
+# happily serve a Cinema sash for as long as the LRU kept it resident.
+_composite_l1: OrderedDict[str, tuple[int, bytes, int, "dict | None"]] = OrderedDict()
 _composite_l1_lock = threading.Lock()
 
 
 def composite_l1_stats() -> dict:
     with _composite_l1_lock:
         count = len(_composite_l1)
-        total_bytes = sum(len(data) for _expires_at, data in _composite_l1.values())
+        total_bytes = sum(len(entry[1]) for entry in _composite_l1.values())
     return {"entries": count, "bytes": total_bytes}
 
 
@@ -455,7 +461,7 @@ def get_cached_final_poster_l1(cache_key: str) -> "tuple[bytes, int] | None":
         entry = _composite_l1.get(cache_key)
         if entry is None:
             return None
-        expires_at, data = entry
+        expires_at, data = entry[0], entry[1]
         if now <= expires_at:
             _composite_l1.move_to_end(cache_key)
             return data, int(expires_at)
@@ -480,12 +486,13 @@ def get_cached_final_poster_entry(cache_key: str) -> "tuple[bytes, int] | None":
     # L2: SQLite with TTL check
     try:
         row = get_db().execute(
-            "SELECT jpeg_bytes, cached_at, expires_at FROM final_poster_cache WHERE cache_key = ?",
+            "SELECT jpeg_bytes, cached_at, expires_at, render_rev, render_facts "
+            "FROM final_poster_cache WHERE cache_key = ?",
             (cache_key,),
         ).fetchone()
         if not row:
             return None
-        jpeg_bytes, cached_at, expires_at = row
+        jpeg_bytes, cached_at, expires_at, render_rev, render_facts = row
         if expires_at is None:
             expires_at = _composite_expiry(cache_key, cached_at)
         if now > expires_at:
@@ -503,7 +510,9 @@ def get_cached_final_poster_entry(cache_key: str) -> "tuple[bytes, int] | None":
         # Promote to L1
         if COMPOSITE_MEM_ENTRIES > 0:
             with _composite_l1_lock:
-                _composite_l1[cache_key] = (int(expires_at), data)
+                _composite_l1[cache_key] = (
+                    int(expires_at), data, render_rev or 0, _load_render_facts(render_facts)
+                )
                 _composite_l1.move_to_end(cache_key)
                 while len(_composite_l1) > COMPOSITE_MEM_ENTRIES:
                     _composite_l1.popitem(last=False)
@@ -513,7 +522,53 @@ def get_cached_final_poster_entry(cache_key: str) -> "tuple[bytes, int] | None":
         return None
 
 
-def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: str = None, ttl_override: int = None) -> int:
+def _load_render_facts(raw: "str | None") -> "dict | None":
+    if not raw:
+        return None
+    try:
+        facts = json.loads(raw)
+    except ValueError:
+        return None
+    return facts if isinstance(facts, dict) else None
+
+
+def get_cached_final_poster_render_meta_l1(cache_key: str) -> "tuple[int, dict | None] | None":
+    """get_cached_final_poster_render_meta from the in-memory LRU alone."""
+    with _composite_l1_lock:
+        entry = _composite_l1.get(cache_key)
+    return None if entry is None else (entry[2], entry[3])
+
+
+def get_cached_final_poster_render_meta(cache_key: str) -> "tuple[int, dict | None] | None":
+    """(render_rev, render_facts) of a cached composite, or None when there is
+    no row.  Rows written before the columns existed read as (0, None).
+
+    Separate from the entry lookup so the extra read is only paid by requests
+    a pending render revision could apply to."""
+    hit = get_cached_final_poster_render_meta_l1(cache_key)
+    if hit is not None:
+        return hit
+    try:
+        row = get_db().execute(
+            "SELECT render_rev, render_facts FROM final_poster_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+    except Exception as exc:
+        logger.error(f"Final poster cache meta read error: {exc}")
+        return None
+    if not row:
+        return None
+    return row[0] or 0, _load_render_facts(row[1])
+
+
+def set_cached_final_poster(
+    cache_key: str,
+    jpeg_bytes: bytes,
+    request_params: str = None,
+    ttl_override: int = None,
+    render_rev: int = 0,
+    render_facts: "dict | None" = None,
+) -> int:
     """Store a fully composited JPEG poster into L1 (RAM) and L2 (SQLite).
 
     *ttl_override* caps the lifetime, in seconds, for a render that depends on
@@ -521,6 +576,10 @@ def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: s
     release status.  It is a cap on the jittered TTL rather than a value added
     to it, so a one-day override really means one day and not one day plus up
     to COMPOSITE_CACHE_TTL_JITTER.
+
+    *render_rev* and *render_facts* record which drawing-code revision made
+    the poster and what was on it, so a later revision can invalidate just the
+    posters it changes.
 
     Returns the unix time this composite expires.
     """
@@ -533,7 +592,7 @@ def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: s
     # L1: always store the freshly-rendered composite so the next hit skips SQLite
     if COMPOSITE_MEM_ENTRIES > 0:
         with _composite_l1_lock:
-            _composite_l1[cache_key] = (expires_at, jpeg_bytes)
+            _composite_l1[cache_key] = (expires_at, jpeg_bytes, render_rev, render_facts)
             _composite_l1.move_to_end(cache_key)
             while len(_composite_l1) > COMPOSITE_MEM_ENTRIES:
                 _composite_l1.popitem(last=False)
@@ -544,10 +603,12 @@ def set_cached_final_poster(cache_key: str, jpeg_bytes: bytes, request_params: s
             get_db().execute(
                 """
                 INSERT OR REPLACE INTO final_poster_cache
-                    (cache_key, jpeg_bytes, cached_at, request_params, expires_at)
-                VALUES (?, ?, ?, ?, ?)
+                    (cache_key, jpeg_bytes, cached_at, request_params, expires_at,
+                     render_rev, render_facts)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (cache_key, jpeg_bytes, now, request_params, expires_at),
+                (cache_key, jpeg_bytes, now, request_params, expires_at, render_rev,
+                 json.dumps(render_facts) if render_facts is not None else None),
             )
             if COMPOSITE_MAX_ENTRIES > 0:
                 _enforce_composite_cap()
