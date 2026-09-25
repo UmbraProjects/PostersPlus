@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Configurator no longer adds a stale access key
+
+- The configurator remembered the access key in the browser and fell back to
+  it when the page's URL had none. After the server's `ACCESS_KEY` was removed,
+  that old key kept going into every copied URL. The key now comes only from
+  the page's own URL, and any copy saved by an earlier version is cleared.
+- A key left in a bookmarked configurator URL after the server stopped
+  requiring one is dropped as well, so it no longer ends up in copied URLs.
+
 ### Weight sliders take typed values
 
 - Clicking a rating weight's percentage now opens it for typing, like every

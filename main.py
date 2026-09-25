@@ -5261,6 +5261,7 @@ async def server_caps(access_key: str = ""):
         next_refresh_hours = round((_next_fetch - _now) / 3600, 1)
 
     return {
+        "access_key_required":   bool(_cfg.ACCESS_KEY),
         "tmdb_key_set":          bool(_cfg.SERVER_TMDB_KEY),
         "mdblist_key_set":       bool(_cfg.SERVER_MDBLIST_KEYS),
         "mdblist_key_count":     len(_cfg.SERVER_MDBLIST_KEYS),

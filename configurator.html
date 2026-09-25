@@ -3550,9 +3550,12 @@ const _SHOW_URL_BOX   = _NO_CLIPBOARD || qs.get('urlbox') === '1';
     ? `http://postersplus:${port}`
     : window.location.origin;
   document.getElementById('cfg-domain').value = domain;
-  const ak = qs.get('access_key') || localStorage.getItem('postersplus_access_key') || '';
-  document.getElementById('cfg-access-key').value = ak;
-  if (ak) localStorage.setItem('postersplus_access_key', ak);
+  // The URL is the only source: when the server has an ACCESS_KEY this page
+  // can't load without the right one in it.  A copy remembered in localStorage
+  // outlived the server dropping or changing its key and leaked into every
+  // copied URL, so it's no longer kept (and an old one is cleared).
+  document.getElementById('cfg-access-key').value = qs.get('access_key') || '';
+  try { localStorage.removeItem('postersplus_access_key'); } catch (_) {}
 
   // Show the URL display box on LAN IPs so users can Ctrl+A / Ctrl+C.
   if (_SHOW_URL_BOX) {
@@ -3901,6 +3904,12 @@ async function fetchServerCaps() {
     if (!resp.ok) return;
     serverCaps = await resp.json();
     serverCapsLoaded = true;
+    // A key left in a bookmarked URL after the server dropped its ACCESS_KEY
+    // is ignored by the server; don't keep writing it into generated URLs.
+    if (serverCaps.access_key_required === false && vEl('cfg-access-key')) {
+      document.getElementById('cfg-access-key').value = '';
+      build();
+    }
     updateKeyBadges();
     updateImdbSourceAvailability();
     
