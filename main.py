@@ -1643,6 +1643,7 @@ class RequestConfig:
     landscape_badge_scale: float = 1.0
     landscape_info_scale: float = 1.0   # size of the landscape "Genre • Year • Score" line
     landscape_score_out_of_10: bool = False   # "8.7" rather than "87" on that line
+    landscape_score_star: bool = False        # "★ 87" as Clean labels it, in place of "• 87"
     score_color_mode: int = 2
     score_custom_palette: CustomScorePalette | None = None
     sash_badge: bool = False              # legacy; superseded by sash_mode (kept for back-compat parsing)
@@ -2054,6 +2055,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.landscape_badge_scale = _f("landscape_badge_scale", cfg.landscape_badge_scale, 0.5, 2.5)
     cfg.landscape_info_scale  = _f("landscape_info_scale",  cfg.landscape_info_scale,  0.5, 2.0)
     cfg.landscape_score_out_of_10 = _b("landscape_score_out_of_10", cfg.landscape_score_out_of_10)
+    cfg.landscape_score_star      = _b("landscape_score_star",      cfg.landscape_score_star)
 
     cfg.sash_badge              = _b("sash_badge",              cfg.sash_badge)
     # sash_mode supersedes the legacy sash_badge bool; fall back to it for old

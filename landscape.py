@@ -591,7 +591,8 @@ def _draw_title(image: Image.Image, title: str) -> tuple[int, int]:
 def _draw_info_strip(image: Image.Image, genre_label: str,
                      release_year: str | None, score, scale: float = 1.0,
                      logo_right: int | None = None,
-                     out_of_10: bool = False) -> None:
+                     out_of_10: bool = False,
+                     star: bool = False) -> None:
     """`Genre • Year • 87`, right-aligned on the shared baseline.
 
     Drawn right-to-left so the score stays pinned to the right edge whatever the
@@ -608,6 +609,11 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
 
     ``out_of_10`` prints the score the way portrait's out-of-10 switches do:
     one decimal ("8.7", "8.0"), with a bare "10" at the top.
+
+    ``star`` labels the score the way Clean does on a portrait: the separator
+    in front of it becomes a ★ (`Genre • Year ★ 87`), or a lone score gets
+    one of its own.  The star is the text's colour, not the separator's —
+    it names the number rather than dividing the row.
     """
     width, height = image.size
     scale = max(0.1, float(scale or 1.0))
@@ -643,11 +649,21 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
         return
 
     sep = "  •  "
-    sep_w = draw.textlength(sep, font=font)
+    star_sep = "  ★ "
+
+    def segments(items) -> list[tuple[str, tuple[int, int, int, int]]]:
+        # The row as drawn, separators included, left to right.
+        out = []
+        for i, (text, fill) in enumerate(items):
+            if star and score_text and i == len(items) - 1:
+                out.append(("★ " if i == 0 else star_sep, _MUTED))
+            elif i:
+                out.append((sep, _SEPARATOR))
+            out.append((text, fill))
+        return out
 
     def total(items) -> float:
-        return (sum(draw.textlength(t, font=font) for t, _ in items)
-                + sep_w * max(0, len(items) - 1))
+        return sum(draw.textlength(t, font=font) for t, _ in segments(items))
 
     # Everything left of the info strip belongs to the logo; if the two would
     # meet, shed the genre first, then the year, before shrinking any type.
@@ -664,13 +680,9 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
     ldraw = ImageDraw.Draw(layer)
     x = width - int(width * _RIGHT_PAD)
     baseline = int(height * _BASELINE)
-    for i, (text, fill) in enumerate(reversed(parts)):
-        tw = draw.textlength(text, font=font)
-        ldraw.text((x - tw, baseline), text, font=font, fill=fill, anchor="ls")
-        x -= tw
-        if i < len(parts) - 1:
-            x -= sep_w
-            ldraw.text((x, baseline), sep, font=font, fill=_SEPARATOR, anchor="ls")
+    for text, fill in reversed(segments(parts)):
+        x -= draw.textlength(text, font=font)
+        ldraw.text((x, baseline), text, font=font, fill=fill, anchor="ls")
     ink = layer.getchannel("A")
     bbox = ink.getbbox()
     if bbox:
@@ -745,7 +757,8 @@ def build_landscape(
                      None if cfg.hide_rating else score,
                      scale=getattr(cfg, "landscape_info_scale", 1.0),
                      logo_right=logo_right,
-                     out_of_10=getattr(cfg, "landscape_score_out_of_10", False))
+                     out_of_10=getattr(cfg, "landscape_score_out_of_10", False),
+                     star=getattr(cfg, "landscape_score_star", False))
 
     if cfg.sash_mode != "hidden" and discovery_meta is not None:
         sash_result = pick_sash(discovery_meta, cfg.sash_priority)

@@ -175,6 +175,32 @@ class LandscapeLogoAndBadgeTests(unittest.TestCase):
         cfg = main.build_request_config({"landscape_score_out_of_10": "true"})
         self.assertTrue(cfg.landscape_score_out_of_10)
 
+    def test_info_strip_star_labels_the_score(self):
+        # The star takes the separator's place in front of the score, as
+        # Clean has it on a portrait; a lone score gets one of its own, and
+        # without a score there is nothing for it to label.
+        def drawn(genre, year, score, star=True):
+            texts = []
+            real_draw = landscape.ImageDraw.Draw
+
+            def spy(im, *a, **k):
+                d = real_draw(im, *a, **k)
+                real_text = d.text
+                d.text = lambda xy, text, *a, **k: (texts.append(text), real_text(xy, text, *a, **k))[1]
+                return d
+
+            with mock.patch.object(landscape.ImageDraw, "Draw", spy):
+                landscape._draw_info_strip(Image.new("RGBA", (1000, 563)), genre, year,
+                                           score, star=star)
+            return list(reversed(texts))
+
+        self.assertEqual(drawn("Drama", "2024", 87), ["Drama", "  •  ", "2024", "  ★ ", "87"])
+        self.assertEqual(drawn("", None, 87), ["★ ", "87"])
+        self.assertEqual(drawn("Drama", "2024", "N/A"), ["Drama", "  •  ", "2024"])
+        self.assertNotIn("  ★ ", drawn("Drama", "2024", 87, star=False))
+        self.assertFalse(main.build_request_config({}).landscape_score_star)
+        self.assertTrue(main.build_request_config({"landscape_score_star": "true"}).landscape_score_star)
+
     def test_badge_shadow_clips_at_the_canvas_edge(self):
         # A top-left pill's shadow spills past x=0 / y=0; it must be clipped
         # rather than refused, and it must darken the art around the pill.

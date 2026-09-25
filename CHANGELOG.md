@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Landscape star beside the score
+
+- Landscape gains a **Star beside score** switch (`landscape_score_star=true`),
+  under Core → Landscape. The separator in front of the score becomes a star,
+  as Clean mode has it on a portrait: `Genre • Year ★ 87`. It hides with Hide
+  Rating, and works with the out-of-10 switch (`★ 8.7`).
+
 ### Unrated posters in Clean and Minimalist
 
 - Clean mode shows just the genre when a title has no rating, instead of
