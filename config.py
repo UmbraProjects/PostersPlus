@@ -608,6 +608,14 @@ LOGO_STRETCH_FACTOR        = max(1.0, float(_env('LOGO_STRETCH_FACTOR', "1.2", g
 # Changing it invalidates cached composites.
 TEXTLESS_TEXT_DETECTION    = _parse_bool(_env("TEXTLESS_TEXT_DETECTION", "true", group='Text detection', kind='bool', label='Burned-in text detection', help='Detect title text on posters TMDB mislabelled as textless and skip compositing a logo over them. Uses the PP-OCRv5 Mobile detector.'), True)
 TEXTLESS_DETECTION_MAX_VOTES = max(0, int(_env('TEXTLESS_DETECTION_MAX_VOTES', "3000", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='int', label='Foreground scan vote gate', help='Foreground OCR vote limit. Titles with more TMDB votes render without waiting, skip composite caching, and enter the idle background scan queue. Raise for foreground accuracy; lower for faster stale-cache bursts. Changing it invalidates cached composites.', min=0, max=1000000)))
+# Instead of serving a detected fake textless poster as-is, swap in a portrait
+# crop of the title's language-neutral backdrop with our logo on top.  Only
+# when a logo resolves (or the request wants no overlay at all) and the crop
+# itself scans clean.  Costs about half a second on that title's first render
+# (backdrop download, text-aware crop, one more scan); later renders reuse the
+# cached crop and scan result.  On by default; turning it off invalidates
+# cached composites.
+TEXTLESS_BACKDROP_FALLBACK = _parse_bool(_env("TEXTLESS_BACKDROP_FALLBACK", "true", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='bool', label='Backdrop for fake textless posters', help='When a poster TMDB tags as textless turns out to have its title burned in, use a crop of the backdrop with a logo instead. Adds about half a second to the first render of those titles. Changing it invalidates cached composites.'), True)
 # Keep a small, deduplicated list of TMDB posters rejected by OCR so operators
 # can review and correct upstream metadata manually.
 TEXTLESS_FAKE_REPORT       = _parse_bool(_env("TEXTLESS_FAKE_REPORT", "true", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='bool', label='Report fake textless posters', help='Keep a deduplicated list of TMDB posters rejected by OCR, for correcting upstream metadata.', advanced=True), True)

@@ -6514,6 +6514,9 @@ async def get_poster(
             from text_detect import DETECT_RES_SIG
             _detect_sig = (
                 f"|td={_cfg.PPOCR_BOX_THRESHOLD}:{_cfg.TEXTLESS_DETECTION_MAX_VOTES}:{DETECT_RES_SIG}"
+                # Default on, so only the off state is keyed: enabling it by
+                # default doesn't bust every composite on upgrade.
+                f"{'' if _cfg.TEXTLESS_BACKDROP_FALLBACK else '|tbf=0'}"
             )
         else:
             _detect_sig = ""
@@ -8159,6 +8162,53 @@ async def get_poster(
                     f"result was not cached ({text_detection_status()})"
                 )
                 _suppress_overlay = False
+
+        # Fake-textless backdrop fallback (TEXTLESS_BACKDROP_FALLBACK): rather
+        # than serve the texted poster without our logo, crop the title's
+        # neutral backdrop — the art we'd have used had TMDB not tagged the
+        # poster textless.  Needs a logo to put on it (a bare backdrop under
+        # our drawn-text title reads worse than the poster's own title art),
+        # unless the request wants no overlay anyway.  The crop is vetted like
+        # the regular backdrop path: foreground scan under the vote gate,
+        # otherwise queued for the background and the poster kept this time.
+        if (_suppress_overlay is True and _cfg.TEXTLESS_BACKDROP_FALLBACK
+                and not _use_backdrop and backdrop_path
+                and (logo is not None or rcfg.textless)):
+            from text_detect import DETECT_RES_SIG
+
+            _fb_avoid = _vote_detection_ok
+            _fb_src = f"bd:{backdrop_path}:{_CROP_VERSION}:{'ta' if _fb_avoid else 'plain'}"
+            _fb_key = f"{_fb_src}|conf={_cfg.PPOCR_BOX_THRESHOLD}:{DETECT_RES_SIG}"
+            try:
+                _fb_image = await fetch_backdrop_image(
+                    client, tmdb_id, backdrop_path, avoid_text=_fb_avoid)
+                _fb_text = get_cached_text_detection(_fb_key)
+                if _fb_text is None and _vote_detection_ok:
+                    _fb_text = await asyncio.shield(_start_text_detection(
+                        _fb_key, _fb_image, title=_text_titles, source="backdrop",
+                        tmdb_id=tmdb_id, vote_count=_vc, source_key=_fb_src))
+                elif _fb_text is None:
+                    _detection_deferred = True
+                    _queue_background_text_detection(_DeferredTextDetection(
+                        cache_key=_fb_key,
+                        image_cache_key=backdrop_image_cache_key(
+                            tmdb_id, backdrop_path, _fb_avoid),
+                        title=_text_titles,
+                        source="backdrop",
+                        tmdb_id=tmdb_id,
+                        media_type=type,
+                        image_path=backdrop_path,
+                        vote_count=_vc,
+                        source_key=_fb_src,
+                    ))
+                if _fb_text is False:
+                    image = _fb_image
+                    _suppress_overlay = False
+                    logger.info(f"Fake textless poster {tmdb_id} — using backdrop crop with logo")
+                elif not _detection_deferred:
+                    logger.info(f"Backdrop crop for {tmdb_id} unvetted/texted — keeping fake textless poster")
+            except Exception as exc:
+                logger.warning(f"Fake-textless backdrop fallback failed for {tmdb_id}: {exc}")
 
         # Offload CPU-bound PIL compositing + JPEG encoding to the thread pool
         # so the event loop stays free for concurrent requests.

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Backdrop for fake textless posters
+
+- `TEXTLESS_BACKDROP_FALLBACK` (Text detection, on by default): when a
+  poster TMDB tags as textless turns out to have its title burned in, the
+  poster is swapped for a crop of the title's backdrop with a logo on it,
+  instead of being served as-is without one. It needs a logo to put on the
+  crop (or a `textless=true` request) and a crop that scans clean; otherwise
+  the poster is kept as before.
+- It costs about half a second on the first render of an affected title
+  (backdrop download, crop, one more text scan). Later renders reuse the
+  cached crop and scan. Titles above `TEXTLESS_DETECTION_MAX_VOTES` get the
+  swap once the background scans have finished.
+- Posters already cached with a fake textless poster keep it until they
+  expire (`COMPOSITE_CACHE_TTL`); turning the setting off re-renders them.
+
 ### Hide Year, and an optional Admin link
 
 - **Rating → Labels → Hide Year** (`hide_year=true`) drops the release year
