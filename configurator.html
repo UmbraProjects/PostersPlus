@@ -3783,74 +3783,105 @@ function updateWeightRange(el, outId) {
 // Clicking the numeric label next to any slider opens it for direct text
 // input.  Enter / blur commits the value (clamped to slider min/max and
 // snapped to step); Escape restores the current slider value.
-// Weight sliders (id starts with "rv-") display percentages and store 0–1
-// internally, so their input is parsed and written back accordingly.
+// Percentage spans (id starts with "rv-": the weights and the gradient
+// opacity/height) display percentages and store 0–1 internally, so their
+// input is parsed and written back accordingly.
+//
+// Delegated from the document rather than bound per span: the weight rows are
+// rebuilt with innerHTML on every restore, import, preset and reset, and a
+// listener bound at startup went with the old rows — which is why the weights
+// were the one set of sliders that never opened for typing.
+function _rangeForVal(span) {
+  // On touch screens initCustomMobileSliders wraps the input in its own
+  // track, so the slider may sit one level down from the sibling.
+  const prev = span.previousElementSibling;
+  if (!prev) return null;
+  if (prev.type === 'range') return prev;
+  return prev.querySelector('input[type="range"]');
+}
+
+const _editingVal = span => span.getAttribute('contenteditable') === 'true';
+
+function _showRangeVal(span, slider) {
+  if (span.id.startsWith('rv-')) updateWeightRange(slider, span.id);
+  else                           updateRange(slider, span.id);
+}
+
 function _initRangeValEditing() {
-  document.querySelectorAll('.range-val').forEach(span => {
-    const slider = span.previousElementSibling;
-    if (!slider || slider.type !== 'range') return;
+  const spanFrom = e => {
+    const span = e.target.closest?.('.range-val');
+    return span && _rangeForVal(span) ? span : null;
+  };
 
-    const isWeight = span.id.startsWith('rv-');
+  document.addEventListener('mouseover', e => {
+    const span = spanFrom(e);
+    if (span && !span.title) span.title = 'Click to type a value';
+  });
 
-    span.title = 'Click to type a value';
+  document.addEventListener('click', e => {
+    const span = spanFrom(e);
+    if (!span || _editingVal(span)) return;
+    span.setAttribute('contenteditable', 'true');
+    span.focus();
+    const sel = window.getSelection();
+    const r = document.createRange();
+    r.selectNodeContents(span);
+    sel.removeAllRanges();
+    sel.addRange(r);
+  });
 
-    span.addEventListener('click', () => {
-      span.setAttribute('contenteditable', 'true');
-      span.focus();
-      const sel = window.getSelection();
-      const r = document.createRange();
-      r.selectNodeContents(span);
-      sel.removeAllRanges();
-      sel.addRange(r);
-    });
-
-    // Prevent newlines on Enter (commit instead), and strip HTML on paste.
-    span.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); span.blur(); }
-      if (e.key === 'Escape') {
-        span.removeAttribute('contenteditable');
-        // Restore display from current slider value.
-        if (isWeight) updateWeightRange(slider, span.id);
-        else          updateRange(slider, span.id);
-      }
-    });
-    span.addEventListener('paste', e => {
-      e.preventDefault();
-      const txt = (e.clipboardData || window.clipboardData).getData('text/plain');
-      document.execCommand('insertText', false, txt.replace(/\s/g, ''));
-    });
-
-    span.addEventListener('blur', () => {
+  // Prevent newlines on Enter (commit instead), and strip HTML on paste.
+  document.addEventListener('keydown', e => {
+    const span = spanFrom(e);
+    if (!span || !_editingVal(span)) return;
+    if (e.key === 'Enter') { e.preventDefault(); span.blur(); }
+    if (e.key === 'Escape') {
       span.removeAttribute('contenteditable');
+      _showRangeVal(span, _rangeForVal(span));
+    }
+  });
+  document.addEventListener('paste', e => {
+    const span = spanFrom(e);
+    if (!span || !_editingVal(span)) return;
+    e.preventDefault();
+    const txt = (e.clipboardData || window.clipboardData).getData('text/plain');
+    document.execCommand('insertText', false, txt.replace(/\s/g, ''));
+  });
 
-      const min  = parseFloat(slider.min);
-      const max  = parseFloat(slider.max);
-      const step = parseFloat(slider.step) || 1;
+  // focusout rather than blur: blur does not bubble to the document.
+  document.addEventListener('focusout', e => {
+    const span = spanFrom(e);
+    if (!span || !_editingVal(span)) return;
+    span.removeAttribute('contenteditable');
+    const slider = _rangeForVal(span);
 
-      // Strip '%' suffix for weight spans; parse whatever remains.
-      const raw = parseFloat(span.textContent.replace('%', '').trim());
-      if (isNaN(raw)) {
-        // Bad input — just restore.
-        if (isWeight) updateWeightRange(slider, span.id);
-        else          updateRange(slider, span.id);
-        return;
-      }
+    const min  = parseFloat(slider.min);
+    const max  = parseFloat(slider.max);
+    const step = parseFloat(slider.step) || 1;
 
-      // Weight spans: user types a percentage (e.g. 75 or 75%) → 0.75.
-      const sliderVal = isWeight ? raw / 100 : raw;
+    // Strip '%' suffix for percentage spans; parse whatever remains.
+    const raw = parseFloat(span.textContent.replace('%', '').trim());
+    if (isNaN(raw)) {
+      // Bad input — just restore.
+      _showRangeVal(span, slider);
+      return;
+    }
 
-      // Clamp to [min, max], then snap to nearest step.
-      const clamped = Math.min(max, Math.max(min, sliderVal));
-      const snapped = Math.round((clamped - min) / step) * step + min;
-      const final   = parseFloat(Math.min(max, Math.max(min, snapped)).toFixed(10));
+    // Percentage spans: user types a percentage (e.g. 75 or 75%) → 0.75.
+    const sliderVal = span.id.startsWith('rv-') ? raw / 100 : raw;
 
-      slider.value = final;
-      if (isWeight) updateWeightRange(slider, span.id);
-      else          updateRange(slider, span.id);
+    // Clamp to [min, max], then snap to nearest step.
+    const clamped = Math.min(max, Math.max(min, sliderVal));
+    const snapped = Math.round((clamped - min) / step) * step + min;
+    const final   = parseFloat(Math.min(max, Math.max(min, snapped)).toFixed(10));
 
-      build();
-      queuePreviewReload();
-    });
+    slider.value = final;
+    // Run the slider's own input handler, exactly as a drag would: it repaints
+    // the label, rebuilds the URL and reloads the preview, and does whatever
+    // else that slider needs (the weights total, the touch-screen track).
+    _showRangeVal(span, slider);
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    slider.dispatchEvent(new Event('change', { bubbles: true }));
   });
 }
 
@@ -5037,9 +5068,19 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   if (accKey)         params.set('access_key',  accKey);
   // A client that has no "{tmdb_key}" / "{mdblist_key}" of its own would send
   // the placeholder verbatim, so it gets the key typed here instead.
+  //
+  // The keys go in the optional form wherever the ids do, for the same reason:
+  // a REQUIRED placeholder the client has no value for abandons the whole URL.
+  // A key typed here says nothing about whether the client holds one — users
+  // routinely fill it in here and not in AIOMetadata, or remove it there later
+  // — and without one AIOMetadata drops every poster. An empty key only means
+  // the server's own key is used (or none, on a key-less instance), which is
+  // always better than no poster. Older builds that leave "{tmdb_key?}"
+  // verbatim are read as "no key" by the server (_resolve_tmdb_key).
   const keyHolders = usePlaceholders && !template.literalKeys;
-  if (userTmdbKey)    params.set('tmdb_key',     keyHolders ? '{tmdb_key}'    : userTmdbKey);
-  if (userMdblistKey) params.set('mdblist_key',  keyHolders ? '{mdblist_key}' : userMdblistKey);
+  const keyHolder  = name => template.tmdbOptional ? `{${name}?}` : `{${name}}`;
+  if (userTmdbKey)    params.set('tmdb_key',     keyHolders ? keyHolder('tmdb_key')    : userTmdbKey);
+  if (userMdblistKey) params.set('mdblist_key',  keyHolders ? keyHolder('mdblist_key') : userMdblistKey);
   if (emitAll) {
     params.set('top_gradient',    vEl('cfg-top-gradient')    || 'high');
     if (vEl('cfg-top-gradient') === 'custom') {

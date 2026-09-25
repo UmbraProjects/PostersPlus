@@ -62,8 +62,28 @@ class MDBListBackoffTests(unittest.TestCase):
         self.assertEqual(main._mdblist_active_key_idx, 0)
         self.assertEqual(main._mdblist_server_key_label(selected), "configured key #1")
 
-    def test_rotation_does_not_replace_query_supplied_key(self):
+    def test_spent_query_supplied_key_hands_over_to_the_active_server_key(self):
         main._cfg.SERVER_MDBLIST_KEYS = ["key-1", "key-2"]
+        main._mdblist_active_key_idx = 1
+        self.assertEqual(main._next_mdblist_server_key("user-key", now=10.0), "key-2")
+
+    def test_query_supplied_key_skips_cooling_server_keys(self):
+        main._cfg.SERVER_MDBLIST_KEYS = ["key-1", "key-2"]
+        main._mdblist_active_key_idx = 0
+        main._mdblist_key_cooldown["key-1"] = 100.0
+        self.assertEqual(main._next_mdblist_server_key("user-key", now=10.0), "key-2")
+        self.assertEqual(main._mdblist_active_key_idx, 1)
+
+    def test_single_server_key_can_replace_a_query_supplied_key(self):
+        main._cfg.SERVER_MDBLIST_KEYS = ["key-1"]
+        main._mdblist_active_key_idx = 0
+        self.assertEqual(main._next_mdblist_server_key("user-key", now=10.0), "key-1")
+
+    def test_no_replacement_without_a_healthy_server_key(self):
+        main._cfg.SERVER_MDBLIST_KEYS = []
+        self.assertIsNone(main._next_mdblist_server_key("user-key", now=10.0))
+        main._cfg.SERVER_MDBLIST_KEYS = ["key-1"]
+        main._mdblist_key_cooldown["key-1"] = 100.0
         self.assertIsNone(main._next_mdblist_server_key("user-key", now=10.0))
 
     def test_same_key_and_title_share_retry_state(self):
@@ -87,7 +107,7 @@ class MDBListRateLimitTests(unittest.IsolatedAsyncioTestCase):
         main._mdblist_key_cooldown.clear()
         main._mdblist_ip_pause_until = 0.0
 
-    async def test_query_key_quota_limit_does_not_select_server_fallback(self):
+    async def test_query_key_quota_limit_falls_back_to_a_server_key(self):
         result = main._RateLimited(retry_after=60, reset_at=time.time() + 3600)
 
         delay, fallback = main._mark_mdblist_rate_limit(
@@ -95,8 +115,16 @@ class MDBListRateLimitTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(delay, 60)
-        self.assertIsNone(fallback)
+        self.assertIn(fallback, main._cfg.SERVER_MDBLIST_KEYS)
         self.assertIn("request-key", main._mdblist_key_cooldown)
+
+    async def test_query_key_burst_limit_does_not_switch_keys(self):
+        # Per-IP: the server's keys would be refused for the same window.
+        delay, fallback = main._mark_mdblist_rate_limit(
+            "tt11347692", "request-key", main._RateLimited(retry_after=10)
+        )
+        self.assertIsNone(fallback)
+        self.assertNotIn("request-key", main._mdblist_key_cooldown)
 
     # -- burst (per-IP) limit -------------------------------------------------
 

@@ -99,6 +99,19 @@ class CopyTemplateCatalogueTests(unittest.TestCase):
             "const keyHolders = usePlaceholders && !template.literalKeys;", self.html
         )
 
+    def test_keys_go_optional_wherever_the_ids_do(self):
+        # A key typed into the configurator says nothing about whether the
+        # client holds one. AIOMetadata abandons the whole URL on a required
+        # placeholder it cannot fill, so a user with no key there lost every
+        # poster; in the optional form the server's own key is used instead.
+        # Clients that reject "{name?}" keep the required form.
+        self.assertIn(
+            "const keyHolder  = name => template.tmdbOptional ? `{${name}?}` : `{${name}}`;",
+            self.html,
+        )
+        self.assertIn("keyHolders ? keyHolder('tmdb_key')    : userTmdbKey", self.html)
+        self.assertIn("keyHolders ? keyHolder('mdblist_key') : userMdblistKey", self.html)
+
     def test_the_saved_configuration_carries_no_client_choice(self):
         # saveSettings round-trips through buildBaseParams with no templateId,
         # which must land on the neutral shape — otherwise a remembered client

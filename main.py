@@ -544,13 +544,26 @@ def _record_quality_result(result) -> None:
 
 
 def _next_mdblist_server_key(current_key: str, now: float | None = None) -> str | None:
-    """Select a healthy configured server key after *current_key*."""
+    """Select a healthy configured server key after *current_key*.
+
+    A request-supplied key that is spent hands over to the server's keys too,
+    starting at the active one: the user asked for a poster, and one with the
+    operator's ratings beats one without any. It takes a configured key to do
+    that, so a key-less instance still returns None.
+    """
     global _mdblist_active_key_idx
     keys = _cfg.SERVER_MDBLIST_KEYS
-    if len(keys) < 2 or current_key not in keys:
+    if not keys:
         return None
     if now is None:
         now = asyncio.get_running_loop().time()
+    if current_key not in keys:
+        for offset in range(len(keys)):
+            idx = (_mdblist_active_key_idx + offset) % len(keys)
+            if now >= _mdblist_key_cooldown.get(keys[idx], 0.0):
+                _mdblist_active_key_idx = idx
+                return keys[idx]
+        return None
     start = keys.index(current_key)
     for offset in range(1, len(keys)):
         idx = (start + offset) % len(keys)
@@ -588,7 +601,8 @@ def _mark_mdblist_rate_limit(
       carries no Retry-After, only X-RateLimit-Reset. Retrying hourly until
       then just burns log lines, so the key sleeps until the reset (capped at
       a day in case the header is nonsense) and a configured sibling takes
-      over meanwhile.
+      over meanwhile. A spent request-supplied key is replaced by a
+      configured key the same way.
     * Burst 429 or 503: per-IP, a few seconds long (Retry-After: 10 when
       given). Every key on the address is refused for the same window, so
       the process as a whole pauses (_mdblist_ip_pause_until) and no key is
@@ -1250,7 +1264,13 @@ async def _imdb_id_under_tmdb(
 # Key resolution helpers
 # ---------------------------------------------------------------------------
 
+# A key param still holding its own placeholder ("{tmdb_key}", "{tmdb_key?}")
+# came from a client that had no key to substitute — an older AIOMetadata build
+# leaving the optional form verbatim, or a resolver with no key placeholders at
+# all. That is "no key", not a key to send to TMDB/MDBList and fail with.
+
 def _resolve_tmdb_key(query_key: str) -> str | None:
+    query_key = _normalise_optional_id(query_key, "tmdb_key")
     if query_key:
         return query_key
     if _cfg.SERVER_TMDB_KEY:
@@ -1259,6 +1279,7 @@ def _resolve_tmdb_key(query_key: str) -> str | None:
 
 
 def _resolve_mdblist_key(query_key: str) -> str | None:
+    query_key = _normalise_optional_id(query_key, "mdblist_key")
     if query_key:
         return query_key
     if _cfg.SERVER_MDBLIST_KEYS:
@@ -6391,8 +6412,8 @@ async def get_poster(
     if not rating_already_cached and effective_mdblist_key:
         _loop_now = asyncio.get_running_loop().time()
 
-        # Per-key cooldown: configured server keys may rotate; request-supplied
-        # keys remain isolated and simply wait for their own cooldown to expire.
+        # Per-key cooldown: a cooling key, configured or request-supplied, hands
+        # over to a healthy configured key; with none, the fetch is skipped.
         if effective_mdblist_key and _loop_now < _mdblist_key_cooldown.get(effective_mdblist_key, 0.0):
             _cooling_key = effective_mdblist_key
             _replacement = _next_mdblist_server_key(_cooling_key, _loop_now)
@@ -6849,10 +6870,7 @@ async def get_poster(
                     await _mdblist_wait_for_slot()
                     _fetch_key = _key
                     _fetch_now = asyncio.get_running_loop().time()
-                    if (
-                        _fetch_key in _cfg.SERVER_MDBLIST_KEYS
-                        and _fetch_now < _mdblist_key_cooldown.get(_fetch_key, 0.0)
-                    ):
+                    if _fetch_now < _mdblist_key_cooldown.get(_fetch_key, 0.0):
                         _replacement_key = _next_mdblist_server_key(_fetch_key, _fetch_now)
                         if _replacement_key is None:
                             _remaining = _mdblist_key_cooldown.get(_fetch_key, 0.0) - _fetch_now
@@ -7300,8 +7318,8 @@ async def get_poster(
             effective_mdblist_key = None
 
         # A rate-limited fetch gets one same-request rescue attempt. For a
-        # quota 429 that is the next healthy configured key (query-supplied
-        # keys remain isolated). For a per-IP burst 429/503 a sibling key would
+        # quota 429 that is the next healthy configured key, whether the spent
+        # key was configured or query-supplied. For a per-IP burst 429/503 a sibling key would
         # be refused too, so the rescue is the *same* key after the pause,
         # which the gated fetch sleeps through — provided the pause is short
         # enough to be worth holding the render for.

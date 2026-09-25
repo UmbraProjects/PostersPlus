@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Weight sliders take typed values
+
+- Clicking a rating weight's percentage now opens it for typing, like every
+  other slider in the configurator. Typed weights update the total and the
+  URL straight away.
+
+### API keys no longer cost AIOMetadata its posters
+
+- A TMDB or MDBList key entered in the configurator put `{tmdb_key}` /
+  `{mdblist_key}` in the copied URL. AIOMetadata drops the whole URL when a
+  placeholder it can't fill is required, so anyone without that key in
+  AIOMetadata (or who removed it later) lost every poster. AIOMetadata and
+  Xperience URLs now use the optional `{tmdb_key?}` / `{mdblist_key?}`, and
+  a missing key falls back to the server's own. Bingecat and Discover+ keep
+  the plain form, since they reject `{name?}`.
+- A key parameter that arrives still holding its placeholder is read as no
+  key, not sent to TMDB or MDBList as one.
+- An MDBList key in the URL that has used up its daily quota now hands over
+  to the server's MDBList key, when one is set, until the quota resets.
+  Before, that user's ratings stopped until the next day.
+
 ### Trending lists get a second attempt
 
 - A trending list that couldn't be read (TMDB, a custom source or AniList) is
