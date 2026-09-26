@@ -851,6 +851,43 @@
   }
 
   .segmented-opt:hover { color: var(--silver-bright); border-color: var(--black5); }
+  /* Graphic badge groups */
+  .gb-group-row { display: grid; grid-template-columns: 1fr 68px; gap: 6px; }
+  .gb-xy { margin-top: 12px; display: grid; gap: 8px; }
+  .gb-align-row { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
+  .gb-align-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+                    color: var(--silver-dim); }
+  .gb-align-row .gb-seg { width: 186px; }
+  .gb-xy .gb-axis { font-family: var(--mono); font-size: 10px; color: var(--silver-dim); flex: none; width: 12px; }
+  /* "Badges" on the left, a caption over the group pickers on the right. */
+  .gb-list-label { display: flex; justify-content: space-between; align-items: baseline; }
+  .gb-list-label .gb-col { width: 150px; margin-right: 12px; text-align: center;
+                           font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em;
+                           text-transform: uppercase; color: var(--silver-dim); }
+  .sash-item.gb-item { cursor: default; gap: 10px; padding-top: 7px; padding-bottom: 7px; }
+  .gb-item .sash-label { flex: 1; }
+  .gb-order { display: flex; flex-direction: column; gap: 1px; flex: none; }
+  .gb-move {
+    background: none; border: none; padding: 0; width: 16px; height: 11px; line-height: 0;
+    color: var(--silver-dim); cursor: pointer; border-radius: 3px;
+  }
+  .gb-move svg { width: 10px; height: 6px; }
+  .gb-move:hover:not(:disabled) { color: var(--gold-bright); background: var(--gold-faint); }
+  .gb-move:disabled { opacity: 0.2; cursor: default; }
+  .gb-seg {
+    display: inline-flex; flex: none; width: 150px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden;
+    background: var(--black2);
+  }
+  .gb-seg span {
+    flex: 1; padding: 5px 0; text-align: center; cursor: pointer; user-select: none;
+    font-family: var(--mono); font-size: 10.5px; color: var(--silver);
+    transition: color 0.15s, background 0.15s;
+  }
+  .gb-seg span + span { border-left: 1px solid var(--border); }
+  .gb-seg span:hover { color: var(--silver-bright); }
+  .gb-seg span.active { color: var(--gold-bright); background: linear-gradient(180deg, rgba(201,168,76,0.18), rgba(201,168,76,0.06)); }
+  .gb-item.sash-item-disabled .sash-label { color: var(--silver-dim); }
   .segmented-opt:focus-visible { outline: none; border-color: var(--gold-dim); }
 
   .segmented-opt.active {
@@ -3009,6 +3046,16 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="gold">Black, Gold Trim</option>
               </select>
             </div>
+            <div class="field" id="sash-badge-pos-field" style="display:none;">
+              <label class="field-label" data-tip="Moves the frosted notch off centre, leaving the middle of the top edge free. Left/Right float a rounded chip in from that corner. On the left, the quality and age badges move to the top right. Auto (with Graphic Badges) decides per poster: beside the badges when a title has some along the top, centred when it has none. Auto spreads a Beside Chip group across to the corner; Auto, Beside Notch keeps it against the chip, leaving the corner clear for the watched and watchlist marks some clients draw there.">Position</label>
+              <select id="cfg-sash-badge-pos" onchange="build(); queuePreviewReload()">
+                <option value="center" selected>Centre</option>
+                <option value="left">Left</option>
+                <option value="right">Right</option>
+                <option value="auto">Auto</option>
+                <option value="auto_hug">Auto, Beside Notch</option>
+              </select>
+            </div>
             <div class="field" id="sash-text-color-field" style="display:none;">
               <label class="field-label" data-tip="Hex colour for the sash/notch text. Leave blank for the mode default.">Text Colour</label>
               <div class="color-field">
@@ -3207,6 +3254,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="4" selected>Quality Notch</option>
                 <option value="6">Quality Bookmark</option>
                 <option value="2">Quality Badge Row</option>
+                <option value="7">Graphic Badges</option>
                 <option value="5">Combined Badge</option>
                 <option value="1">Quality Age Rating</option>
                 <option value="3">Age Rating Only</option>
@@ -3261,10 +3309,154 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
             </div>
 
+            <!-- Graphic Badges (mode 7): three groups, each an anchor, a max and the
+                 badges assigned to it.  The hidden inputs hold each group's URL
+                 spelling and are the source of truth; the list below edits them. -->
+            <div id="badge-groups-fields" class="cfg-sep" style="display:none">
+              <span class="group-title">Badge Groups</span>
+              <!-- data-default: a hidden input's defaultValue follows every write. -->
+              <input type="hidden" id="cfg-badge-group1" value="chip:4:video,audio,res,cert" data-default="chip:4:video,audio,res,cert">
+              <input type="hidden" id="cfg-badge-group2" value="" data-default="">
+              <input type="hidden" id="cfg-badge-group3" value="" data-default="">
+              <div class="field">
+                <label class="field-label" data-tip="Beside Chip is the top corner the notch or sash leaves free. Above/Below Logo centre the group on the title logo, however tall it is, moving further off if the rating is in the way. A group whose corner is taken slides away from the edge until it fits; badges that still don't fit drop from the end of the list. Custom puts it exactly where you set it, for dodging a badge your client draws; Align picks which edge of the row sits at X.">Group 1</label>
+                <div class="gb-group-row">
+                  <select id="gb-anchor-1" onchange="gbFromControls()">
+                  <option value="chip">Beside Chip</option>
+                  <option value="tl">Top Left</option>
+                  <option value="tr">Top Right</option>
+                  <option value="bl">Bottom Left</option>
+                  <option value="br">Bottom Right</option>
+                  <option value="above_logo">Above Logo</option>
+                  <option value="below_logo">Below Logo</option>
+                  <option value="custom">Custom</option>
+                  </select>
+                  <select id="gb-max-1" title="Most badges shown at once" onchange="gbFromControls()"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4" selected>4</option></select>
+                </div>
+                <div class="gb-xy" id="gb-xy-1" style="display:none">
+                  <div class="range-row"><span class="gb-axis">X</span>
+                    <input type="range" id="gb-x-1" min="0" max="1" step="0.005" value="0.05" oninput="updateRange(this,'rng-gbx1'); gbFromControls()">
+                    <span class="range-val" id="rng-gbx1">0.05</span></div>
+                  <div class="range-row"><span class="gb-axis">Y</span>
+                    <input type="range" id="gb-y-1" min="0" max="1" step="0.005" value="0.05" oninput="updateRange(this,'rng-gby1'); gbFromControls()">
+                    <span class="range-val" id="rng-gby1">0.05</span></div>
+                  <div class="gb-align-row"><span class="gb-align-label" data-tip="Which part of the row sits at X. Left: the row starts there and grows rightwards. Right: it ends there and grows leftwards. That edge stays put however many badges a title has.">Align</span>
+                    <div class="gb-seg" id="gb-align-1" data-value="l"></div></div>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label">Group 2</label>
+                <div class="gb-group-row">
+                  <select id="gb-anchor-2" onchange="gbFromControls()">
+                  <option value="chip">Beside Chip</option>
+                  <option value="tl">Top Left</option>
+                  <option value="tr">Top Right</option>
+                  <option value="bl" selected>Bottom Left</option>
+                  <option value="br">Bottom Right</option>
+                  <option value="above_logo">Above Logo</option>
+                  <option value="below_logo">Below Logo</option>
+                  <option value="custom">Custom</option>
+                  </select>
+                  <select id="gb-max-2" title="Most badges shown at once" onchange="gbFromControls()"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4" selected>4</option></select>
+                </div>
+                <div class="gb-xy" id="gb-xy-2" style="display:none">
+                  <div class="range-row"><span class="gb-axis">X</span>
+                    <input type="range" id="gb-x-2" min="0" max="1" step="0.005" value="0.05" oninput="updateRange(this,'rng-gbx2'); gbFromControls()">
+                    <span class="range-val" id="rng-gbx2">0.05</span></div>
+                  <div class="range-row"><span class="gb-axis">Y</span>
+                    <input type="range" id="gb-y-2" min="0" max="1" step="0.005" value="0.05" oninput="updateRange(this,'rng-gby2'); gbFromControls()">
+                    <span class="range-val" id="rng-gby2">0.05</span></div>
+                  <div class="gb-align-row"><span class="gb-align-label" data-tip="Which part of the row sits at X. Left: the row starts there and grows rightwards. Right: it ends there and grows leftwards. That edge stays put however many badges a title has.">Align</span>
+                    <div class="gb-seg" id="gb-align-2" data-value="l"></div></div>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label">Group 3</label>
+                <div class="gb-group-row">
+                  <select id="gb-anchor-3" onchange="gbFromControls()">
+                  <option value="chip">Beside Chip</option>
+                  <option value="tl" selected>Top Left</option>
+                  <option value="tr">Top Right</option>
+                  <option value="bl">Bottom Left</option>
+                  <option value="br">Bottom Right</option>
+                  <option value="above_logo">Above Logo</option>
+                  <option value="below_logo">Below Logo</option>
+                  <option value="custom">Custom</option>
+                  </select>
+                  <select id="gb-max-3" title="Most badges shown at once" onchange="gbFromControls()"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4" selected>4</option></select>
+                </div>
+                <div class="gb-xy" id="gb-xy-3" style="display:none">
+                  <div class="range-row"><span class="gb-axis">X</span>
+                    <input type="range" id="gb-x-3" min="0" max="1" step="0.005" value="0.05" oninput="updateRange(this,'rng-gbx3'); gbFromControls()">
+                    <span class="range-val" id="rng-gbx3">0.05</span></div>
+                  <div class="range-row"><span class="gb-axis">Y</span>
+                    <input type="range" id="gb-y-3" min="0" max="1" step="0.005" value="0.05" oninput="updateRange(this,'rng-gby3'); gbFromControls()">
+                    <span class="range-val" id="rng-gby3">0.05</span></div>
+                  <div class="gb-align-row"><span class="gb-align-label" data-tip="Which part of the row sits at X. Left: the row starts there and grows rightwards. Right: it ends there and grows leftwards. That edge stays put however many badges a title has.">Align</span>
+                    <div class="gb-seg" id="gb-align-3" data-value="l"></div></div>
+                </div>
+              </div>
+              <div class="field">
+                <div class="gb-list-label">
+                  <label class="field-label" data-tip="Order sets the order across each row, and which badges stay when there is no room for all of them: the last in a group drops first.">Badges</label>
+                  <span class="gb-col">Group</span>
+                </div>
+                <div class="sash-list" id="gb-badge-list"></div>
+              </div>
+            </div>
+
             <!-- Sliders (hidden entirely when Display Mode = Hidden) -->
             <div id="badge-layout-fields" class="cfg-sep">
               <span class="group-title">Layout</span>
-              <div class="field">
+              <div class="gb-layout-group" id="gb-layout-1" style="display:none">
+                <div class="field">
+                  <label class="field-label">Group 1 Size</label>
+                  <div class="range-row">
+                    <input type="range" id="gb-size-1" min="10" max="60" step="1" value="20" oninput="updateRange(this,'rng-gbsz1'); gbFromControls()">
+                    <span class="range-val" id="rng-gbsz1">20</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label" data-tip="Space between this group's badges. The gap a group keeps from the notch, rating and other groups doesn't change.">Group 1 Spacing</label>
+                  <div class="range-row">
+                    <input type="range" id="gb-gap-1" min="0" max="0.08" step="0.002" value="0.028" oninput="updateRange(this,'rng-gbgap1'); gbFromControls()">
+                    <span class="range-val" id="rng-gbgap1">0.028</span>
+                  </div>
+                </div>
+              </div>
+              <div class="gb-layout-group" id="gb-layout-2" style="display:none">
+                <div class="field">
+                  <label class="field-label">Group 2 Size</label>
+                  <div class="range-row">
+                    <input type="range" id="gb-size-2" min="10" max="60" step="1" value="20" oninput="updateRange(this,'rng-gbsz2'); gbFromControls()">
+                    <span class="range-val" id="rng-gbsz2">20</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label" data-tip="Space between this group's badges. The gap a group keeps from the notch, rating and other groups doesn't change.">Group 2 Spacing</label>
+                  <div class="range-row">
+                    <input type="range" id="gb-gap-2" min="0" max="0.08" step="0.002" value="0.028" oninput="updateRange(this,'rng-gbgap2'); gbFromControls()">
+                    <span class="range-val" id="rng-gbgap2">0.028</span>
+                  </div>
+                </div>
+              </div>
+              <div class="gb-layout-group" id="gb-layout-3" style="display:none">
+                <div class="field">
+                  <label class="field-label">Group 3 Size</label>
+                  <div class="range-row">
+                    <input type="range" id="gb-size-3" min="10" max="60" step="1" value="20" oninput="updateRange(this,'rng-gbsz3'); gbFromControls()">
+                    <span class="range-val" id="rng-gbsz3">20</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label" data-tip="Space between this group's badges. The gap a group keeps from the notch, rating and other groups doesn't change.">Group 3 Spacing</label>
+                  <div class="range-row">
+                    <input type="range" id="gb-gap-3" min="0" max="0.08" step="0.002" value="0.028" oninput="updateRange(this,'rng-gbgap3'); gbFromControls()">
+                    <span class="range-val" id="rng-gbgap3">0.028</span>
+                  </div>
+                </div>
+              </div>
+              <div class="field" id="badge-size-field">
                 <label class="field-label">Badge Size</label>
                 <div class="range-row">
                   <input type="range" id="cfg-badge-h" min="16" max="80" step="1" value="20" oninput="updateRange(this,'rng-bh'); build(); queuePreviewReload()">
@@ -4064,9 +4256,18 @@ function updateImdbSourceAvailability() {
   }
 }
 
+// Whether the badges shown need stream quality at all.  Mirrors _uses_quality
+// in main.py: graphic badges only when some group shows a quality badge —
+// certificate, network and studio come from TMDB alone.
+function badgeUsesQuality(mode = parseInt(vEl('cfg-badge-display-mode'))) {
+  if ([1, 2, 4, 5, 6].includes(mode)) return true;
+  if (mode !== 7) return false;
+  return GB_GROUPS.some(g => (gbParse(vEl(`cfg-badge-group${g}`))?.slots || [])
+    .some(id => ['video', 'audio', 'res'].includes(id)));
+}
+
 function updateScraperHint() {
-  const mode = parseInt(document.getElementById('cfg-badge-display-mode').value);
-  const qualityMode = mode === 1 || mode === 2 || mode === 4 || mode === 5 || mode === 6;
+  const qualityMode = badgeUsesQuality();
   document.getElementById('wait-quality-field').style.display = qualityMode ? '' : 'none';
   const aiosHint = document.getElementById('aiostreams-hint');
   if (aiosHint) {
@@ -4106,7 +4307,167 @@ const BADGE_MODE_TIPS = {
   4: 'A medal-coloured marker based on stream quality.',
   5: 'Minimalist text badge: resolution · visual tag, pip coloured by source. Needs both resolution and source; visual tag defaults to SDR if absent.',
   6: 'A small corner bookmark coloured by the same quality tier as Quality Notch. Clients render posters at different scales, so Badge Size usually needs adjusting to suit yours.',
+  7: 'Dolby Vision, Atmos, DTS:X, HDR and resolution marks and the US certificate, in up to three groups you place below. Pairs well with the Left/Right notch position.',
 };
+
+// ── Graphic badge groups ────────────────────────────────────────────────────
+// Hidden inputs cfg-badge-group1..3 hold "anchor:max:slot,slot"
+// (graphic_badges.parse_group).  The list shows every badge once, in one order
+// shared by all groups, with the group it belongs to; a badge in none is Off.
+const GB_GROUPS = [1, 2, 3];
+const GB_DEFAULT_ANCHOR = { 1: 'chip', 2: 'bl', 3: 'tl' };
+const GB_SLOTS = [
+  { id: 'video', label: 'Dolby Vision / HDR' },
+  { id: 'audio', label: 'Atmos / DTS:X' },
+  { id: 'res',   label: 'Resolution' },
+  { id: 'cert',  label: 'Certificate' },
+  { id: 'network', label: 'Network' },
+  { id: 'studio',  label: 'Studio' },
+];
+const GB_ANCHORS = ['chip', 'tl', 'tr', 'bl', 'br', 'above_logo', 'below_logo'];
+const GB_SIZE = 20, GB_SPACING = 0.028;   // graphic_badges.DEFAULT_SIZE / DEFAULT_SPACING
+
+function gbParse(raw) {
+  const [anchor, max, slots, sizeRaw, gapRaw] = (raw || '').split(':');
+  if (!anchor || !slots) return null;
+  // Mirrors graphic_badges.parse_group: optional size and spacing, clamped.
+  const size = sizeRaw === undefined ? GB_SIZE : Math.min(60, Math.max(10, Math.round(parseFloat(sizeRaw)) || GB_SIZE));
+  const spacing = gapRaw === undefined ? GB_SPACING : Math.min(0.08, Math.max(0, parseFloat(gapRaw) || 0));
+  let xy = null, align = 'l';
+  if (anchor.includes(',')) {
+    const parts = anchor.split(',');
+    xy = parts.slice(0, 2).map(Number);
+    if (parts.length > 3 || xy.length !== 2 || xy.some(v => !(v >= 0 && v <= 1))) return null;
+    // Mirrors graphic_badges._parse_xy: no align means the nearer edge.
+    align = parts[2] || (xy[0] < 0.5 ? 'l' : xy[0] > 0.5 ? 'r' : 'c');
+    if (!['l', 'c', 'r'].includes(align)) return null;
+  } else if (!GB_ANCHORS.includes(anchor)) return null;
+  const known = GB_SLOTS.map(s => s.id);
+  return { anchor: xy ? 'custom' : anchor, xy, align, size, spacing, max: Math.min(4, Math.max(1, parseInt(max) || 4)),
+           slots: slots.split(',').filter(id => known.includes(id)) };
+}
+
+// What a group's own controls show — used for a group with no badges yet, so
+// choosing its anchor before assigning anything to it isn't lost.
+function gbControls(g) {
+  return { anchor: vEl(`gb-anchor-${g}`) || GB_DEFAULT_ANCHOR[g],
+           max: parseInt(vEl(`gb-max-${g}`)) || 4,
+           size: parseInt(vEl(`gb-size-${g}`)) || GB_SIZE,
+           spacing: parseFloat(vEl(`gb-gap-${g}`)) || 0,
+           xy: [parseFloat(vEl(`gb-x-${g}`)) || 0, parseFloat(vEl(`gb-y-${g}`)) || 0],
+           align: document.getElementById(`gb-align-${g}`).dataset.value || 'l' };
+}
+
+// Current state: the groups plus one shared order (group 1's badges, then
+// group 2's, ..., then the unassigned ones in their default order).  A badge
+// listed in two groups stays in the earlier one, as on the server.
+function gbState() {
+  const gs = GB_GROUPS.map(g => gbParse(vEl(`cfg-badge-group${g}`)));
+  const assign = {}, order = [];
+  gs.forEach((grp, i) => (grp?.slots || []).forEach(id => {
+    if (assign[id]) return;
+    assign[id] = i + 1; order.push(id);
+  }));
+  GB_SLOTS.forEach(s => { if (!order.includes(s.id)) order.push(s.id); });
+  const groups = gs.map((grp, i) => {
+    const ctl = gbControls(i + 1);
+    return grp ? { anchor: grp.anchor, max: grp.max, size: grp.size, spacing: grp.spacing,
+                   xy: grp.xy || ctl.xy, align: grp.xy ? grp.align : ctl.align } : ctl;
+  });
+  return { order, assign, groups };
+}
+
+function gbWrite(st) {
+  GB_GROUPS.forEach(g => {
+    const grp = st.groups[g - 1];
+    const slots = st.order.filter(id => st.assign[id] === g);
+    const anchor = grp.anchor === 'custom'
+      ? [...grp.xy.map(v => +v.toFixed(3)), grp.align].join(',') : grp.anchor;
+    // Size and spacing only when they differ from the defaults, as
+    // graphic_badges.format_group writes them.
+    const spacing = +(+grp.spacing).toFixed(3);
+    const tail = spacing !== GB_SPACING ? `:${grp.size}:${spacing}` : grp.size !== GB_SIZE ? `:${grp.size}` : '';
+    document.getElementById(`cfg-badge-group${g}`).value =
+      !slots.length ? '' : `${anchor}:${grp.max}:${slots.join(',')}${tail}`;
+  });
+  gbRender();
+  // Assigning or removing a quality badge changes which quality settings apply.
+  document.getElementById('badge-min-score-field').style.display = badgeUsesQuality() ? '' : 'none';
+  updateScraperHint();
+  build(); queuePreviewReload();
+}
+
+function gbFromControls() {
+  const st = gbState();
+  st.groups = GB_GROUPS.map(gbControls);
+  gbWrite(st);
+}
+
+function gbSetAlign(g, align) {
+  document.getElementById(`gb-align-${g}`).dataset.value = align;
+  gbFromControls();
+}
+
+function gbMove(id, delta) {
+  const st = gbState();
+  const i = st.order.indexOf(id), j = i + delta;
+  if (j < 0 || j >= st.order.length) return;
+  [st.order[i], st.order[j]] = [st.order[j], st.order[i]];
+  gbWrite(st);
+}
+
+function gbAssign(id, group) {
+  const st = gbState();
+  if (group) st.assign[id] = group; else delete st.assign[id];
+  gbWrite(st);
+}
+
+const _GB_CHEVRON = up => `<svg viewBox="0 0 10 6" aria-hidden="true"><path d="${up ? 'M1 5l4-4 4 4' : 'M1 1l4 4 4-4'}" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+function gbRender() {
+  const list = document.getElementById('gb-badge-list');
+  if (!list) return;
+  const st = gbState();
+  st.groups.forEach((grp, i) => {
+    const g = i + 1;
+    _setEl(`gb-anchor-${g}`, grp.anchor);
+    _setEl(`gb-max-${g}`, grp.max);
+    [['size', 'gbsz', grp.size], ['gap', 'gbgap', grp.spacing]].forEach(([k, rng, v]) => {
+      const el = document.getElementById(`gb-${k}-${g}`);
+      el.value = v;
+      updateRange(el, `rng-${rng}${g}`);
+    });
+    document.getElementById(`gb-layout-${g}`).style.display =
+      vEl('cfg-badge-display-mode') === '7' ? '' : 'none';
+    ['x', 'y'].forEach((axis, k) => {
+      const el = document.getElementById(`gb-${axis}-${g}`);
+      el.value = grp.xy[k];
+      updateRange(el, `rng-gb${axis}${g}`);
+    });
+    document.getElementById(`gb-xy-${g}`).style.display = grp.anchor === 'custom' ? '' : 'none';
+    const seg = document.getElementById(`gb-align-${g}`);
+    seg.dataset.value = grp.align;
+    seg.innerHTML = [['l', 'Left'], ['c', 'Centre'], ['r', 'Right']].map(([v, t]) =>
+      `<span class="${v === grp.align ? 'active' : ''}" onclick="gbSetAlign(${g}, '${v}')">${t}</span>`).join('');
+  });
+  list.innerHTML = '';
+  st.order.forEach((id, idx) => {
+    const slot = GB_SLOTS.find(s => s.id === id);
+    const g = st.assign[id] || 0;
+    const row = document.createElement('div');
+    row.className = 'sash-item gb-item' + (g ? '' : ' sash-item-disabled');
+    const pick = [...GB_GROUPS.map(n => [n, String(n)]), [0, 'Off']].map(([v, t]) =>
+      `<span class="${v === g ? 'active' : ''}" title="${v ? 'Group ' + v : 'Not shown'}" onclick="gbAssign('${id}', ${v})">${t}</span>`).join('');
+    row.innerHTML = `
+      <div class="gb-order">
+        <button class="gb-move" title="Move up" onclick="gbMove('${id}', -1)" ${idx === 0 ? 'disabled' : ''}>${_GB_CHEVRON(true)}</button>
+        <button class="gb-move" title="Move down" onclick="gbMove('${id}', 1)" ${idx === st.order.length - 1 ? 'disabled' : ''}>${_GB_CHEVRON(false)}</button>
+      </div>
+      <span class="sash-label">${slot.label}</span>
+      <div class="gb-seg">${pick}</div>`;
+    list.appendChild(row);
+  });
+}
 
 function updateBadgeModeHint() {
   const mode = parseInt(document.getElementById('cfg-badge-display-mode').value);
@@ -4115,15 +4476,20 @@ function updateBadgeModeHint() {
   if (BADGE_MODE_TIPS[mode]) modeLabel.dataset.tip = BADGE_MODE_TIPS[mode];
   else modeLabel.removeAttribute('data-tip');
   document.getElementById('badge-gap-field').style.display         = mode === 2 ? '' : 'none';
-  document.getElementById('badge-min-score-field').style.display   = [1,2,4,5,6].includes(mode) ? '' : 'none';
+  document.getElementById('badge-min-score-field').style.display   = badgeUsesQuality(mode) ? '' : 'none';
   document.getElementById('badge-stacked-field').style.display     = mode === 5 ? '' : 'none';
   updateScraperHint();
   // Hide the whole height / horizontal / vertical block when badges are off —
   // those knobs only mean anything when there's a badge being placed.  Gap is
   // already mode-2-only and stays nested under this wrapper, so it follows.
   document.getElementById('badge-layout-fields').style.display     = hidden ? 'none' : '';
-  document.getElementById('badge-x-field').style.display           = mode === 6 ? 'none' : '';
-  document.getElementById('badge-y-field').style.display           = mode === 6 ? 'none' : '';
+  // The bookmark and the graphic groups place themselves.
+  document.getElementById('badge-x-field').style.display           = (mode === 6 || mode === 7) ? 'none' : '';
+  document.getElementById('badge-y-field').style.display           = (mode === 6 || mode === 7) ? 'none' : '';
+  document.getElementById('badge-groups-fields').style.display     = mode === 7 ? '' : 'none';
+  // Graphic badges size each group separately (in the Layout sliders gbRender shows).
+  document.getElementById('badge-size-field').style.display        = mode === 7 ? 'none' : '';
+  gbRender();   // also hides the per-group Layout sliders outside this mode
 }
 
 // Seeds the new mode's own defaults. Kept out of updateBadgeModeHint, which
@@ -4134,9 +4500,9 @@ function applyBadgeModeDefaults() {
   const mode = parseInt(document.getElementById('cfg-badge-display-mode').value);
   if (mode === 0) return;
   const h = document.getElementById('cfg-badge-h');
-  h.value = mode === 6 ? 30 : mode === 4 ? 20 : mode === 2 ? 32 : mode === 5 ? 28 : 36;
+  h.value = mode === 6 ? 30 : mode === 4 ? 20 : mode === 2 ? 32 : mode === 5 ? 28 : mode === 7 ? 20 : 36;
   updateRange(h, 'rng-bh');
-  if ([1,2,4,5,6].includes(mode)) {
+  if ([1,2,4,5,6,7].includes(mode)) {
     // The mode's default only seeds an untouched field.  Unlike badge height,
     // a minimum quality means the same thing in every mode, so once the user
     // (or an imported URL) has picked one, switching modes must not throw it
@@ -5370,6 +5736,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
         params.set('sash_badge_frost_opacity', n('cfg-sash-badge-frost-opacity').toFixed(2));
         params.set('sash_badge_frost_saturation', n('cfg-sash-badge-frost-sat').toFixed(2));
         if (c('tog-notch-vignette-color')) params.set('notch_vignette_color', 'true');
+        const _pos = vEl('cfg-sash-badge-pos') || 'center';
+        if (_pos !== 'center') params.set('sash_badge_pos', _pos);
       }
     } else {  // diagonal sash
       params.set('muted',              c('tog-muted') ? 'true' : 'false');
@@ -5395,8 +5763,12 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   // Landscape never fetches quality (see get_poster), so none of this applies.
   if (emitAll) params.set('badge_display_mode', badgeMode);
   if (emitAll && badgeMode !== 0) {
-    params.set('badge_height', ni('cfg-badge-h'));
-    if (badgeMode !== 6) {
+    if (badgeMode !== 7) params.set('badge_height', ni('cfg-badge-h'));
+    if (badgeMode === 7) {
+      params.set('badge_group1', vEl('cfg-badge-group1'));
+      params.set('badge_group2', vEl('cfg-badge-group2'));
+      params.set('badge_group3', vEl('cfg-badge-group3'));
+    } else if (badgeMode !== 6) {
       params.set('badge_anchor_x', n('cfg-badge-x').toFixed(3));
       params.set('badge_anchor_y', n('cfg-badge-y').toFixed(3));
     }
@@ -5404,14 +5776,14 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       // badge_gap only applies to Quality Badge Row mode
       params.set('badge_gap', ni('cfg-badge-gap'));
     }
-    if ([1,2,4,5,6].includes(badgeMode)) {
+    if (badgeUsesQuality(badgeMode)) {
       params.set('badge_min_score', ni('cfg-badge-min-score'));
     }
     if (badgeMode === 5) {
       if (c('tog-badge-stacked')) params.set('combined_badge_stacked', 'true');
     }
   }
-  if (emitAll && c('tog-wait-quality') && [1,2,4,5,6].includes(badgeMode)) {
+  if (emitAll && c('tog-wait-quality') && badgeUsesQuality(badgeMode)) {
     params.set('wait_for_quality', 'true');
     if (c('tog-greyscale-noquality')) params.set('greyscale_no_quality', 'true');
   }
@@ -5895,7 +6267,9 @@ function resetDefaults() {
       if (el.type === 'range') el.dispatchEvent(new Event('input', { bubbles: true }));
     }
     if (el.type === 'checkbox') el.checked = el.defaultChecked;
-    if (el.type === 'hidden')   el.value   = el.defaultValue || '';
+    // A hidden input's value *is* its value attribute, so defaultValue follows
+    // every write; one that needs a real default carries it in data-default.
+    if (el.type === 'hidden')   el.value   = el.dataset.default ?? (el.defaultValue || '');
     if (el.tagName === 'SELECT') { for (const opt of el.options) opt.selected = opt.defaultSelected; }
     // Forget "the user chose this themselves" marks, so the mode-driven
     // defaults start seeding again from a clean slate.
@@ -5921,6 +6295,7 @@ function resetDefaults() {
   updateRatingFields();
   updateOriginalArt();
   updateBadgeModeHint();
+  gbRender();
   updateSashBadgeFields();
   updateShapeFields();
   build();
@@ -6059,6 +6434,7 @@ function updateBadgeStyleFields() {
   const ref = c('tog-sash-frost-reference');
   document.getElementById('sash-badge-opacity-field').style.display = isFrosted ? '' : 'none';
   document.getElementById('sash-reference-row').style.display = isFrosted ? '' : 'none';
+  document.getElementById('sash-badge-pos-field').style.display = isFrosted ? '' : 'none';
   document.getElementById('sash-vignette-color-row').style.display = isFrosted ? '' : 'none';
   document.getElementById('sash-badge-saturation-field').style.display = (isFrosted && !ref) ? '' : 'none';
   // A frosted notch takes over the colour controls, so refresh the Rating
@@ -6331,7 +6707,7 @@ function updateShapeFields() {
                     'sash-muted-row', 'sash-poster-color-row', 'sash-style-field',
                     'sash-badge-offsets', 'sash-size-fields', 'sash-reference-row',
                     'sash-vignette-color-row', 'sash-badge-opacity-field',
-                    'sash-badge-saturation-field']) {
+                    'sash-badge-saturation-field', 'sash-badge-pos-field']) {
     const el = document.getElementById(id);
     if (!el) continue;
     // Portrait: show everything again first, then let the mode logic below
@@ -7148,6 +7524,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   else if (p.has('show_award_sash') && p.get('show_award_sash') !== 'true') _setEl('cfg-sash-mode', 'hidden');
   else if (p.has('sash_badge'))          _setEl('cfg-sash-mode', p.get('sash_badge') === 'true' ? 'notch' : 'sash');
   if (p.has('sash_badge_style'))         _setEl('cfg-sash-badge-style',        p.get('sash_badge_style'));
+  _setEl('cfg-sash-badge-pos', p.get('sash_badge_pos') || 'center');
   if (p.has('sash_badge_size_w'))        _setEl('cfg-sash-badge-size-w',       p.get('sash_badge_size_w'));
   if (p.has('sash_badge_size_h'))        _setEl('cfg-sash-badge-size-h',       p.get('sash_badge_size_h'));
   if (p.has('sash_badge_pad'))           _setEl('cfg-sash-badge-pad',          p.get('sash_badge_pad'));
@@ -7260,6 +7637,10 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
 
   // ── Quality badges ──────────────────────────────────────────────────────
   if (p.has('badge_display_mode')) _setEl('cfg-badge-display-mode', p.get('badge_display_mode'));
+  if (p.has('badge_group1')) _setEl('cfg-badge-group1', p.get('badge_group1'));
+  if (p.has('badge_group2')) _setEl('cfg-badge-group2', p.get('badge_group2'));
+  if (p.has('badge_group3')) _setEl('cfg-badge-group3', p.get('badge_group3'));
+  gbRender();
   // Seed the mode's defaults BEFORE applying the saved values, so a URL that
   // omits badge_height (/server-caps not answered yet) still gets a size that
   // suits its mode, and an explicit badge_height below takes precedence.

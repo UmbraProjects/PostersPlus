@@ -58,6 +58,8 @@ from cache import (
     release_status_expiry,
     get_cached_tvdb_json,
     set_cached_tvdb_json,
+    get_cached_badge_facts,
+    set_cached_badge_facts,
 )
 
 from config import (
@@ -2872,3 +2874,92 @@ def composite_logo(
             logo = ensure_light_logo(logo)
 
     image.paste(logo, (logo_x, logo_y), logo)
+
+
+# ---------------------------------------------------------------------------
+# US certificate (graphic badge row)
+# ---------------------------------------------------------------------------
+
+# Theatrical releases carry the certificate a title is known by; premieres and
+# TV airings can carry a different one, or an empty string.
+_CERT_RELEASE_ORDER = (3, 2, 4, 5, 6, 1)
+
+
+def us_certification_from_release_dates(payload: dict) -> str:
+    """The US certificate from a /movie/{id}/release_dates body, or ""."""
+    for entry in payload.get("results") or []:
+        if entry.get("iso_3166_1") != "US":
+            continue
+        dates = [d for d in entry.get("release_dates") or [] if (d.get("certification") or "").strip()]
+        dates.sort(key=lambda d: _CERT_RELEASE_ORDER.index(d.get("type"))
+                   if d.get("type") in _CERT_RELEASE_ORDER else len(_CERT_RELEASE_ORDER))
+        return dates[0]["certification"].strip() if dates else ""
+    return ""
+
+
+def us_certification_from_content_ratings(payload: dict) -> str:
+    """The US rating from a /tv/{id}/content_ratings body, or ""."""
+    for entry in payload.get("results") or []:
+        if entry.get("iso_3166_1") == "US":
+            return (entry.get("rating") or "").strip()
+    return ""
+
+
+def _logo_entries(items: list[dict] | None) -> list[dict]:
+    """Networks / production companies reduced to what a badge needs."""
+    return [{"id": e.get("id"), "logo_path": e.get("logo_path")}
+            for e in items or [] if e.get("id") is not None]
+
+
+async def fetch_badge_facts(client: httpx.AsyncClient, tmdb_id: str, media_type: str,
+                            tmdb_key: str | None) -> dict | None:
+    """The graphic badges' facts about a title: its US certificate ("cert"),
+    and its networks (TV) and production companies with their logo paths.
+    One TMDB call per title per month — the details, with the release dates
+    or content ratings appended.  None when it can't be fetched."""
+    endpoint = "tv" if media_type in ("tv", "series") else "movie"
+    cache_key = f"{endpoint}_{tmdb_id}"
+    cached = get_cached_badge_facts(cache_key)
+    if cached is not None:
+        return cached
+    if not tmdb_key or not str(tmdb_id).isdigit():
+        return None
+    append = "content_ratings" if endpoint == "tv" else "release_dates"
+    try:
+        logger.info(f"External API Call: TMDB badge facts for {endpoint} {tmdb_id}")
+        resp = await client.get(f"https://api.themoviedb.org/3/{endpoint}/{tmdb_id}",
+                                params={"api_key": tmdb_key, "append_to_response": append})
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        logger.warning(f"Badge facts fetch failed for {endpoint} {tmdb_id}: {exc}")
+        return None
+    facts = {
+        "cert": (us_certification_from_content_ratings(data.get("content_ratings") or {}) if endpoint == "tv"
+                 else us_certification_from_release_dates(data.get("release_dates") or {})),
+        "networks": _logo_entries(data.get("networks")),
+        "companies": _logo_entries(data.get("production_companies")),
+    }
+    set_cached_badge_facts(cache_key, facts)
+    return facts
+
+
+async def fetch_network_logo_path(client: httpx.AsyncClient, network_id: int,
+                                  tmdb_key: str | None) -> str | None:
+    """A TV network's logo path, for a film from that network's studio arm."""
+    cache_key = f"network_{network_id}"
+    cached = get_cached_badge_facts(cache_key)
+    if cached is not None:
+        return cached.get("logo_path")
+    if not tmdb_key:
+        return None
+    try:
+        resp = await client.get(f"https://api.themoviedb.org/3/network/{network_id}",
+                                params={"api_key": tmdb_key})
+        resp.raise_for_status()
+        path = resp.json().get("logo_path")
+    except Exception as exc:
+        logger.warning(f"Network logo fetch failed for {network_id}: {exc}")
+        return None
+    set_cached_badge_facts(cache_key, {"logo_path": path})
+    return path

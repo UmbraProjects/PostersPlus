@@ -105,8 +105,8 @@ class QualityBookmarkConfigurationTests(unittest.TestCase):
         self.assertIn("mode === 6 ? 30", html)
         self.assertIn("badge-x-field", html)
         self.assertIn("badge-y-field", html)
-        self.assertGreaterEqual(html.count("mode === 6 ?"), 3)
-        self.assertIn("[1,2,4,5,6]", html)
+        self.assertGreaterEqual(html.count("mode === 6"), 3)
+        self.assertIn("[1,2,4,5,6,7]", html)
 
 
 if __name__ == "__main__":

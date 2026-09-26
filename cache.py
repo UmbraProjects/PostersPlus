@@ -335,6 +335,20 @@ def init_db() -> None:
         )
     """)
 
+    # What the graphic badges need about a title beyond the core metadata: the
+    # US certificate and the raw network / production-company lists (the
+    # curated selection is applied at render time, so changing it needs no
+    # refetch).  Kept apart from tmdb_metadata_cache so adding them didn't
+    # mean re-fetching every title's metadata.  cache_key = "{movie|tv}_{id}";
+    # "network_{id}" rows hold a network's logo path for streamer films.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS badge_facts_cache (
+            cache_key  TEXT PRIMARY KEY,
+            facts_json TEXT NOT NULL,
+            cached_at  INTEGER NOT NULL
+        )
+    """)
+
     # Migrate existing tmdb_metadata_cache rows.
     for col, definition in (
         ("credits_json",        "TEXT"),
@@ -1995,6 +2009,43 @@ def set_cached_movie_release_info(
             get_db().commit()
     except Exception as exc:
         logger.error(f"Movie release info cache write error: {exc}")
+
+
+# A title's certificate and companies rarely change once it has them; one
+# still missing its certificate (unreleased, or TMDB lacks it) is looked at
+# again sooner.
+_BADGE_FACTS_TTL         = 30 * 86400
+_BADGE_FACTS_PARTIAL_TTL = 7 * 86400
+
+
+def get_cached_badge_facts(cache_key: str) -> dict | None:
+    try:
+        row = get_db().execute(
+            "SELECT facts_json, cached_at FROM badge_facts_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+        if not row:
+            return None
+        facts = json.loads(row[0])
+        ttl = _BADGE_FACTS_TTL if facts.get("cert") or facts.get("logo_path") else _BADGE_FACTS_PARTIAL_TTL
+        if time.time() - row[1] > ttl:
+            return None
+        return facts
+    except Exception as exc:
+        logger.error(f"Badge facts cache read error: {exc}")
+        return None
+
+
+def set_cached_badge_facts(cache_key: str, facts: dict) -> None:
+    try:
+        with _db_lock:
+            get_db().execute(
+                "INSERT OR REPLACE INTO badge_facts_cache (cache_key, facts_json, cached_at) VALUES (?, ?, ?)",
+                (cache_key, json.dumps(facts), int(time.time())),
+            )
+            get_db().commit()
+    except Exception as exc:
+        logger.error(f"Badge facts cache write error: {exc}")
 
 
 def get_cached_release_status(cache_key: str) -> str | None:

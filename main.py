@@ -24,7 +24,7 @@ from urllib.parse import parse_qsl, quote, urlencode
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 logging.basicConfig(
     level=logging.INFO,
@@ -792,6 +792,8 @@ from age_badge import draw_quality_age_badge, draw_quality_corner_bookmark, draw
 from landscape import build_landscape
 from awards import dominant_frost_rgb
 from awards import FETCH_FAILED, _RateLimited, draw_award_badge, draw_award_sash, parse_mdblist_awards, reconcile_cached_awards
+from awards import _SIDE_MARGIN as awards_side_margin, side_chip_band, _notch_heights as notch_heights
+import graphic_badges
 import awards as _awards_mod
 if not _awards_mod._HAS_SKIA:
     # Still correct, just ~3x slower per sash — worth saying once, since the
@@ -872,7 +874,7 @@ from ratings import (
     _score_color_alt,
     _score_color_metal,
 )
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, TEXT_FORWARD_PRIORITIES as _TEXT_FORWARD_LOGO_PRIORITIES, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, IdResolveError, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, TEXT_FORWARD_PRIORITIES as _TEXT_FORWARD_LOGO_PRIORITIES, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, IdResolveError, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path
 # How long a poster rendered while its trending list was unreadable is kept:
 # the same as that list's retry cooldown.
 from tmdb import _TRENDING_SOURCE_RETRY_SECS as _TRENDING_UNREAD_TTL
@@ -1514,6 +1516,11 @@ class RequestConfig:
     badge_anchor_y:          float = field(default_factory=lambda: _cfg.BADGE_ANCHOR_Y_RATIO)
     badge_min_score:          int  = 2
     combined_badge_stacked:   bool = False
+    # Graphic badge groups (badge_display_mode 7), "anchor:max:slot,slot" — see
+    # graphic_badges.parse_group.  Stored in canonical spelling, "" for off.
+    badge_group1:             str  = graphic_badges.DEFAULT_GROUP1
+    badge_group2:             str  = ""
+    badge_group3:             str  = ""
 
     movie_weights: dict | None = None
     tv_weights:    dict | None = None
@@ -1649,6 +1656,7 @@ class RequestConfig:
     sash_badge: bool = False              # legacy; superseded by sash_mode (kept for back-compat parsing)
     sash_mode: str = "sash"               # "sash" (diagonal) | "notch"
     sash_badge_style:  str   = "frosted" # "silver" | "gold" | "frosted"
+    sash_badge_pos:    str   = "center"  # frosted only: "center" | "left" | "right" | "auto" | "auto_hug"
     sash_badge_size_w: float = 1.05      # horizontal scale of badge
     sash_badge_size_h: float = 1.05      # vertical scale of badge
     sash_badge_inset: float = 0.0          # top-edge offset as fraction of poster height (± small)
@@ -1910,6 +1918,29 @@ def _parse_sash_priority(raw: str | None) -> list[str]:
     return active
 
 
+_QUALITY_BADGE_MODES = (1, 2, 4, 5, 6)
+
+
+def _uses_quality(cfg: "RequestConfig") -> bool:
+    """Whether this request draws anything from stream quality — and so is
+    worth fetching, waiting for or holding the composite back over.  Graphic
+    badges only count when a group shows a quality badge: certificate, network
+    and studio come from TMDB alone."""
+    if cfg.badge_display_mode in _QUALITY_BADGE_MODES:
+        return True
+    return cfg.badge_display_mode == 7 and graphic_badges.groups_use_quality(
+        cfg.badge_group1, cfg.badge_group2, cfg.badge_group3)
+
+
+def _sash_holds_left(cfg: "RequestConfig") -> bool:
+    """Whether the sash or notch occupies the top-left corner, so a Corner
+    Bookmark quality badge should take the top right instead."""
+    if cfg.sash_mode == "sash":
+        return cfg.sash_side == "left"
+    return (cfg.sash_mode == "notch" and cfg.sash_badge_style == "frosted"
+            and cfg.sash_badge_pos == "left")
+
+
 def _render_config_signature(cfg: "RequestConfig") -> str:
     """Canonical text of everything a render takes from its URL, for the
     composite cache key.
@@ -2078,6 +2109,9 @@ def build_request_config(params: dict) -> RequestConfig:
     _style_raw = params.get("sash_badge_style", cfg.sash_badge_style)
     if _style_raw in ("silver", "gold", "frosted", "black"):
         cfg.sash_badge_style = _style_raw
+    _pos_raw = (params.get("sash_badge_pos") or "").strip().lower()
+    if _pos_raw in ("center", "left", "right", "auto", "auto_hug"):
+        cfg.sash_badge_pos = _pos_raw
     cfg.sash_length_ratio       = _f("sash_length_ratio",      cfg.sash_length_ratio,      0.8, 1.5)
     cfg.sash_height_ratio       = _f("sash_height_ratio",      cfg.sash_height_ratio,      0.06, 0.20)
     _side_raw = (params.get("sash_side") or "").strip().lower()
@@ -2087,7 +2121,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.greyscale_no_quality    = _b("greyscale_no_quality",    cfg.greyscale_no_quality)
     cfg.score_color_mode        = _i("score_color_mode",       cfg.score_color_mode,       0,   3)
     cfg.score_custom_palette    = parse_custom_score_palette(params.get("score_custom_palette"))
-    cfg.badge_display_mode      = _i("badge_display_mode",     cfg.badge_display_mode,     0,   6)
+    cfg.badge_display_mode      = _i("badge_display_mode",     cfg.badge_display_mode,     0,   7)
     cfg.rating_display_mode     = _i("rating_display_mode",    cfg.rating_display_mode,    0,   4)
 
     if "show_quality_badges" in params and "badge_display_mode" not in params:
@@ -2164,6 +2198,9 @@ def build_request_config(params: dict) -> RequestConfig:
                                   _i("combined_badge_min_score", cfg.badge_min_score, 2, 6),
                                   2, 6)
     cfg.combined_badge_stacked   = _b("combined_badge_stacked",   cfg.combined_badge_stacked)
+    for _gname in ("badge_group1", "badge_group2", "badge_group3"):
+        if _gname in params:
+            setattr(cfg, _gname, graphic_badges.format_group(graphic_badges.parse_group(params[_gname])))
 
     all_sources = list(_cfg.MOVIE_WEIGHTS.keys())
     cfg.movie_weights = _parse_weights(params.get("movie_weights"), all_sources)
@@ -3260,9 +3297,20 @@ def build_poster(
     age_rating: int | None = None,
     no_poster: bool = False,
     has_burned_in_text: bool = False,
+    certification: str | None = None,
+    badge_logos: tuple = (None, None),   # (network, studio) graphic_badges.Logo, or None each
 ) -> Image.Image:
 
     width, height = image.size
+
+    # An "auto" notch takes its side from where the graphic badges go, so
+    # resolve it before anything reads the position.
+    # "auto" spreads the chip's group across to the corner; "auto_hug" keeps it
+    # against the chip, leaving the corner to whatever the client draws there.
+    _auto_notch = {"auto": "spread", "auto_hug": "hug"}.get(cfg.sash_badge_pos)
+    if _auto_notch:
+        cfg = dataclasses.replace(cfg, sash_badge_pos=_auto_notch_pos(
+            cfg, quality_tokens or [], certification, age_rating, badge_logos))
 
     # Greyscale the base art to flag "not available".  Overlays drawn afterwards
     # (sashes, badges, ratings, logo) stay in colour.  Two independent triggers:
@@ -3278,7 +3326,8 @@ def build_poster(
     if (_cinema_grey and cfg.cinema_greyscale_skip_if_available and quality_tokens
             and any(t in ("WEBDL", "REMUX") for t in quality_tokens)):
         _cinema_grey = False
-    _noquality_grey = (cfg.greyscale_no_quality and cfg.wait_for_quality and not quality_tokens)
+    _noquality_grey = (cfg.greyscale_no_quality and cfg.wait_for_quality and not quality_tokens
+                       and _uses_quality(cfg))
     _greyscaled = _cinema_grey or _noquality_grey
     if _greyscaled:
         image = ImageOps.grayscale(image).convert("RGBA")
@@ -3522,6 +3571,13 @@ def build_poster(
     # --- Badge / quality overlay ---
     mode   = cfg.badge_display_mode
     tokens = quality_tokens or []
+    # A frosted notch on the left owns that corner, and these modes are all
+    # anchored from the left.  Draw them on a clear layer and set the result
+    # the same distance in from the right instead: none of them sample the
+    # poster, so the layer holds exactly what they would have drawn.
+    _mirror_quality = (mode in (1, 2, 3, 4, 5) and cfg.sash_mode == "notch"
+                       and _sash_holds_left(cfg))
+    _qtarget = Image.new("RGBA", image.size, (0, 0, 0, 0)) if _mirror_quality else image
 
     if mode == 1:
         # If quality is below the threshold, strip the quality tokens so the
@@ -3532,7 +3588,7 @@ def build_poster(
             else []
         )
         draw_quality_age_badge(
-            image,
+            _qtarget,
             age_rating,
             _tokens_1,
             anchor_x_ratio=cfg.badge_anchor_x,
@@ -3543,7 +3599,7 @@ def build_poster(
     elif mode == 3:
         # Age rating only — always silver, no quality dependency
         draw_quality_age_badge(
-            image,
+            _qtarget,
             age_rating,
             [],
             anchor_x_ratio=cfg.badge_anchor_x,
@@ -3556,7 +3612,7 @@ def build_poster(
         # Accent bar — small vertical pill in tier colour, no text
         if not tokens or _score_points(tokens) >= cfg.badge_min_score:
             draw_tier_bar(
-                image,
+                _qtarget,
                 tokens,
                 anchor_x_ratio=cfg.badge_anchor_x,
                 anchor_y_ratio=cfg.badge_anchor_y,
@@ -3565,14 +3621,14 @@ def build_poster(
 
     elif mode == 6:
         # Corner bookmark — top-left and coloured by tier, unless a left-hand
-        # diagonal sash owns that corner.  Decided by the config, not by whether
+        # diagonal sash or frosted chip owns that corner.  Decided by the config, not by whether
         # this title drew a sash, so the mark doesn't hop corners across a row.
         if not tokens or _score_points(tokens) >= cfg.badge_min_score:
             draw_quality_corner_bookmark(
-                image,
+                _qtarget,
                 tokens,
                 bookmark_size=cfg.badge_height,
-                side="right" if cfg.sash_mode == "sash" and cfg.sash_side == "left" else "left",
+                side="right" if _sash_holds_left(cfg) else "left",
             )
 
     elif mode == 2:
@@ -3589,7 +3645,7 @@ def build_poster(
             ]
 
             render_badges_left(
-                image, badge_items,
+                _qtarget, badge_items,
                 x_start=bx, y_top=by,
                 badge_height=cfg.badge_height,
                 badge_gap=cfg.badge_gap,
@@ -3597,13 +3653,28 @@ def build_poster(
 
     elif mode == 5:
         _draw_combined_text_badge(
-            image, tokens,
+            _qtarget, tokens,
             x=int(width  * cfg.badge_anchor_x),
             y=int(height * cfg.badge_anchor_y),
             font_size=cfg.badge_height,
             min_score=cfg.badge_min_score,
             stacked=cfg.combined_badge_stacked,
         )
+
+    if _mirror_quality and (_qbox := _qtarget.getbbox()) is not None:
+        _ql, _qt, _qr, _qb = _qbox
+        image.alpha_composite(_qtarget.crop(_qbox), (width - _qr, _qt))
+
+    # The graphic badge groups place themselves in whatever the logo, rating
+    # and sash leave free, found by comparing the canvas before and after them.
+    _before_overlays = np.array(image) if cfg.badge_display_mode == 7 else None
+    # Groups placed above or below the logo need to know where it landed,
+    # which varies with each logo's shape — measured by what the logo step
+    # changed rather than re-derived from composite_logo's sizing rules.
+    _logo_groups = _before_overlays is not None and any(
+        g.anchor in graphic_badges.LOGO_ANCHORS
+        for g in graphic_badges.resolve_groups(cfg.badge_group1, cfg.badge_group2, cfg.badge_group3))
+    _before_logo = image.copy() if _logo_groups else None
 
     # --- Logo / fallback title ---
     if logo:
@@ -3798,6 +3869,11 @@ def build_poster(
                 logo_y = int(centre_y - text_layer.height / 2)
             image.paste(text_layer, (logo_x, logo_y), text_layer)
 
+
+    _logo_box = None
+    if _before_logo is not None:
+        _changed = ImageChops.difference(_before_logo.convert("RGB"), image.convert("RGB")).convert("L")
+        _logo_box = _changed.point(lambda v: 255 if v > 12 else 0).getbbox()
 
     # --- Frosted tint colour -------------------------------------------------
     # Every frosted element (rating bar, notch badge, poster-coloured sash) tints
@@ -4188,7 +4264,8 @@ def build_poster(
                                      frost_reference=_frost_ref,
                                      tint_rgb=_frost_tint,
                                      star=_is_star,
-                                     text_color=cfg.sash_text_color)
+                                     text_color=cfg.sash_text_color,
+                                     position=cfg.sash_badge_pos)
         else:  # "sash" — diagonal
             _poster_color = _frost_tint if cfg.sash_poster_color else None
             image = draw_award_sash(image, _label_tr, sash_type=sash_type, muted=cfg.muted,
@@ -4201,7 +4278,298 @@ def build_poster(
                                     text_color=cfg.sash_text_color,
                                     side=cfg.sash_side)
 
+    # --- Graphic badge groups ---
+    # Drawn last because they lay themselves out around everything else.
+    if _before_overlays is not None:
+        _draw_graphic_badges(image, cfg, quality_tokens or [], certification, age_rating,
+                             _before_overlays, spread_beside_chip=_auto_notch, logo_box=_logo_box,
+                             logos=badge_logos)
+
     return image
+
+
+# How far a group may move off its anchor's line to find room, as a fraction
+# of the poster's height: down from the top, up from the bottom.
+_GROUP_SEARCH = {"top": 0.20, "bottom": 0.30}
+# A pixel the overlays changed by more than this (summed over RGB) is taken.
+_OCCUPIED_DELTA = 30
+
+
+def _occupied_cols(now: np.ndarray, before: np.ndarray, y0: int, y1: int) -> np.ndarray:
+    """Columns of rows y0..y1 the overlays drew on since ``before`` — the
+    logo, rating, sash and any group already placed.  Only the rows a group
+    is trying are compared: the whole canvas is ~13 ms, a band ~0.5 ms."""
+    band = now[y0:y1, :, :3].astype(np.int16) - before[y0:y1, :, :3]
+    return (np.abs(band).sum(axis=2) > _OCCUPIED_DELTA).any(axis=0)
+
+
+def _group_anchor(cfg: "RequestConfig", anchor: str) -> tuple[bool, bool]:
+    """(top, right) for a group anchor.  "chip" is the top corner the sash or
+    chip leaves free: opposite a side chip or diagonal sash, else top right."""
+    if anchor != "chip":
+        return anchor[0] == "t", anchor[1] == "r"
+    if cfg.sash_mode == "notch" and cfg.sash_badge_style == "frosted" and cfg.sash_badge_pos == "right":
+        return True, False
+    if cfg.sash_mode == "sash":
+        return True, cfg.sash_side == "left"
+    return True, True
+
+
+def _auto_notch_pos(cfg: "RequestConfig", tokens: list[str], certification: str | None,
+                    age_rating: int | None, logos: tuple = (None, None)) -> str:
+    """Where an "auto" notch goes on this title: beside the graphic badges
+    along the top when there are any — to the right of a top-left group, the
+    left of a top-right one (or of a "chip" group, which then takes the right)
+    — and centred when the top carries none, so the poster doesn't look empty.
+    Only the frosted notch has side positions."""
+    if not (cfg.sash_mode == "notch" and cfg.sash_badge_style == "frosted"
+            and cfg.badge_display_mode == 7):
+        return "center"
+    show_quality = bool(tokens) and _score_points(tokens) >= cfg.badge_min_score
+    left = right = beside = False
+    for group in graphic_badges.resolve_groups(cfg.badge_group1, cfg.badge_group2, cfg.badge_group3):
+        # Whether it draws anything is all that matters here; any size will do.
+        if not graphic_badges.row_items(tokens, certification, age_rating, 20,
+                                        group.slots, show_quality, *logos)[:group.max_items]:
+            continue
+        if group.xy is not None:
+            # A custom group only counts if it sits up in the notch's band.
+            if group.xy[1] < 0.15:
+                left, right = left or group.xy[0] < 0.5, right or group.xy[0] >= 0.5
+        elif group.anchor == "tl":
+            left = True
+        elif group.anchor == "tr":
+            right = True
+        elif group.anchor == "chip":
+            beside = True
+    if left and right:
+        return "center"
+    if left:
+        return "right"
+    if right or beside:
+        return "left"
+    return "center"
+
+
+def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[str],
+                         certification: str | None, age_rating: int | None,
+                         before: np.ndarray, spread_beside_chip: str | None = None,
+                         logo_box: tuple[int, int, int, int] | None = None,
+                         logos: tuple = (None, None)) -> None:
+    """Each graphic badge group as a row at its anchor, in the space the other
+    overlays left.
+
+    ``spread_beside_chip`` (an auto notch that became a side chip) lays a
+    "chip" group out from the chip instead: "spread" fills the space beside
+    it — equal gaps from the chip to each badge, the last on the margin, the
+    group's spacing then only the least they may be — and "hug" starts the
+    row right against the chip at the group's spacing, growing outwards, so
+    the far corner stays clear for the badges clients draw there.
+
+    Top groups sit on the side chip's centre line (the notch's own line when
+    it is centred), bottom groups on the bottom margin.  Where the corner is
+    taken, a group slides away from the edge until its first badge fits;
+    whatever doesn't fit beside that is dropped from the end of the group."""
+    width, height = image.size
+    margin = int(width * awards_side_margin)
+    # Kept from the chip, the rating and other groups; fixed, so packing a
+    # group's badges tight doesn't also push it up against its neighbours.
+    clear = int(width * 0.028)
+    show_quality = bool(tokens) and _score_points(tokens) >= cfg.badge_min_score
+
+    band_top, band_h = side_chip_band(width, height, cfg.sash_badge_size_h, cfg.sash_badge_font_ratio,
+                                      cfg.sash_badge_pad, cfg.sash_badge_inset)
+    top_line = band_top + band_h / 2
+    if cfg.sash_mode == "notch" and not (cfg.sash_badge_style == "frosted"
+                                          and cfg.sash_badge_pos in ("left", "right")):
+        # A centred notch hangs from the top edge; share its line.
+        _, badge_h, _, _ = notch_heights(height, cfg.sash_badge_size_h, cfg.sash_badge_font_ratio,
+                                         cfg.sash_badge_pad)
+        notch_y = max(-badge_h, int(height * cfg.sash_badge_inset))
+        top_line = (max(0, notch_y) + notch_y + badge_h) / 2
+
+    groups = graphic_badges.resolve_groups(cfg.badge_group1, cfg.badge_group2, cfg.badge_group3)
+    for group in groups:
+        g_unit = max(8, round(group.size * 1.5 * height / 750))
+        g_gap = int(width * group.spacing)
+        items = graphic_badges.row_items(tokens, certification, age_rating, g_unit,
+                                         group.slots, show_quality, *logos)[:group.max_items]
+        if not items:
+            continue
+        if group.xy is not None:
+            _draw_custom_group(image, items, group.xy, group.align, g_gap)
+            continue
+        now = np.asarray(image)
+        if group.anchor in graphic_badges.LOGO_ANCHORS:
+            _draw_logo_group(image, now, before, items, group.anchor, logo_box,
+                             margin, clear, g_gap, g_unit)
+            continue
+        half = max(im.height for _, im in items) / 2 + clear / 2
+
+        def band_cols(cy: float) -> np.ndarray:
+            return _occupied_cols(now, before, max(0, int(cy - half)), min(height, int(cy + half) + 1))
+
+        top, right = _group_anchor(cfg, group.anchor)
+        beside_chip = (spread_beside_chip and group.anchor == "chip" and cfg.sash_mode == "notch"
+                       and cfg.sash_badge_pos in ("left", "right"))
+        if (beside_chip and spread_beside_chip == "hug"
+                and _hug_chip(image, items, band_cols(top_line), right, top_line, margin, g_gap)):
+            continue
+        if (beside_chip and spread_beside_chip == "spread"
+                and _spread_beside_chip(
+                    image,
+                    lambda unit, _g=group: graphic_badges.row_items(
+                        tokens, certification, age_rating, unit, _g.slots, show_quality,
+                        *logos)[:_g.max_items],
+                    band_cols(top_line), right, top_line, margin, g_gap,
+                    unit=g_unit, max_unit=band_h)):
+            continue
+        start = top_line if top else height - margin - g_unit / 2
+        limit = height * _GROUP_SEARCH["top" if top else "bottom"]
+        step = max(2, g_unit // 3)
+        offset = 0.0
+        while offset <= limit:
+            cy = start + offset if top else start - offset
+            budget = graphic_badges.free_run(band_cols(cy), right, margin) - clear
+            fitted = graphic_badges.fit(items, budget, g_gap)
+            if fitted:
+                row_w = graphic_badges.row_width(fitted, g_gap)
+                graphic_badges.draw_row(image, fitted, center_y=cy, gap=g_gap,
+                                        left_x=width - margin - row_w if right else margin)
+                break
+            offset += step
+
+
+def _draw_logo_group(image: Image.Image, now: np.ndarray, before: np.ndarray, items: list,
+                     anchor: str, logo_box: tuple[int, int, int, int] | None,
+                     margin: int, clear: int, gap: int, unit_h: int) -> None:
+    """A group centred on the logo, just above or just below it.  Where that
+    line is taken (the rating under the logo, say), it moves further away —
+    up for above, down for below — and drops badges that still don't fit.
+    With no logo drawn (original art carries its own title) it sits at the
+    bottom, centred."""
+    width, height = image.size
+    row_h = max(im.height for _, im in items)
+    half = row_h / 2 + clear / 2
+    if logo_box is None:
+        cx, start, direction = width / 2, height - margin - row_h / 2, -1
+    else:
+        cx = (logo_box[0] + logo_box[2]) / 2
+        if anchor == "above_logo":
+            start, direction = logo_box[1] - clear - row_h / 2, -1
+        else:
+            start, direction = logo_box[3] + clear + row_h / 2, 1
+    step = max(2, unit_h // 3)
+    cy = start
+    while row_h / 2 <= cy <= height - row_h / 2:
+        cols = _occupied_cols(now, before, max(0, int(cy - half)), min(height, int(cy + half) + 1))
+        # The widest row centred on the logo that meets nothing either side.
+        c = int(round(cx))
+        reach = min(graphic_badges.free_run(cols[:c], right=True, margin=0),
+                    graphic_badges.free_run(cols[c:], right=False, margin=0),
+                    c - margin, width - margin - c)
+        fitted = graphic_badges.fit(items, 2 * reach - 2 * clear, gap)
+        if fitted:
+            row_w = graphic_badges.row_width(fitted, gap)
+            graphic_badges.draw_row(image, fitted, gap=gap, center_y=cy,
+                                    left_x=int(round(cx - row_w / 2)))
+            return
+        cy += direction * step
+
+
+def _hug_chip(image: Image.Image, items: list, cols: np.ndarray, right: bool,
+              center_y: float, margin: int, gap: int) -> bool:
+    """A group started right against the side chip, one ``gap`` off it, and
+    growing away from it — badges that would run past the far margin drop from
+    the end.  False (the usual layout) when no chip was drawn on this poster."""
+    width = image.width
+    free = graphic_badges.free_run(cols, right, margin)
+    if free >= width - 2 * margin:
+        return False
+    fitted = graphic_badges.fit(items, free - gap, gap)
+    if not fitted:
+        return False
+    row_w = graphic_badges.row_width(fitted, gap)
+    chip_edge = width - margin - free if right else margin + free
+    left_x = chip_edge + gap if right else chip_edge - gap - row_w
+    graphic_badges.draw_row(image, fitted, left_x=int(left_x), center_y=center_y, gap=gap)
+    return True
+
+
+# How far a group beside an auto chip may shrink below its set size before it
+# starts dropping badges instead, and grow above it where there's room.  Growth
+# is kept modest so badges in a catalog row stay close to one size, and never
+# outgrows the chip itself.
+_SPREAD_MIN_SCALE = 0.7
+_SPREAD_MAX_SCALE = 1.2
+
+
+def _spread_beside_chip(image: Image.Image, build, cols: np.ndarray, right: bool,
+                        center_y: float, margin: int, min_gap: int,
+                        unit: int, max_unit: int) -> bool:
+    """Fill the space between the side chip and the far margin with the
+    group: badges sized to take up that space — grown up to _SPREAD_MAX_SCALE
+    of the group's size (and never past the chip's height) where there's room,
+    shrunk to _SPREAD_MIN_SCALE before any is dropped where there isn't — then
+    laid out with the
+    same gap before each, the last one on the margin.
+
+    ``build(unit)`` makes the group's items at a row height.  False — leaving
+    the group to the usual layout — when there's no chip on this poster (no
+    label drew one) or not even the first badge fits at the smallest size."""
+    width = image.width
+    free = graphic_badges.free_run(cols, right, margin)
+    if free >= width - 2 * margin:
+        return False
+    lo = max(8, round(unit * _SPREAD_MIN_SCALE))
+    hi = max(lo, min(round(unit * _SPREAD_MAX_SCALE), max(unit, max_unit)))
+    items = build(unit)
+    count = len(items)
+    while count:
+        # Every badge needs at least min_gap before it, the first included,
+        # so that much of the space is spoken for; the badges get the rest.
+        room = free - count * min_gap
+        base = sum(im.width for _, im in items[:count])
+        size = max(lo, min(hi, int(unit * room / base))) if base else lo
+        # Widths don't scale exactly with height (box padding, rounding), so
+        # step down until the set really fits.
+        while size >= lo:
+            fitted = build(size)[:count]
+            if sum(im.width for _, im in fitted) <= room:
+                break
+            size -= 1
+        else:
+            count -= 1
+            continue
+        total = sum(im.width for _, im in fitted)
+        gap = (free - total) / count
+        x = (width - margin - free + gap) if right else margin
+        for _, im in fitted:
+            graphic_badges.draw_row(image, [("", im)], left_x=int(round(x)), center_y=center_y, gap=0)
+            x += im.width + gap
+        return True
+    return False
+
+
+def _draw_custom_group(image: Image.Image, items: list, xy: tuple[float, float],
+                       align: str, gap: int) -> None:
+    """A group at a custom position: exactly where it was put, whatever is
+    there (that is the point of placing it by hand — to dodge something the
+    client draws, which the canvas can't see).  ``align`` puts the row's left
+    edge, centre or right edge at x.  Badges drop from the end only where the
+    row would run off the poster."""
+    width, height = image.size
+    px, cy = xy[0] * width, xy[1] * height
+    budget = {"l": width - px, "r": px}.get(align, width)
+    fitted = graphic_badges.fit(items, int(budget), gap)
+    if not fitted:
+        return
+    row_w = graphic_badges.row_width(fitted, gap)
+    left = {"l": px, "r": px - row_w}.get(align, px - row_w / 2)
+    half_h = max(im.height for _, im in fitted) / 2
+    graphic_badges.draw_row(image, fitted, gap=gap,
+                            left_x=int(round(min(max(0, left), width - row_w))),
+                            center_y=min(max(half_h, cy), height - half_h))
 
 
 # ---------------------------------------------------------------------------
@@ -7088,8 +7456,12 @@ async def get_poster(
         # slow source turned every request into a fresh render.
         _is_landscape = rcfg.shape == "landscape"
 
+        # Nothing on this poster shows quality (no badges, age rating only, or
+        # graphic badges limited to certificate / network / studio): no fetch,
+        # no wait, and nothing pending to keep the composite out of the cache.
+        _wants_quality = _uses_quality(rcfg)
         quality_needs_fetch = (
-            rcfg.badge_display_mode in (1, 2, 4, 5, 6)
+            _wants_quality
             and not quality
             and quality_id is not None
             and cached_tokens is None
@@ -7099,7 +7471,8 @@ async def get_poster(
         )
 
         quality_pending = bool(
-            _quality_cooldown_active
+            _wants_quality
+            and _quality_cooldown_active
             and quality_id is not None
             and cached_tokens is None
             and not _is_landscape
@@ -8335,6 +8708,24 @@ async def get_poster(
         )
 
         _render_cfg = dataclasses.replace(rcfg, hide_rating=True) if _hide_unreleased else rcfg
+
+        # Graphic badges: the Commons marks (fetched once per instance), and
+        # the title's US certificate, network and studio (one TMDB call per
+        # title per month; each logo downloaded once).
+        if rcfg.badge_display_mode == 7 and not _is_landscape:
+            await graphic_badges.ensure_assets(client)
+            # An anime request with a mapped TMDB id gets them too; the anime
+            # id standing in for a missing one is rejected by the fetcher.
+            if has_tmdb_id:
+                _facts = await fetch_badge_facts(client, tmdb_id, type, effective_tmdb_key)
+                _bp_args["certification"] = (_facts or {}).get("cert") or None
+                _network, _studio, _streamer = graphic_badges.pick_logos(_facts, type)
+                if _streamer is not None:
+                    _path = await fetch_network_logo_path(client, _streamer, effective_tmdb_key)
+                    _network = graphic_badges.Logo("network", _streamer, _path) if _path else None
+                await asyncio.gather(graphic_badges.ensure_logo(client, _network),
+                                     graphic_badges.ensure_logo(client, _studio))
+                _bp_args["badge_logos"] = (_network, _studio)
 
         def _composite_and_encode() -> bytes:
             _render = build_landscape if _is_landscape else build_poster

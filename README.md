@@ -142,3 +142,5 @@ If you'd like to support development: [Ko-fi](https://ko-fi.com/umbraprojects).
 ## License
 
 [GNU Affero General Public License v3.0](LICENSE). This project and any forks of it should remain open source.
+
+The Graphic Badges mode downloads its marks from Wikimedia Commons at runtime; none ship with PostersPlus. Dolby Vision, Dolby Atmos and the combined Vision • Atmos mark are built from [Dolby Vision 2021 logo.svg](https://commons.wikimedia.org/wiki/File:Dolby_Vision_2021_logo.svg) and [Dolby Cinema 2021 logo.svg](https://commons.wikimedia.org/wiki/File:Dolby_Cinema_2021_logo.svg) (public domain). The DTS:X mark is [DTS X B&W.png](https://commons.wikimedia.org/wiki/File:DTS_X_B%26W.png) by CinemaLover24680, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), cut to its "dts" letters and recoloured white. Dolby, Dolby Vision, Dolby Atmos and DTS:X are trademarks of their owners.

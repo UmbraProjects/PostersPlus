@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Notch on the side, and graphic quality badges
+
+- The frosted notch can sit to one side (`sash_badge_pos=left|right`, the
+  Position setting in the configurator), or choose per poster (`auto`): beside
+  the graphic badges when a title has some along the top, centred when not;
+  `auto_hug` keeps those badges against the chip, clear of the corner. It becomes a rounded chip floating
+  in from that top corner, sized to its label, which leaves the middle of the
+  top edge free. With it on the left, quality and age badges move to the top
+  right.
+- New quality mode, **Graphic Badges** (`badge_display_mode=7`): Dolby Vision,
+  Dolby Atmos, DTS:X, HDR, resolution and the US certificate in up to three
+  groups. Each group has its own size, spacing and anchor (beside the chip,
+  any corner, above or below the logo, or a custom position for dodging badges a client draws), a maximum
+  number of badges and its own list order; it uses whatever space the logo,
+  rating and sash leave, moving off a taken corner rather than overlapping
+  it. When Dolby Vision and Atmos share a group they share one combined mark.
+  Network and studio badges show a TV show's network, or the curated studio
+  that made a film, as white marks from TMDB's logos. A layout with only the
+  certificate, network and studio never touches the quality source.
+- A poster that shows no quality at all is no longer held out of the cache
+  while the quality source is backing off. The Dolby and DTS:X artwork is fetched once from Wikimedia Commons
+  (see README for credits); the certificate is one TMDB call per title per
+  month.
+
 ### Backdrop crops find close-up faces
 
 - When no face is found in a backdrop, it is checked again at half size. The

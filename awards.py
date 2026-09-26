@@ -1561,6 +1561,60 @@ def _notch_label_layer_1x(label: str, size_ss: int, ss: int, w: int, h: int,
     return layer
 
 
+@lru_cache(maxsize=32)
+def _notch_heights(height: int, size_ratio_h: float, font_size_ratio: float,
+                   notch_pad_ratio: float) -> tuple[int, int, int, int]:
+    """(base_h, badge_h, min_badge_h, font_size_ss) for a notch on a poster
+    this tall.  Depends only on sizes, never on the label, so the side chip's
+    height (and the graphic badge row that lines up with it) is known without
+    drawing anything."""
+    SS = 3
+    # base_h is the nominal height size_ratio_h asks for.  It drives the font
+    # size and the horizontal padding; notch_pad_ratio then scales only the
+    # *drawn* height around that already-sized text.  Keeping the two separate
+    # is what lets padding tighten without shrinking the label or narrowing the
+    # badge — changing size_ratio_h alone moves both, which is rarely wanted.
+    base_h = int(height * 0.075 * size_ratio_h)
+    font_size_ss = int(base_h * font_size_ratio) * SS
+    font = _notch_font(font_size_ss)
+    _tmp_d = ImageDraw.Draw(Image.new("L", (1, 1)))
+
+    # Vertical padding.  Floored so an aggressive notch_pad_ratio crops the empty
+    # space but never the glyphs.  _text_center places the line box at
+    # bh/2 - (ascent+descent)/2 - descent + int(ascent*0.22), so ink spans
+    # bh/2 + _k + bbox[1] .. bh/2 + _k + bbox[3]; solving both ends for [0, bh]
+    # gives the smallest height that still fits.  Measured against a reference
+    # string of the tallest and deepest glyphs rather than the label itself, so
+    # every award trims to the same height (cf. _REF in ratings.py) while
+    # accented capitals still clear the border.
+    _PAD_REF = "ÅÄÖÜÀÁÉÓÊÎÑÇgjpqy0★"
+    _ref_bbox = _tmp_d.textbbox((0, 0), _PAD_REF, font=font)
+    try:
+        _ascent, _descent = font.getmetrics()
+    except AttributeError:
+        _ascent, _descent = 0, 0  # matches _text_center's own fallback
+    _k = -(_ascent + _descent) / 2 - _descent + int(_ascent * 0.22)
+    _ink_h_ss = max(-2 * (_k + _ref_bbox[1]), 2 * (_k + _ref_bbox[3]))
+    _min_badge_h = math.ceil(_ink_h_ss * 1.05 / SS)  # 5% keeps ink off the border
+    # The floor may only ever tighten the notch, never grow it past the height
+    # the size and font ratios already asked for.  Without this clamp a
+    # font_size_ratio above ~0.78 would raise badge_h even at the 1.0 default,
+    # re-rendering saved URLs that predate this control.
+    _min_badge_h = min(_min_badge_h, base_h)
+    badge_h = max(_min_badge_h, int(base_h * notch_pad_ratio))
+    return base_h, badge_h, _min_badge_h, font_size_ss
+
+
+def side_chip_band(width: int, height: int, size_ratio_h: float = 1.0,
+                   font_size_ratio: float = 0.43, notch_pad_ratio: float = 1.0,
+                   notch_inset: float = 0.0) -> tuple[int, int]:
+    """(top, height) of the frosted side chip's row on this poster — where
+    draw_award_badge(position="left"/"right") puts it, label or not."""
+    _, badge_h, min_badge_h, _ = _notch_heights(height, size_ratio_h, font_size_ratio, notch_pad_ratio)
+    h = max(min_badge_h, int(badge_h * _CHIP_H))
+    return int(width * _SIDE_MARGIN) + int(height * notch_inset), h
+
+
 def draw_award_badge(
     image: Image.Image,
     label: str,
@@ -1577,9 +1631,15 @@ def draw_award_badge(
     tint_rgb: tuple[float, float, float] | None = None,  # whole-poster colour (from un-graded art)
     star: bool | None = None,         # override ★ decision (resolved on canonical label)
     text_color: tuple[int, int, int] | None = None,  # override default white text
+    position: str = "center",         # "center" | "left" | "right"
 ) -> Image.Image:
     """
     Centred notch badge that emerges from the top edge of the poster.
+
+    ``position`` (frosted only) moves it off centre to free the middle of the
+    top edge: left/right float a fully rounded chip in from that corner, sized
+    to the label rather than the notch's minimum width.  Other styles always
+    draw centred.
     Always horizontally centred; notch_inset nudges it up/down so users
     can control whether the top border is hidden or visible in their client.
 
@@ -1638,46 +1698,15 @@ def draw_award_badge(
         label = f"★  {label}"
 
     # ── Dimensions ───────────────────────────────────────────────────────────
-    # base_h is the nominal height size_ratio_h asks for.  It drives the font
-    # size and the horizontal padding; notch_pad_ratio then scales only the
-    # *drawn* height around that already-sized text.  Keeping the two separate
-    # is what lets padding tighten without shrinking the label or narrowing the
-    # badge — changing size_ratio_h alone moves both, which is rarely wanted.
-    base_h = int(height * 0.075 * size_ratio_h)
-
-    # ── Font: fixed size so every label renders at the same scale ────────────
-    font_size_ss = int(base_h * font_size_ratio) * SS
+    # Heights come from _notch_heights (see there); the width depends on the label.
+    base_h, badge_h, _min_badge_h, font_size_ss = _notch_heights(
+        height, size_ratio_h, font_size_ratio, notch_pad_ratio)
     font = _notch_font(font_size_ss)
 
-    # Measure rendered text at SS resolution — the ink extents drive both the
-    # badge width and the vertical padding floor below.
-    _tmp_d  = ImageDraw.Draw(Image.new("L", (1, 1)))
-    _tbbox  = _tmp_d.textbbox((0, 0), label, font=font)
+    # Measure rendered text at SS resolution — the ink extents drive the width.
+    _tbbox  = ImageDraw.Draw(Image.new("L", (1, 1))).textbbox((0, 0), label, font=font)
     text_w_ss = int(_tbbox[2] - _tbbox[0])
 
-    # Vertical padding.  Floored so an aggressive notch_pad_ratio crops the empty
-    # space but never the glyphs.  _text_center places the line box at
-    # bh/2 - (ascent+descent)/2 - descent + int(ascent*0.22), so ink spans
-    # bh/2 + _k + bbox[1] .. bh/2 + _k + bbox[3]; solving both ends for [0, bh]
-    # gives the smallest height that still fits.  Measured against a reference
-    # string of the tallest and deepest glyphs rather than the label itself, so
-    # every award trims to the same height (cf. _REF in ratings.py) while
-    # accented capitals still clear the border.
-    _PAD_REF = "ÅÄÖÜÀÁÉÓÊÎÑÇgjpqy0★"
-    _ref_bbox = _tmp_d.textbbox((0, 0), _PAD_REF, font=font)
-    try:
-        _ascent, _descent = font.getmetrics()
-    except AttributeError:
-        _ascent, _descent = 0, 0  # matches _text_center's own fallback
-    _k = -(_ascent + _descent) / 2 - _descent + int(_ascent * 0.22)
-    _ink_h_ss = max(-2 * (_k + _ref_bbox[1]), 2 * (_k + _ref_bbox[3]))
-    _min_badge_h = math.ceil(_ink_h_ss * 1.05 / SS)  # 5% keeps ink off the border
-    # The floor may only ever tighten the notch, never grow it past the height
-    # the size and font ratios already asked for.  Without this clamp a
-    # font_size_ratio above ~0.78 would raise badge_h even at the 1.0 default,
-    # re-rendering saved URLs that predate this control.
-    _min_badge_h = min(_min_badge_h, base_h)
-    badge_h = max(_min_badge_h, int(base_h * notch_pad_ratio))
     bh      = badge_h * SS  # SS-space height (independent of width)
 
     # Badge width: minimum is size_ratio_w-scaled default; expands to fit text
@@ -1705,6 +1734,13 @@ def draw_award_badge(
 
     # Text is geometrically centred; client-specific placement is handled by inset.
     text_cy_ss = bh / 2
+
+    if notch_style == "frosted" and position in ("left", "right"):
+        return _draw_side_chip(
+            image, label, position == "right", font_size_ss, SS, text_w_ss // SS,
+            badge_h, _min_badge_h, notch_inset,
+            frost_opacity, frost_saturation, frost_reference, tint_rgb,
+        )
 
     if notch_style == "frosted":
         # ── Frosted: blurred poster crop tinted toward the region's dominant colour ──
@@ -1893,6 +1929,77 @@ def draw_award_badge(
     badge = badge.resize((badge_w, badge_h), Image.Resampling.LANCZOS)
     result = image.copy()
     result.alpha_composite(badge, (bx, by_composite))
+    return result
+
+
+# Side chip geometry, as fractions of the sizes draw_award_badge already
+# derives.  The chip is a little shorter than the notch — it floats, so it has
+# no edge-hidden strip to make up for — and sits in by the margin on both axes.
+_SIDE_MARGIN     = 0.045   # of poster width, from the side and the top
+_CHIP_H          = 0.82    # of the notch's drawn height
+_CHIP_PAD_X      = 0.80    # horizontal padding, of the chip's height
+_CHIP_RADIUS     = 0.30    # of the chip's height
+_CHIP_SHADOW_A   = 90      # peak drop-shadow alpha under the chip
+
+
+@lru_cache(maxsize=32)
+def _chip_mask(w: int, h: int, radius: int) -> Image.Image:
+    """The side chip's shape at 1x, drawn at 3x and box-reduced for
+    anti-aliasing (as _notch_shape_1x)."""
+    mask = Image.new("L", (w * 3, h * 3), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [(0, 0), (w * 3 - 1, h * 3 - 1)], radius=radius * 3, fill=255
+    )
+    return mask.reduce(3)
+
+
+def _draw_side_chip(
+    image: Image.Image, label: str, right: bool,
+    font_size_ss: int, ss: int, text_w: int,
+    badge_h: int, min_badge_h: int, notch_inset: float,
+    frost_opacity: float, frost_saturation: float, frost_reference: bool,
+    tint_rgb: tuple[float, float, float] | None,
+) -> Image.Image:
+    """Frosted chip floating in from a top corner — see draw_award_badge's
+    ``position``.
+
+    Same construction as the centred frosted notch: a blurred crop of what it
+    sits on under a tint layer from the whole poster, label ink chosen by the
+    tint's lightness."""
+    width, height = image.size
+    margin = int(width * _SIDE_MARGIN)
+    h = max(min_badge_h, int(badge_h * _CHIP_H))
+    w = int(text_w + h * _CHIP_PAD_X)
+    x = width - margin - w if right else margin
+    y = margin + int(height * notch_inset)
+
+    region = image.crop((x, y, x + w, y + h))
+    blurred = region.filter(ImageFilter.GaussianBlur(radius=max(4, int(h * 0.35)))).convert("RGBA")
+    dr, dg, db = tint_rgb if tint_rgb is not None else dominant_frost_rgb(image)
+    fr_r, fr_g, fr_b = _frosted_tint(dr, dg, db, frost_saturation, frost_reference)
+
+    mask = _chip_mask(w, h, int(h * _CHIP_RADIUS))
+    blurred.putalpha(mask)
+    frost = Image.new("RGBA", (w, h), (fr_r, fr_g, fr_b, 0))
+    frost.putalpha(mask.point(lambda a: int(a * frost_opacity)))
+    badge = Image.alpha_composite(blurred, frost)
+    badge.alpha_composite(_notch_label_layer_1x(label, font_size_ss, ss, w, h,
+                                                (*_frost_ink(fr_r, fr_g, fr_b), 245)))
+
+    # Unlike the notch, nothing anchors the chip to an edge, so a soft shadow
+    # lifts it off the art.
+    result = image.copy()
+    pad = int(h * 0.6)
+    sheet = Image.new("L", (w + 2 * pad, h + 2 * pad), 0)
+    sheet.paste(mask.point(lambda a: a * _CHIP_SHADOW_A // 255), (pad, pad))
+    sheet = sheet.filter(ImageFilter.GaussianBlur(h * 0.18))
+    shadow = Image.new("RGBA", sheet.size, (0, 0, 0, 0))
+    shadow.putalpha(sheet)
+    sx, sy = x - pad, y - pad + int(h * 0.06)
+    # alpha_composite refuses negative offsets; crop what falls off-canvas.
+    cl, ct = max(0, -sx), max(0, -sy)
+    result.alpha_composite(shadow.crop((cl, ct, shadow.width, shadow.height)), (sx + cl, sy + ct))
+    result.alpha_composite(badge, (x, y))
     return result
 
 
