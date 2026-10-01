@@ -947,6 +947,7 @@ from ratings import (
     is_anime_rated,
     mdblist_quota_remaining,
     mdblist_release_dates,
+    mdblist_tv_horror,
     parse_custom_score_palette,
     score_color_for_mode,
     _draw_solid_pip,
@@ -3645,6 +3646,7 @@ _GENRE_TINT: dict[str, tuple[float, float, float]] = {
     "History":     (2.2, 1.1, 0.3),   # sepia
     "Music":       (2.8, 0.3, 2.2),   # magenta
     "Romance":     (3.0, 0.3, 0.9),   # rose
+    "Rom-Com":     (3.0, 0.3, 0.9),   # rose, as Romance
     "War":         (0.9, 1.6, 0.3),   # olive green
     "Western":     (2.8, 1.1, 0.2),   # burnt sienna
     "Kids":        (0.3, 1.1, 3.0),   # bright blue
@@ -4261,6 +4263,7 @@ def _build_poster(
             "Family":           "Pacifico-Regular.ttf",
             "Drama":            "PlayfairDisplay-Bold.ttf",
             "Romance":          "PlayfairDisplay-Bold.ttf",
+            "Rom-Com":          "PlayfairDisplay-Bold.ttf",
             "History":          "PlayfairDisplay-Bold.ttf",
             "Music":            "PlayfairDisplay-Bold.ttf",
             "Crime":            "Oswald-Bold.ttf",
@@ -6380,6 +6383,7 @@ _GENRE_BG_STYLES = ("minimal", "photoreal")
 # of genres a given library actually hits; entries are cheap to reload (one PNG
 # decode) on the rare miss.
 _GENRE_BG_CACHE_MAX = 8
+_GENRE_BG_BORROWS = {"Rom-Com": "Romance"}
 _genre_bg_cache: "OrderedDict[str, Image.Image | None]" = OrderedDict()
 
 
@@ -6410,10 +6414,12 @@ def _load_genre_background(genre: str, style: str = "minimal") -> "Image.Image |
     if key in _genre_bg_cache:
         _genre_bg_cache.move_to_end(key)
     else:
+        # A derived genre has no art of its own and borrows its parent's.
+        art_genre = _GENRE_BG_BORROWS.get(genre, genre)
         path = (
-            _genre_bg_path(style, genre)
+            _genre_bg_path(style, art_genre)
             or _genre_bg_path(style, "default")
-            or (_genre_bg_path("minimal", genre) if style != "minimal" else None)
+            or (_genre_bg_path("minimal", art_genre) if style != "minimal" else None)
             or _genre_bg_path("minimal", "default")
         )
         try:
@@ -7186,6 +7192,17 @@ def _server_render_signature() -> str:
         # order — the operator's, or a changed default — re-renders once.
         f"gp={_genre_order_signature()}",
     ))
+
+
+def _with_mdblist_tv_horror(genre_ids: list[int], tmdb_id: str) -> list[int]:
+    """A TMDB TV show's genres with Horror as MDBList has it, when MDBList has
+    answered for the show; the cached guess (tmdb._tv_is_horror) otherwise.
+    TMDB itself never files a show under Horror, so the 27 is only ever ours."""
+    verdict = mdblist_tv_horror(tmdb_id)
+    if verdict is None:
+        return genre_ids
+    ids = [gid for gid in genre_ids if gid != 27]
+    return ids + [27] if verdict else ids
 
 
 def _genre_order_signature() -> str:
@@ -8066,6 +8083,7 @@ _DEBUG_GENRE_IDS = {
     "Documentary": 99, "Drama": 18, "Family": 10751, "Fantasy": 14, "History": 36,
     "Horror": 27, "Music": 10402, "Mystery": 9648, "Romance": 10749,
     "Sci-Fi": 878, "Thriller": 53, "War": 10752, "Western": 37,
+    "Rom-Com": _cfg.ROMCOM_GENRE_ID,
 }
 _DEBUG_CANVAS_TTL = 300.0
 _DEBUG_CANVAS_MAX_ENTRIES = 128
@@ -9222,6 +9240,10 @@ async def get_poster(
         using_anime_art = False
         _anime_art_missing = False
         _cinemeta_missing = False
+        _tmdb_tv_spine = False   # Horror comes from MDBList/keywords on this path only
+        # Rom-Com is derived on TMDB's and the anime providers' genres only:
+        # IMDb (Cinemeta) and TVDB put Romance on plain sitcoms (Friends).
+        _derive_romcom = True
         if is_anime:
             # Neither provider ships title logos, so when a tmdb_id came with
             # the request pull TMDB's metadata alongside — purely for its logo
@@ -9310,6 +9332,7 @@ async def get_poster(
                 genre_ids, is_textless, logos, release_year, title,
                 poster_path, backdrop_path, tmdb_data,
             ) = _cm_meta
+            _derive_romcom = False
         else:
             genre_ids, is_textless, logos, release_year, title, poster_path, backdrop_path, tmdb_data = (
                 await _coalesced_fetch_poster_metadata(
@@ -9317,6 +9340,11 @@ async def get_poster(
                     _effective_secondary,
                 )
             )
+            _tmdb_tv_spine = type in ("tv", "series")
+            if _tmdb_tv_spine:
+                genre_ids = _with_mdblist_tv_horror(genre_ids, tmdb_id)
+        if _derive_romcom:
+            genre_ids = _cfg.with_derived_genres(genre_ids)
         # Canonical IMDb id for downstream lookups (e.g. TVDB remoteid resolution):
         # the request param if supplied, else the one TMDB returned in external_ids.
         # Optional: TMDB returns imdb_id: null for titles it has no IMDb link for.
@@ -9409,17 +9437,10 @@ async def get_poster(
         # Resolve genre string from TMDB genre_ids immediately — this is always
         # available regardless of MDBlist status, so we can use it as a reliable
         # fallback if the rating fetch fails or is skipped entirely.
-        _gid_set = set(genre_ids)
-        _tmdb_genre = "Unknown"
         _genre_priority = (
             _cfg.ANIME_GENRE_PRIORITY if is_anime else _cfg.GENRE_PRIORITY
         )
-        for _gid in _genre_priority:
-            if _gid in _gid_set:
-                _candidate = _cfg.GENRE_MAP.get(_gid, "")
-                if _candidate:
-                    _tmdb_genre = _candidate
-                    break
+        _tmdb_genre = _cfg.genre_label(genre_ids, _genre_priority)
 
         # Backdrop fallback: when no null-language textless poster exists, use
         # the landscape backdrop cropped to portrait.  Backdrops are almost always
@@ -10280,6 +10301,11 @@ async def get_poster(
             # that; dropping them on the way in cleans rows written before.
             ratings_dict = _mdblist_row_ratings(ratings_dict)
             _row_ratings, _row_age_rating = ratings_dict, age_rating
+            if _tmdb_tv_spine and not rating_already_cached:
+                # MDBList answered just now, so its Horror verdict can settle a
+                # label worked out from the cached guess above.
+                genre_ids = _with_mdblist_tv_horror(genre_ids, tmdb_id)
+                _tmdb_genre = _cfg.genre_label(genre_ids, _genre_priority)
             # The label is derived here from this render's genre ids rather
             # than read back from the rating row, which stored whatever the
             # priority order said when it was cached — a reordering, or a
@@ -10913,6 +10939,8 @@ async def get_poster(
         #   _imdb_link_unverified  — TMDB couldn't be asked whether the IMDb id
         #                            sent beside the TMDB id is its own; kept
         #                            on trust (see _imdb_id_under_tmdb_checked).
+        #   genres_unsettled       — a TV show's Horror couldn't be told
+        #                            (Cinemeta unreachable; tmdb._tv_is_horror).
         #
         # The same flag decides what the *client* is told: a render we won't
         # keep must not be handed an ETag either (see _apply_poster_cache_headers).
@@ -10921,6 +10949,7 @@ async def get_poster(
             or _rating_backoff_active or _anime_art_missing or _cinemeta_missing
             or _rating_badges_missing or _anime_scores_pending
             or _imdb_link_unverified or _detection_timed_out
+            or bool(tmdb_data.get("genres_unsettled"))
         )
         _composite_expires_at: int | None = None
         if final_cache_key is not None and (not _render_provisional or _cfg.PROVISIONAL_CACHE_TTL > 0):

@@ -349,21 +349,25 @@ Default: `100`
 
 ## Genres
 
-A title usually has several genres. The first one it carries, in the order below, is the genre printed on the poster. It also sets the tint and background of the no-art fallback card and the font used for a text title. The easiest way to change an order is to drag the list in the [admin dashboard](README.md#admin-dashboard). In the environment, give comma-separated TMDB genre ids. Unknown or repeated ids are ignored, and any id you leave out keeps its default place at the end. Changing an order re-renders cached posters once.
+A title usually has several genres. The first one it carries, in the order below, is the genre printed on the poster. It also sets the tint and background of the no-art fallback card and the font used for a text title. The easiest way to change an order is to drag the list in the [admin dashboard](README.md#admin-dashboard). In the environment, give comma-separated TMDB genre ids. Unknown or repeated ids are ignored. If you list only a few ids, the rest follow in their default order. If your list is missing just a few ids (an order saved before a genre was added), each missing one goes in front of the id that follows it in the default. Changing an order re-renders cached posters once.
 
 TMDB gives TV shows a merged "Sci-Fi & Fantasy" genre (10765). PostersPlus splits it into Sci-Fi (878) or Fantasy (14) using the show's TMDB keywords. When the keywords tie, it asks Cinemeta for IMDb's genres. Shows that neither source decides keep 10765, which prints as Sci-Fi. "Action & Adventure" (10759) and "War & Politics" (10768) aren't split. They print as Action and War, and are listed separately so they can be ranked on their own.
+
+TMDB has no Horror genre for TV, so American Horror Story printed Fantasy. A show gets Horror (27) when MDBList lists it. That answer comes with the ratings PostersPlus already fetches, so it costs no extra call. Until MDBList has answered for a show, and on servers without an MDBList key, the show's TMDB keywords decide: a keyword with "horror" in it gives Horror. A show with no keywords asks Cinemeta for IMDb's genres, and TVDB (when a TVDB key is set) if Cinemeta has nothing.
+
+Rom-Com (`1074935`) isn't a TMDB genre. Any title TMDB (or AniList/Kitsu) gives both Comedy and Romance also carries it. Genres from Cinemeta or TVDB don't count, because IMDb and TVDB tag plain sitcoms like Friends with Romance. By default it ranks just above Comedy, so The Love Hypothesis and Notting Hill print Rom-Com while Friends, which TMDB tags Comedy only, stays Comedy. To turn it off, rank it below Comedy and Romance.
 
 ### `GENRE_PRIORITY`
 
 The order for every title except those requested by anime id. Horror, Thriller, Sci-Fi and Fantasy come first because they say the most about a title. Mystery comes after them because TMDB puts it on so much of its TV. War ranks above Action and History. Drama and Adventure come near the end because so many titles carry them, and Animation is after them because the poster art already shows a title is animated.
 
-Default: `27,53,878,10765,14,9648,80,35,10749,10751,10752,10768,28,10759,36,10402,37,99,18,12,16,10764,10762,10763,10766,10767`
+Default: `27,53,878,10765,14,9648,80,1074935,35,10749,10751,10752,10768,28,10759,36,10402,37,99,18,12,16,10764,10762,10763,10766,10767`
 
 ### `ANIME_GENRE_PRIORITY`
 
 The order for titles requested by an AniList or Kitsu id. Action, Adventure and Fantasy rank higher here than in the main order, because they describe anime better than the Mystery or Supernatural tags the providers add liberally. Animation stays last, as the label when nothing else matches.
 
-Default: `10749,27,37,99,878,10765,53,12,28,10759,9648,14,35,80,10752,10768,36,10402,18,10762,10751,16`
+Default: `1074935,10749,27,37,99,878,10765,53,12,28,10759,9648,14,35,80,10752,10768,36,10402,18,10762,10751,16`
 
 ---
 

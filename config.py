@@ -12,7 +12,7 @@ import os
 # records the field the admin dashboard shows (group, kind, help, bounds) and
 # returns the raw string to parse, honouring the saved settings file over the
 # environment over the default.  See settings.py for the precedence rules.
-from settings import env as _env
+from settings import env as _env, merge_order
 
 
 def effective_cpus() -> int:
@@ -833,6 +833,34 @@ GENRE_MAP = {
     10765: "Sci-Fi", 10766: "Soap", 10767: "Talk", 10768: "War",
 }
 
+# Not a TMDB genre: a title TMDB (or AniList/Kitsu) gives both Comedy and
+# Romance also carries this one (with_derived_genres), so the priority order can rank "Rom-Com" above,
+# between or below the two.  Of the 300 most-voted films TMDB tags both, about
+# 7 in 10 open their Wikipedia article as a romantic comedy; most of the rest
+# are teen and sex comedies built round a romance (American Pie, Juno).
+ROMCOM_GENRE_ID = 1074935
+GENRE_MAP[ROMCOM_GENRE_ID] = "Rom-Com"
+
+
+def with_derived_genres(genre_ids: "list[int]") -> list[int]:
+    """*genre_ids* plus the genres derived from them (Rom-Com)."""
+    ids = list(genre_ids or ())
+    if 35 in ids and 10749 in ids and ROMCOM_GENRE_ID not in ids:
+        ids.append(ROMCOM_GENRE_ID)
+    return ids
+
+
+def genre_label(genre_ids: "list[int]", priority: "list[int]") -> str:
+    """The name of the first genre in *priority* the title carries, or
+    "Unknown".  Rom-Com counts only if *genre_ids* already carry it: it is
+    derived where the genres come from TMDB or an anime provider (main.py),
+    not from IMDb or TVDB, which give Friends and Big Bang Theory Romance."""
+    ids = set(genre_ids or ())
+    for gid in priority:
+        if gid in ids and GENRE_MAP.get(gid):
+            return GENRE_MAP[gid]
+    return "Unknown"
+
 # The order genres are tried in when a title has several: the first one the
 # title carries is its label, tint, fallback background and title font.  Set
 # from the admin dashboard (a drag list) or as comma-separated ids; an id left
@@ -848,6 +876,7 @@ _GENRE_LABELS: dict[str, str] = {
     "10766": "Soap (TV)",
     "10767": "Talk (TV)",
     "10768": "War & Politics (TV)",
+    str(ROMCOM_GENRE_ID): "Rom-Com (Comedy + Romance)",
 }
 
 # Checked against the genres of TMDB's ~750 most-voted films and ~800 shows.
@@ -858,7 +887,7 @@ _GENRE_LABELS: dict[str, str] = {
 # (Dunkirk, Saving Private Ryan).  Animation is near last: the art already
 # shows a title is animated, so Family / Action / Drama say more.
 _DEFAULT_GENRE_PRIORITY = (
-    27, 53, 878, 10765, 14, 9648, 80, 35, 10749, 10751,
+    27, 53, 878, 10765, 14, 9648, 80, ROMCOM_GENRE_ID, 35, 10749, 10751,
     10752, 10768, 28, 10759, 36, 10402, 37, 99, 18, 12, 16,
     10764, 10762, 10763, 10766, 10767,
 )
@@ -877,6 +906,7 @@ _DEFAULT_GENRE_PRIORITY = (
 # titles from both providers. It is a presentation choice, not a correctness
 # one — reorder freely if a different label reads better to you.
 _DEFAULT_ANIME_GENRE_PRIORITY = (
+    ROMCOM_GENRE_ID,  # Rom-Com — Romance and Comedy both
     10749,            # Romance — if it's a romance, that's the hook
     27,               # Horror
     37,               # Western — vanishingly rare in anime, so highly telling
@@ -904,13 +934,13 @@ def _genre_order(key: str, default: tuple[int, ...], label: str, help: str) -> l
     raw = _env(key, ",".join(choices), group='Genres', kind='order', label=label,
                help=help, choices=choices, labels=_GENRE_LABELS, advanced=True)
     # Same rules the dashboard applies on save, for a value set in the
-    # environment: unknown ids and repeats are dropped, missing ones appended.
-    seen: list[int] = []
+    # environment: unknown ids and repeats are dropped, missing ones added.
+    seen: list[str] = []
     for part in raw.split(","):
         part = part.strip()
-        if part in choices and int(part) not in seen:
-            seen.append(int(part))
-    return seen + [gid for gid in default if gid not in seen]
+        if part in choices and part not in seen:
+            seen.append(part)
+    return [int(gid) for gid in merge_order(seen, choices)]
 
 
 GENRE_PRIORITY = _genre_order(
@@ -920,7 +950,9 @@ GENRE_PRIORITY = _genre_order(
     "under merged genres (Action & Adventure, War & Politics), listed here "
     "apart from the film genres they print as. Sci-Fi & Fantasy is split into "
     "Sci-Fi or Fantasy from the show's keywords; the merged entry covers the "
-    "shows nothing decides, and prints Sci-Fi.",
+    "shows nothing decides, and prints Sci-Fi.  TMDB has no Horror for TV, so a "
+    "show is given it from MDBList's genres, else its keywords.  Rom-Com is "
+    "any title with both Comedy and Romance: rank it below them to turn it off.",
 )
 ANIME_GENRE_PRIORITY = _genre_order(
     'ANIME_GENRE_PRIORITY', _DEFAULT_ANIME_GENRE_PRIORITY, 'Anime genre priority',

@@ -1811,16 +1811,21 @@ def get_cached_tmdb_metadata(cache_key: str) -> dict | None:
         # with NULL. Refresh once so discovery sashes have complete title,
         # vote, and TV lifecycle fields.
         #
-        # v5 splits TV's merged Sci-Fi & Fantasy genre (10765).  A v4 row is
-        # otherwise identical, so only a TV row still carrying 10765 is
-        # refetched, and its composites with it: they drew the old label.
+        # v5 splits TV's merged Sci-Fi & Fantasy genre (10765), and v6 gives
+        # TV shows Horror, which TMDB's TV genres lack.  Film rows are
+        # otherwise identical, so only TV rows from before are refetched.  A v4
+        # TV row still carrying 10765 takes its composites with it (they drew
+        # the old label); the Horror change re-renders through the genre-order
+        # signature, which Rom-Com's arrival in the order changed as well.
+        _tv_row = cache_key.startswith("tv_")
         _v4_split = (
             metadata_version == 4
-            and cache_key.startswith("tv_")
+            and _tv_row
             and 10765 in json.loads(genre_ids_raw or "[]")
         )
         if (vote_count is None or original_title is None
-                or metadata_version not in (4, 5) or _v4_split):
+                or metadata_version not in (4, 5, 6)
+                or (_tv_row and metadata_version != 6)):
             logger.info(
                 f"TMDB metadata cache missing current schema fields for {cache_key}; refreshing"
             )
@@ -1900,7 +1905,7 @@ def set_cached_tmdb_metadata(
     next_episode: dict | None = None,
     last_episode: dict | None = None,
     seasons: list[dict] | None = None,
-    metadata_version: int = 5,
+    metadata_version: int = 6,
 ) -> None:
     try:
         with _db_lock:

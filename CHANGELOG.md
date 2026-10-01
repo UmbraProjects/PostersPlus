@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Horror for TV, and Rom-Com
+
+- TMDB has no Horror genre for TV, so American Horror Story printed Fantasy.
+  Shows now get Horror from MDBList's genres, which come with the ratings
+  call already made. Until MDBList has answered, and without an MDBList key,
+  a "horror" TMDB keyword decides, and a show with no keywords asks Cinemeta,
+  then TVDB (with a key). Cached TV metadata is fetched again once.
+- New **Rom-Com** genre for titles TMDB (or AniList/Kitsu) gives both
+  Comedy and Romance, ranked just above Comedy: The Love Hypothesis,
+  Notting Hill and Pretty Woman print Rom-Com, and Friends (Comedy only on
+  TMDB) stays Comedy. IMDb and TVDB genres don't count, since they tag
+  sitcoms Romance. Rank it below Comedy and Romance in the genre order to
+  turn it off. A genre order saved before Rom-Com existed gets it in front
+  of Comedy.
+
 ### Logs in the dashboard
 
 - A **Logs** view in the admin dashboard: the server log with filters for

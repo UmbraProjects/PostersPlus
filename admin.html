@@ -1199,8 +1199,17 @@ function control(s) {
 // An "order" setting: its choices ranked, most important first.  Dragging
 // works with a mouse; the arrows cover touch screens and the keyboard.
 function orderValues(s) {
-  const v = String(currentValue(s) ?? '').split(',').map(x => x.trim()).filter(x => s.choices.includes(x));
-  return [...new Set(v), ...s.choices.filter(c => !v.includes(c))];
+  const out = [...new Set(String(currentValue(s) ?? '').split(',').map(x => x.trim()).filter(x => s.choices.includes(x)))];
+  // settings.merge_order: an order saved before an entry existed takes it in
+  // front of the entry it precedes by default; a short list gets the rest after.
+  const missing = s.choices.filter(c => !out.includes(c));
+  if (missing.length * 2 > s.choices.length) return [...out, ...missing];
+  s.choices.forEach((c, i) => {
+    if (out.includes(c)) return;
+    const nxt = s.choices.slice(i + 1).find(n => out.includes(n));
+    out.splice(nxt === undefined ? out.length : out.indexOf(nxt), 0, c);
+  });
+  return out;
 }
 function orderList(s) {
   const vals = orderValues(s);

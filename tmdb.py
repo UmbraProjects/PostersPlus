@@ -13,6 +13,7 @@ import httpx
 import numpy as np
 
 import cinemeta
+import tvdb
 
 logger = logging.getLogger(__name__)
 from PIL import Image, ImageFilter
@@ -483,6 +484,58 @@ async def _split_tv_scifi_fantasy(
     return out
 
 
+# TMDB's TV genre list has no Horror at all, so American Horror Story read
+# "Fantasy".  main.py gives a show Horror from MDBList's genres (they ride on
+# the ratings call already made) whenever it has them; this is the answer for
+# the cache, used until MDBList has spoken and by servers without a key.
+# Checked on the 300 most-voted shows against MDBList, TVDB and Cinemeta
+# (Horror where two of three agree): a "horror" keyword caught 74% of the 19
+# horror shows at 67% precision, the extras debatable (Black Mirror, iZombie);
+# slasher/zombie/haunt added nothing.  TVDB tags Horror twice as freely as the
+# others (Death Note, Twin Peaks), Cinemeta read 89% / 94%, so a show with
+# no keywords asks Cinemeta first and TVDB only when Cinemeta can't answer.
+TV_HORROR = 27
+_HORROR_KEYWORD_RE = re.compile(r"\bhorror\b")
+
+
+async def _tv_is_horror(
+    client: httpx.AsyncClient,
+    keywords: list[str],
+    imdb_id: str | None,
+    tvdb_id: int | str | None,
+) -> bool | None:
+    """Whether a TMDB TV show is horror, short of MDBList: its keywords when it
+    has any, else Cinemeta's genres (IMDb's), else TVDB's (with a key).  None
+    when it can't be told because Cinemeta was unreachable and TVDB didn't
+    answer, so the caller doesn't cache "no" for the week."""
+    if keywords:
+        return any(_HORROR_KEYWORD_RE.search(k.lower()) for k in keywords)
+    names: list | None = None
+    cinemeta_down = False
+    if imdb_id and CINEMETA_ENABLED:
+        # Cached for a week and keyless; the same document the Sci-Fi/Fantasy
+        # tie-break reads.
+        meta = await cinemeta.fetch_cinemeta_meta(client, imdb_id, "tv")
+        if meta:
+            names = meta.get("genres") or meta.get("genre") or []
+        else:
+            # A real miss is negatively cached; an outage leaves nothing.
+            cinemeta_down = get_cached_tvdb_json(cinemeta._cache_key(imdb_id, "tv")) is None
+    if names is None and tvdb_id and tvdb.tvdb_enabled():
+        # Last, because TVDB tags Horror freely; it still knows shows that
+        # Cinemeta doesn't (no IMDb id, or no entry).
+        try:
+            record = await tvdb._fetch_record(client, int(tvdb_id), "series")
+        except Exception as exc:
+            logger.warning(f"TVDB genre lookup failed for tvdb_id={tvdb_id}: {exc}")
+            record = None
+        if record:
+            names = [g.get("name") for g in record.get("genres") or [] if isinstance(g, dict)]
+    if names is None and cinemeta_down:
+        return None
+    return any((n or "").strip().lower() == "horror" for n in names or ())
+
+
 async def fetch_poster_metadata(
     client: httpx.AsyncClient,
     tmdb_id: str,
@@ -650,10 +703,17 @@ async def fetch_poster_metadata(
     )
 
     genre_ids            = [g["id"] for g in data.get("genres", [])]
+    _genres_unsettled    = False
     if endpoint == "tv":
         # TV keywords sit under "results" (films use "keywords").
         _kw = [k.get("name") or "" for k in (data.get("keywords") or {}).get("results", [])]
         genre_ids = await _split_tv_scifi_fantasy(client, genre_ids, _kw, imdb_id)
+        _horror = await _tv_is_horror(
+            client, _kw, imdb_id, (data.get("external_ids") or {}).get("tvdb_id"),
+        )
+        if _horror:
+            genre_ids.append(TV_HORROR)
+        _genres_unsettled = _horror is None
     credits              = data.get("credits", {})
     production_companies = data.get("production_companies", [])
     original_language    = data.get("original_language")
@@ -750,38 +810,43 @@ async def fetch_poster_metadata(
         }),
     }
 
-    await asyncio.to_thread(
-        set_cached_tmdb_metadata,
-        metadata_cache_key,
-        title,
-        release_year,
-        genre_ids,
-        is_textless,
-        poster_path,
-        logos,
-        credits=credits,
-        production_companies=production_companies,
-        original_language=original_language,
-        original_title=original_title,
-        runtime=runtime,
-        number_of_seasons=number_of_seasons,
-        number_of_episodes=number_of_episodes,
-        backdrop_path=backdrop_path,
-        tmdb_status=tmdb_status,
-        vote_count=vote_count,
-        vote_average=vote_average,
-        text_backdrop_path=text_backdrop_path,
-        alt_poster_path=alt_poster_path,
-        original_poster_path=original_poster_path,
-        poster_langs=poster_langs,
-        poster_pools=poster_pools,
-        imdb_id=imdb_id,
-        tmdb_release_date=tmdb_release_date,
-        last_air_date=last_air_date,
-        next_episode=next_episode,
-        last_episode=last_episode,
-        seasons=seasons,
-    )
+    # A show whose Horror couldn't be told (Cinemeta down) isn't cached: the
+    # render is provisional, and the next one asks again.
+    if not _genres_unsettled:
+        await asyncio.to_thread(
+            set_cached_tmdb_metadata,
+            metadata_cache_key,
+            title,
+            release_year,
+            genre_ids,
+            is_textless,
+            poster_path,
+            logos,
+            credits=credits,
+            production_companies=production_companies,
+            original_language=original_language,
+            original_title=original_title,
+            runtime=runtime,
+            number_of_seasons=number_of_seasons,
+            number_of_episodes=number_of_episodes,
+            backdrop_path=backdrop_path,
+            tmdb_status=tmdb_status,
+            vote_count=vote_count,
+            vote_average=vote_average,
+            text_backdrop_path=text_backdrop_path,
+            alt_poster_path=alt_poster_path,
+            original_poster_path=original_poster_path,
+            poster_langs=poster_langs,
+            poster_pools=poster_pools,
+            imdb_id=imdb_id,
+            tmdb_release_date=tmdb_release_date,
+            last_air_date=last_air_date,
+            next_episode=next_episode,
+            last_episode=last_episode,
+            seasons=seasons,
+        )
+    else:
+        logger.info(f"TMDB metadata for tv {tmdb_id} not cached: Horror unsettled (Cinemeta unreachable)")
 
     tmdb_data = {
         "credits":              credits,
@@ -805,6 +870,7 @@ async def fetch_poster_metadata(
         "next_episode":         next_episode,
         "last_episode":         last_episode,
         "seasons":              seasons,
+        "genres_unsettled":     _genres_unsettled,
     }
 
     return genre_ids, is_textless, logos, release_year, title, poster_path, backdrop_path, tmdb_data

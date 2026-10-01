@@ -23,8 +23,8 @@ from awards import (FETCH_FAILED, _FetchFailed, _RateLimited, dominant_frost_rgb
                     _frost_ink, _frosted_tint)
 from config import (
     ANIME_RATING_SOURCES,
-    GENRE_MAP,
     GENRE_PRIORITY,
+    genre_label,
     SCORE_NORMALISERS,
     SCORE_GLOW_THRESHOLD,
     SCORE_GLOW_BLUR,
@@ -171,6 +171,50 @@ def mdblist_release_dates(media_id: str | None, media_type: str) -> dict | None:
         return None
 
 
+# Whether MDBList lists Horror for a show, by TMDB id, from the same answer.
+# TMDB has no Horror genre for TV; MDBList carries IMDb's (American Horror
+# Story: Drama, Horror, Mystery, Sci-Fi), and agreed with the TVDB/Cinemeta
+# consensus on every one of the 169 most-voted shows it answered.  Kept in the
+# generic JSON cache for the same reason as the dates above; every MDBList
+# answer rewrites it, so the long TTL only covers rows not yet refreshed.
+_MDBLIST_GENRES_TTL = 90 * 86400
+
+
+def _mdblist_horror_key(tmdb_id) -> str:
+    return f"mdblist_tv_horror:{tmdb_id}"
+
+
+def remember_mdblist_tv_horror(data: dict) -> None:
+    from cache import set_cached_tvdb_json
+    if data.get("type") != "show":
+        return
+    tmdb_id = (data.get("ids") or {}).get("tmdb")
+    genres = data.get("genres")
+    if not tmdb_id or not isinstance(genres, list) or not genres:
+        return
+    horror = any(
+        str((g.get("title") if isinstance(g, dict) else g) or "").strip().lower() == "horror"
+        for g in genres
+    )
+    try:
+        set_cached_tvdb_json(_mdblist_horror_key(tmdb_id), {"horror": horror}, _MDBLIST_GENRES_TTL)
+    except Exception as exc:   # a cache hiccup must not cost the rating
+        logger.warning(f"Could not cache MDBList genres for tmdb {tmdb_id}: {exc}")
+
+
+def mdblist_tv_horror(tmdb_id) -> bool | None:
+    """MDBList's word on whether TMDB TV show *tmdb_id* is horror, or None
+    when no MDBList answer for it is cached."""
+    if not tmdb_id:
+        return None
+    from cache import get_cached_tvdb_json
+    try:
+        row = get_cached_tvdb_json(_mdblist_horror_key(tmdb_id))
+    except Exception:
+        return None
+    return bool(row["horror"]) if row and "horror" in row else None
+
+
 async def fetch_rating(
     client: httpx.AsyncClient,
     mdblist_key: str,
@@ -196,11 +240,7 @@ async def fetch_rating(
     would otherwise have silently become the API key.
     """
 
-    genre = "Unknown"
-    for gid in GENRE_PRIORITY:
-        if gid in genre_ids:
-            genre = GENRE_MAP[gid]
-            break
+    genre = genre_label(genre_ids, GENRE_PRIORITY)
 
     mdb_type = "show" if media_type in ("tv", "series") else "movie"
     # MDBList files an IMDb id under its own type only, and 404s it under the
@@ -279,6 +319,7 @@ async def fetch_rating(
     release_date = data.get("released")
     keywords: list[dict] = data.get("keywords") or []
     remember_mdblist_release_dates(media_id, media_type, data)
+    remember_mdblist_tv_horror(data)
 
     age_rating: int | None = data.get("age_rating") or None
     if age_rating is not None:

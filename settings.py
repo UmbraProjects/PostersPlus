@@ -302,12 +302,33 @@ def normalise(setting: Setting, raw) -> str | None:
             raise ValueError("unknown entry " + ", ".join(unknown))
         if len(set(parts)) != len(parts):
             raise ValueError("lists an entry twice")
-        # An entry left out keeps its default place at the end rather than
-        # dropping out of the ranking.
-        parts += [c for c in setting.choices if c not in parts]
-        return ",".join(parts)
+        # An entry left out keeps a place rather than dropping out of the
+        # ranking (merge_order says where).
+        return ",".join(merge_order(parts, setting.choices))
 
     return value
+
+
+def merge_order(parts: "list[str]", choices: "tuple[str, ...]") -> list[str]:
+    """*parts* (known, deduped) completed with the *choices* it lacks, which
+    are in default order.
+
+    A list naming most entries is an order saved before an entry was added, so
+    the new one goes in front of the entry it precedes in the default (Rom-Com
+    in front of Comedy, wherever Comedy was moved) instead of at the end, where
+    it would never win.  A short list is shorthand for "these first", and the
+    rest follow in default order.
+    """
+    out = list(parts)
+    missing = [c for c in choices if c not in out]
+    if len(missing) * 2 > len(choices):
+        return out + missing
+    for i, c in enumerate(choices):
+        if c in out:
+            continue
+        nxt = next((n for n in choices[i + 1:] if n in out), None)
+        out.insert(out.index(nxt) if nxt is not None else len(out), c)
+    return out
 
 
 def _check_bounds(setting: Setting, number: float) -> None:
