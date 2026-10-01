@@ -63,7 +63,7 @@ class HideUnreleasedRatingPipelineTests(unittest.TestCase):
         cls.src = Path("main.py").read_text(encoding="utf-8")
 
     def test_status_is_resolved_for_the_setting_alone(self):
-        self.assertIn("if _status_sash or _status_grey or _cinema_badge or rcfg.hide_unreleased_rating:", self.src)
+        self.assertIn("if _status_sash or _status_grey or _cinema_badge or rcfg.hide_unreleased_rating or _quality_gate:", self.src)
 
     def test_status_asked_for_only_by_the_setting_stays_off_the_sash(self):
         # The status also drives the sash and the greyscale art; neither was

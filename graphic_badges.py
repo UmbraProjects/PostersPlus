@@ -346,6 +346,120 @@ def _box(text: str, h: int, filled: bool) -> Image.Image:
 
 
 # ---------------------------------------------------------------------------
+# Frosted quality chips (badge_quality_style=frosted)
+# ---------------------------------------------------------------------------
+
+# The quality badges, each on a chip of the frosted notch's glass: the poster
+# under it blurred beneath the frost tint, the mark or label in the tint's
+# ink.  The chip is the row's height, so a Dolby lockup inside it is smaller
+# than the bare mark — set to carry the same weight as the box labels.
+QUALITY_STYLES = ("solid", "frosted")
+DEFAULT_QUALITY_STYLE = "solid"
+_CHIP_MARK  = 0.68    # a mark's height inside its chip, of the chip height
+_CHIP_PAD   = 0.50    # a mark's total horizontal padding, of the chip height
+_CHIP_FROST = 0.78    # the tint layer's opacity, as the frosted disc
+
+
+def quality_style(value: str | None) -> str | None:
+    """badge_quality_style as given; None if unknown."""
+    v = (value or "").strip().lower()
+    return v if v in QUALITY_STYLES else None
+
+
+def quality_look(style: str, tint: tuple[float, float, float] | None = None) -> str | None:
+    """What row_items takes for the quality badges: None for the solid ones,
+    else the frost tint ("rgb:r,g,b"), or "auto" while it isn't sampled (the
+    layout pass: a chip is the same size either way)."""
+    if style != "frosted":
+        return None
+    return "rgb:" + ",".join(str(int(round(c))) for c in tint[:3]) if tint is not None else "auto"
+
+
+def _chip_ink(content: str, h: int) -> Image.Image | None:
+    """The chip's contents as white ink on a clear sheet the chip's size:
+    a mark ("mark:DV") or a label, centred.  None for a mark not on disk."""
+    if content.startswith("mark:"):
+        mark = _mark(content[5:], max(1, round(h * _CHIP_MARK)))
+        if mark is None:
+            return None
+        w = round(px(pxr(mark.width) + h * _CHIP_PAD))
+        im = Image.new("RGBA", (w, h), (255, 255, 255, 0))
+        im.alpha_composite(mark, ((w - mark.width) // 2, (h - mark.height) // 2))
+        return im
+    return _chip_label(content, h)
+
+
+@lru_cache(maxsize=128)
+def _chip_label(content: str, h: int) -> Image.Image:
+    ss = 4
+    font = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), px(h * _BOX_TEXT) * ss)
+    w = round(px(font.getlength(content) / ss + h * _BOX_PAD))
+    im = Image.new("RGBA", (w * ss, h * ss), (255, 255, 255, 0))
+    ImageDraw.Draw(im).text((w * ss / 2, h * ss / 2), content, font=font,
+                            fill=(255, 255, 255, 255), anchor="mm")
+    return im.reduce(ss)
+
+
+@lru_cache(maxsize=64)
+def _chip_mask(w: int, h: int) -> Image.Image:
+    ss = 4
+    m = Image.new("L", (w * ss, h * ss), 0)
+    ImageDraw.Draw(m).rounded_rectangle([0, 0, w * ss - 1, h * ss - 1],
+                                        radius=px(h * _BOX_RADIUS * ss), fill=255)
+    return m.reduce(ss)
+
+
+def _frost_chip(content: str, h: int, look: str) -> Image.Image | None:
+    """The placeholder the row is laid out with (a smoked chip); draw_row
+    swaps in the glass once it knows what is underneath (_resolve_chip)."""
+    ink = _chip_ink(content, h)
+    if ink is None:
+        return None
+    im = Image.new("RGBA", ink.size, (20, 20, 24, 0))
+    im.putalpha(_chip_mask(*ink.size).point(lambda a: a * 150 // 255))
+    im.alpha_composite(ink)
+    im.info["frost_chip"] = (look, ink)     # the ink, so it is cut only once
+    return im
+
+
+def _glass(image: Image.Image, x: int, y: int, w: int, h: int,
+           tint: tuple[int, int, int] | None) -> tuple[Image.Image, tuple[int, int, int]] | None:
+    """The frosted notch's glass for a (w, h) badge at (x, y): the art under
+    it blurred beneath the tint at _CHIP_FROST, unmasked.  ``tint`` None
+    samples one from that art.  Returns (glass, tint), or None off-canvas."""
+    box = (max(0, x), max(0, y), min(image.width, x + w), min(image.height, y + h))
+    if box[2] <= box[0] or box[3] <= box[1]:
+        return None
+    under = image.crop(box).convert("RGB")
+    if tint is None:
+        from awards import _frosted_tint, dominant_frost_rgb
+        tint = tuple(int(round(c)) for c in _frosted_tint(*dominant_frost_rgb(under)))
+    glass = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    glass.paste(under.filter(ImageFilter.GaussianBlur(max(2.0, h * 0.35))).convert("RGBA"),
+                (box[0] - x, box[1] - y))
+    frost = Image.new("RGBA", (w, h), (*tint, 0))
+    frost.putalpha(Image.new("L", (w, h), round(255 * _CHIP_FROST)))
+    return Image.alpha_composite(glass, frost), tint
+
+
+def _resolve_chip(image: Image.Image, im: Image.Image, x: int, y: int) -> Image.Image:
+    """The frosted chip for where it lands at (x, y) on ``image``."""
+    from awards import _frost_ink
+    look, ink = im.info["frost_chip"]
+    w, h = im.size
+    made = _glass(image, x, y, w, h,
+                  tuple(int(c) for c in look[4:].split(",")) if look.startswith("rgb:") else None)
+    if made is None:
+        return im
+    glass, tint = made
+    glass.putalpha(_chip_mask(w, h))
+    tinted = Image.new("RGBA", ink.size, (*_frost_ink(*tint), 0))
+    tinted.putalpha(ink.getchannel("A"))
+    glass.alpha_composite(tinted)
+    return glass
+
+
+# ---------------------------------------------------------------------------
 # Cinema badge: the film is in cinemas (or not out yet) and not at home
 # ---------------------------------------------------------------------------
 
@@ -567,19 +681,13 @@ def _resolve_disc(image: Image.Image, im: Image.Image, x: int, y: int) -> Image.
     box = (max(0, x), max(0, y), min(image.width, x + h), min(image.height, y + h))
     if box[2] <= box[0] or box[3] <= box[1]:
         return im
-    under = image.crop(box).convert("RGB")
     if look.startswith("rgb:"):
         from awards import _frost_ink
-        tint = tuple(int(c) for c in look[4:].split(","))
-        glass = Image.new("RGBA", (h, h), (0, 0, 0, 0))
-        glass.paste(under.filter(ImageFilter.GaussianBlur(max(2.0, h * 0.35))).convert("RGBA"),
-                    (box[0] - x, box[1] - y))
-        frost = Image.new("RGBA", (h, h), (*tint, 0))
-        frost.putalpha(Image.new("L", (h, h), round(255 * 0.78)))
-        glass = Image.alpha_composite(glass, frost)
+        glass, tint = _glass(image, x, y, h, h, tuple(int(c) for c in look[4:].split(",")))
         glass.putalpha(_disc_mask(h))
         glass.alpha_composite(_disc_face(face, h, _frost_ink(*tint)))
         return glass
+    under = image.crop(box).convert("RGB")
     luma = float(np.asarray(under.convert("L"), dtype=np.float32).mean())
     return _gradient_disc(face, h, luma < _DISC_LIGHT_BELOW)
 
@@ -906,44 +1014,56 @@ def row_items(tokens: list[str], certification: str | None, age_rating: int | No
               unit_h: int, slots: tuple[str, ...] = SLOTS,
               show_quality: bool = True,
               network: Logo | None = None, studio: Logo | None = None,
-              cinema: str | None = None) -> list[tuple[str, Image.Image]]:
+              cinema: str | None = None,
+              quality_look: str | None = None) -> list[tuple[str, Image.Image]]:
     """(slot, image) for each of ``slots`` this title has, in that order.
     Quality marks only when ``show_quality`` (the minimum-quality gate); the
     certificate always.  ``cinema`` is the cinema badge's key (cinema_ink), None
-    for a title that is out at home.  Dolby Vision and Atmos in the same group share the
-    combined mark, in the video slot's place."""
+    for a title that is out at home.  ``quality_look`` (quality_look) puts the
+    quality marks on frosted chips.  Dolby Vision and Atmos in the same group
+    share the combined mark, in the video slot's place."""
     t = set(tokens) if show_quality else set()
     dolby_h = unit_h
     combined = ("video" in slots and "audio" in slots and "DV" in t and "ATMOS" in t
                 and _mark("DV+ATMOS", dolby_h) is not None)
 
+    def mark(name: str):
+        if quality_look:
+            return _frost_chip("mark:" + name, unit_h, quality_look)
+        return _mark(name, dolby_h)
+
+    def box(text: str):
+        # Filled: solid enough to hold its own beside the Dolby marks;
+        # outlined boxes are left to the certificate.
+        if quality_look:
+            return _frost_chip(text, unit_h, quality_look)
+        return _box(text, unit_h, True)
+
     def video():
         if combined:
-            return _mark("DV+ATMOS", dolby_h)
+            return mark("DV+ATMOS")
         if "DV" in t:
-            return _mark("DV", dolby_h)
-        # Filled like the resolution box: solid enough to hold its own beside
-        # the Dolby marks; outlined boxes are left to the certificate.
+            return mark("DV")
         if "HDR10+" in t:
-            return _box("HDR10+", unit_h, True)
+            return box("HDR10+")
         if "HDR10" in t:
-            return _box("HDR10", unit_h, True)
+            return box("HDR10")
         return None
 
     def audio():
         if combined:
             return None
         if "ATMOS" in t:
-            return _mark("ATMOS", dolby_h)
+            return mark("ATMOS")
         if "DTSX" in t:
-            return _mark("DTSX", unit_h)
+            return mark("DTSX")
         return None
 
     def res():
         if "4K" in t:
-            return _box("4K", unit_h, True)
+            return box("4K")
         if "1080P" in t:
-            return _box("HD", unit_h, True)
+            return box("HD")
         return None
 
     def cert():
@@ -1010,6 +1130,8 @@ def draw_row(image: Image.Image, items: list[tuple[str, Image.Image]], *,
     for _, im in items:
         if "cinema_disc" in im.info:
             im = _resolve_disc(image, im, round(x), int(round(center_y - im.height / 2)))
+        elif "frost_chip" in im.info:
+            im = _resolve_chip(image, im, round(x), int(round(center_y - im.height / 2)))
         shadow, pad = _shadowed(im)
         sx, sy = round(x) - pad, int(round(center_y - im.height / 2)) - pad
         cl, ct = max(0, -sx), max(0, -sy)

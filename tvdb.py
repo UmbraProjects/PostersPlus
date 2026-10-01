@@ -357,7 +357,8 @@ async def fetch_tvdb_artworks(
         return {"logos": [], "backgrounds": [], "posters": []}
 
     want = _record_type(media_type)
-    cache_key = f"art:{want}:{tvdb_id}"
+    # v2 keeps includesText (backgrounds read it, see tvdb_poster_url).
+    cache_key = f"art:v2:{want}:{tvdb_id}"
     cached = get_cached_tvdb_json(cache_key)
     if cached is not None:
         return cached
@@ -386,6 +387,7 @@ async def fetch_tvdb_artworks(
                 "url": url,
                 "language": art.get("language"),
                 "score": float(art.get("score") or 0),
+                "text": art.get("includesText"),
                 # Only the dashboard's picker shows it; rows cached before it
                 # was kept fall back to the full image.
                 "thumb": thumb if thumb.startswith("http") or not thumb
@@ -559,6 +561,69 @@ async def fetch_tvdb_metadata(
     logger.info(f"TVDB metadata for tvdb_id={tvdb_id}: {title!r} ({release_year})")
     return (_map_genres(genre_names), False, [], release_year, title, poster,
             background["url"] if background else None, tmdb_data)
+
+
+# A series TMDB has closed ("Ended", or a "Miniseries" of one season) that
+# TVDB already lists a further season for — Cyberpunk: Edgerunners, whose
+# second season TVDB had dated while TMDB still called it a finished
+# miniseries.  Only the status, the next/last aired days and the official
+# season numbers are kept; the record goes stale faster than artwork does,
+# so it is held for days, not weeks.
+_SERIES_STATUS_VERSION = "v1"
+_SERIES_STATUS_TTL = 2 * 86400
+# _authed_get folds a throttle or an outage into the same None as "no such
+# series", so a miss is held only hours: a blip mustn't hide a revival.
+_SERIES_STATUS_MISS_TTL = 6 * 3600
+
+
+async def fetch_series_status(
+    client: httpx.AsyncClient,
+    *,
+    tvdb_id_hint: int | str | None = None,
+    imdb_id: str | None = None,
+    tmdb_id: str | None = None,
+) -> dict | None:
+    """``{"status", "next_aired", "last_aired", "seasons"}`` for a series:
+    TVDB's status in lower case ("continuing" | "ended" | "upcoming"), its
+    next and last aired days (ISO, or None) and its official season numbers
+    above 0.  None when TVDB is off, has no such series, or didn't answer."""
+    if not tvdb_enabled():
+        return None
+    try:
+        tvdb_id = await resolve_tvdb_id(client, media_type="series", tvdb_id_hint=tvdb_id_hint,
+                                        imdb_id=imdb_id, tmdb_id=tmdb_id)
+        if not tvdb_id:
+            return None
+        cache_key = f"status:{_SERIES_STATUS_VERSION}:{tvdb_id}"
+        cached = get_cached_tvdb_json(cache_key)
+        if cached is not None:
+            return None if cached.get("__miss__") else cached
+        async with _get_semaphore():
+            data = await _authed_get(client, f"/series/{tvdb_id}/extended", params={"short": "true"})
+    except Exception as exc:
+        logger.warning(f"TVDB series status failed for {tvdb_id_hint or imdb_id or tmdb_id}: {exc}")
+        return None
+    if not isinstance(data, dict) or not data.get("id"):
+        set_cached_tvdb_json(cache_key, {"__miss__": True}, _SERIES_STATUS_MISS_TTL)
+        return None
+
+    def _day(value) -> str | None:
+        value = str(value or "")
+        return value[:10] if len(value) >= 10 and value[4] == "-" else None
+
+    seasons = sorted({
+        int(s["number"]) for s in data.get("seasons") or []
+        if isinstance(s, dict) and ((s.get("type") or {}).get("type") == "official")
+        and isinstance(s.get("number"), int) and s["number"] > 0
+    })
+    result = {
+        "status": ((data.get("status") or {}).get("name") or "").strip().lower() or None,
+        "next_aired": _day(data.get("nextAired")),
+        "last_aired": _day(data.get("lastAired")),
+        "seasons": seasons,
+    }
+    set_cached_tvdb_json(cache_key, result, _SERIES_STATUS_TTL)
+    return result
 
 
 def _select_by_language(
@@ -912,13 +977,22 @@ async def tvdb_poster_url(
     imdb_id: str | None = None,
     languages: list[str] | None = None,
     random_top: bool = False,
+    kind: str = "posters",
 ) -> str | None:
     """A TVDB poster url for the tvdb poster source, or None.
 
     Without *languages*: the best language-neutral poster, which on TVDB means
     textless.  With *languages* (original-art mode): the best poster in the
     first of those languages that has one.  *random_top* picks one of the
-    top five instead.  Neither mode trusts includesText."""
+    top five instead.  Neither mode trusts includesText.
+
+    ``kind="backgrounds"`` asks the same of the backgrounds, for landscape
+    (landscape_art_source=tvdb).  They are tagged the same way: a language
+    on one that carries the title (key art, a title card), none on clean
+    art.  For them includesText can be trusted where it is false (measured
+    2026-10-01: 12 of 13 tagged "false" were clean, where tagged "true" ones
+    carry text), so an original pick passes over those: drawn as-is, a clean
+    background would leave the title off altogether."""
     if not poster_source_enabled():
         return None
     try:
@@ -927,16 +1001,17 @@ async def tvdb_poster_url(
         )
         if not tvdb_id:
             return None
-        posters = (await fetch_tvdb_artworks(client, tvdb_id, media_type)).get("posters", [])
+        posters = (await fetch_tvdb_artworks(client, tvdb_id, media_type)).get(kind, [])
     except Exception as exc:
-        logger.warning(f"TVDB poster source failed for {media_type} {tmdb_id}: {exc}")
+        logger.warning(f"TVDB {kind} source failed for {media_type} {tmdb_id}: {exc}")
         return None
     if languages is None:
         pool = [p for p in posters if p.get("language") in (None, "")]
     else:
         pool = []
         for code in dict.fromkeys(_to_tvdb_lang(c) for c in languages if c):
-            pool = [p for p in posters if p.get("language") == code]
+            pool = [p for p in posters if p.get("language") == code
+                    and not (kind == "backgrounds" and p.get("text") is False)]
             if pool:
                 break
     if not pool:

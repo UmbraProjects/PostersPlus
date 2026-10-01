@@ -162,7 +162,7 @@ TVDB_USE_POSTERS      = _flag(_env("TVDB_USE_POSTERS", "false", group='TVDB fall
 # A user-selectable poster source, like FANART_POSTERS: poster_source=tvdb
 # takes TVDB's best no-language poster (textless in practice), or under
 # original art its best poster in the request's language order.
-TVDB_POSTER_SOURCE    = _flag(_env("TVDB_POSTER_SOURCE", "false", group='TVDB fallback art', kind='bool', label='Offer TVDB posters', help='Let users pick TVDB as their poster source: its best no-language poster (TVDB\'s no-language posters are textless), or under Original Art its best poster in their language. TMDB when TVDB has none. Needs the TVDB key. Adds poster downloads, cache and text scans for users who pick it.'), False)
+TVDB_POSTER_SOURCE    = _flag(_env("TVDB_POSTER_SOURCE", "false", group='TVDB fallback art', kind='bool', label='Offer TVDB posters', help='Let users pick TVDB as their poster source: its best no-language poster (TVDB\'s no-language posters are textless), or under Original Art its best poster in their language. Landscape users can pick TVDB backdrops the same way. TMDB when TVDB has none. Needs the TVDB key. Adds poster downloads, cache and text scans for users who pick it.'), False)
 
 # Optional fanart.tv source.  With a project key AND FANART_POSTERS on, the
 # configurator offers poster_source=fanart (most-liked fanart.tv poster, TMDB

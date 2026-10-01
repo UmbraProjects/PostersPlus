@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Landscape catches up, and frosted quality badges
+
+- **Frosted quality badges**: Quality Badge Style (Quality tab, Graphic
+  Badges) puts 4K, HD, HDR, Dolby and DTS:X each on a chip of the frosted
+  notch's glass, in portrait and landscape. `badge_quality_style=frosted`.
+- **Ignore Quality Before Digital Release** (Quality tab): a film still in
+  cinemas has no real digital copy, so its "4K" is a cam. Until TMDB's
+  digital or disc date passes, or r/movieleaks confirms it, its quality is
+  treated as not found. `quality_after_digital=true`.
+- Shows TMDB calls **Ended** but TVDB has carried on with (Cyberpunk:
+  Edgerunners, still a one-season miniseries on TMDB) read Renewed, dated
+  from TVDB ("Oct 20 Season 2"). Needs a TVDB key.
+- **TVDB backdrops for landscape**: Art Source under the landscape Art
+  choice, offered with the TVDB poster source. `landscape_art_source=tvdb`.
+- Portrait settings that work at 16:9, each a landscape setting of its own
+  and off until chosen: Greyscale Poster if Unavailable, the black, silver
+  and gold badge styles with a text colour, Winner Star, Logo Size, and
+  Rating Badges on the info line. Left on the portrait: the rating modes,
+  notch geometry, diagonal sash colours, trending rank marks and the older
+  quality badge modes, which are drawn for the 2:3 layout.
+
 ### Horror for TV, and Rom-Com
 
 - TMDB has no Horror genre for TV, so American Horror Story printed Fantasy.

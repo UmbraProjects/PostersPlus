@@ -2777,6 +2777,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
+              <div class="toggle-row" id="landscape-rating-badges-row">
+                <span class="toggle-label" data-tip="Show sites' own scores, each behind its logo, in place of the score on the info line. The sites are chosen under Rating Badges below, shared with the portrait. Short of room the genre goes first, then the year, then badges from the end of the list.">Rating Badges</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-landscape-rating-badges" onchange="updateRatingBadgeRows(); build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
             </div>
             <div class="portrait-only">
             <span class="group-title">Mode</span>
@@ -3126,10 +3133,10 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </label>
               </div>
             </div>
-            <div class="cfg-sep portrait-only" id="rating-badges-fields" style="display:none;">
+            <div class="cfg-sep" id="rating-badges-fields" style="display:none;">
               <span class="group-title">Rating Badges</span>
               <div class="field">
-                <label class="field-label" data-tip="Show these sites' own scores, each behind its logo, in place of the ★ and the weighted score: after the genre in Clean, before each score in Minimalist, and after the year and genre in the Bar (when its label shows the rating). The rest of the line comes first; badges fill whatever room is left, top of the list first. Titles missing a site's score skip it, and ones with none of them keep the weighted score. Drag to reorder, + to add, ✕ to remove. Movie, TV and Anime choose which titles each site shows on.">Sites</label>
+                <label class="field-label" data-tip="Show these sites' own scores, each behind its logo, in place of the ★ and the weighted score: after the genre in Clean, before each score in Minimalist, and after the year and genre in the Bar (when its label shows the rating), and in place of the score on a landscape with its Rating Badges switch on. The rest of the line comes first; badges fill whatever room is left, top of the list first. Titles missing a site's score skip it, and ones with none of them keep the weighted score. Drag to reorder, + to add, ✕ to remove. Movie, TV and Anime choose which titles each site shows on.">Sites</label>
                 <input type="hidden" id="cfg-rating-badges" value="" data-default="">
                 <input type="hidden" id="cfg-rating-badge-kinds" value="" data-default="">
                 <div class="sash-list lp-list" id="rating-badges-list"></div>
@@ -3174,6 +3181,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <select id="cfg-landscape-art" onchange="updateShapeFields(); build(); queuePreviewReload()">
                   <option value="textless" selected>Textless + Logo</option>
                   <option value="original">Original</option>
+                </select>
+              </div>
+              <div class="field" id="landscape-art-source-field" hidden>
+                <label class="field-label" data-tip="Where the backdrop comes from. TVDB backdrops with no language are clean art, so Textless gets the best of those; with Original, TVDB gives a backdrop in your logo language, which carries the title. Titles TVDB has nothing for keep their TMDB backdrop.">Art Source</label>
+                <select id="cfg-landscape-art-source" onchange="build(); queuePreviewReload()">
+                  <option value="tmdb" selected>TMDB</option>
+                  <option value="tvdb">TVDB</option>
                 </select>
               </div>
             </div>
@@ -3235,6 +3249,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <option value="right">Right</option>
                 </select>
                 <div class="segmented" data-for="cfg-landscape-logo-pos" style="margin-top: 6px;"></div>
+              </div>
+              <div class="field">
+                <label class="field-label" data-tip="Size of the box the logo (or the title standing in for one) is fitted to, 1.00 being the tuned size. A wide logo grows with the width, a tall one with the height. The genre, year and score line keeps clear of it, dropping the genre first.">Logo Size</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-landscape-logo-scale" min="0.50" max="1.50" step="0.05" value="1.00" oninput="updateRange(this,'rng-lls'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-lls">1.00</span>
+                </div>
               </div>
               </div>
               <!-- Logo placement — nothing to place when Textless is on. -->
@@ -3586,6 +3607,38 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <option value="vignette_follows_badge">Vignette Follows Badge</option>
                 </select>
               </div>
+              <div class="field">
+                <label class="field-label" data-tip="Frosted Glass takes the colour of the art under it, lifted so it stays readable. The black styles are portrait's notch styles: a near-black pill, or a dark one with a silver or gold rim, each with a light label.">Badge Style</label>
+                <select id="cfg-landscape-badge-style" onchange="updateLandscapeBadgeFields(); build(); queuePreviewReload()">
+                  <option value="glass" selected>Frosted Glass</option>
+                  <option value="black">Pure Black</option>
+                  <option value="silver">Black, Silver Trim</option>
+                  <option value="gold">Black, Gold Trim</option>
+                </select>
+              </div>
+              <div class="field" id="landscape-badge-text-color-field" style="display:none;">
+                <label class="field-label" data-tip="Hex colour for the badge's label. Leave blank for the style's own.">Text Colour</label>
+                <div class="color-field">
+                  <input type="text" id="cfg-landscape-badge-text-color" placeholder="Default" maxlength="6"
+                         oninput="_syncLandscapeBadgeColorPicker(); build(); queuePreviewReload()">
+                  <input type="color" id="cfg-landscape-badge-text-color-picker" value="#ffffff"
+                         oninput="document.getElementById('cfg-landscape-badge-text-color').value=this.value.slice(1).toUpperCase(); build(); queuePreviewReload()">
+                </div>
+              </div>
+              <div class="toggle-row">
+                <span class="toggle-label" data-tip="Puts a star in front of an award winner's label, as Winner Star does on a portrait.">Winner Star</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-landscape-winner-star" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <span class="toggle-label" data-tip="Greyscales the art while a film is still in cinemas or not out yet, so it reads as not available to watch at home. Unlike on a portrait it doesn't need the Release Status sash. Consider Available if Source Found (Quality tab) applies here too.">Greyscale Poster if Unavailable</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-landscape-greyscale" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
             </div>
             <div class="cfg-sep">
               <span class="group-title" data-tip="Drag to reorder. Click ✕ to disable a sash — the first matching sash wins.">Priority</span>
@@ -3655,6 +3708,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <span class="toggle-label" data-tip="Overrides Greyscale Poster if Unavailable in the Sash panel when WebDL or Remux is found in quality.">Consider Available if Source Found</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-cinema-greyscale-skip" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="toggle-row" id="quality-after-digital-field" style="display:none">
+                <span class="toggle-label" data-tip="A film still in cinemas has no real digital copy yet, so a 4K or WEB-DL found before then is a cam or a mislabel. On: a film counts as out once TMDB's digital or disc date has passed, or a r/movieleaks post confirms it; before that its quality is ignored. Movies only.">Ignore Quality Before Digital Release</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-quality-after-digital" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
@@ -3785,6 +3845,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <label class="field-label" data-tip="The Cinema badge shows on a film that is still in cinemas, or not out yet, without taking the sash: a small disc with the day it reaches home (its first digital or disc release), month over day. Without a date it shows a popcorn bucket for a film in cinemas, or a clapperboard for one still in production. A series that hasn't aired yet shows its premiere date, or the clapperboard. Auto picks the disc's tone from what it sits on: white to silver over dark art, black to grey over light. Frosted is the frosted notch's glass, the poster blurred under its tint.">Cinema Badge Style</label>
                 <select id="cfg-badge-cinema-style" onchange="build(); queuePreviewReload()">
                   <option value="auto" selected>Auto (Light / Dark)</option>
+                  <option value="frosted">Frosted</option>
+                </select>
+              </div>
+              <div class="field" id="gb-quality-style-field" style="display:none">
+                <label class="field-label" data-tip="How the quality badges (Video, Audio and Resolution) are drawn. Solid: filled boxes for 4K, HD and HDR, and the bare Dolby and DTS marks. Frosted: each on a chip of the frosted notch's glass, the poster blurred under its tint, with the mark or label in the tint's ink.">Quality Badge Style</label>
+                <select id="cfg-badge-quality-style" onchange="build(); queuePreviewReload()">
+                  <option value="solid" selected>Solid</option>
                   <option value="frosted">Frosted</option>
                 </select>
               </div>
@@ -4663,6 +4730,8 @@ async function fetchServerCaps() {
     updateResolutionAvailability();
     syncCustomFonts(Array.isArray(serverCaps.custom_fonts) ? serverCaps.custom_fonts : []);
     document.getElementById('poster-source-field').hidden = !(serverCaps.fanart_posters || serverCaps.tvdb_posters);
+    document.getElementById('landscape-art-source-field').hidden = !serverCaps.tvdb_posters;
+    if (!serverCaps.tvdb_posters) document.getElementById('cfg-landscape-art-source').value = 'tmdb';
     // Only the sources this instance offers; a restored choice it doesn't
     // offer falls back to TMDB.
     for (const opt of document.querySelectorAll('#cfg-poster-source option')) {
@@ -4673,7 +4742,8 @@ async function fetchServerCaps() {
     if (_srcSel.selectedOptions[0] && _srcSel.selectedOptions[0].hidden) _srcSel.value = 'tmdb';
     document.getElementById('poster-pick-field').hidden = !serverCaps.random_posters;
     // Restored before the caps answered, so the URL left them out.
-    if (vEl('cfg-poster-source') !== 'tmdb' || vEl('cfg-poster-pick') !== 'top') build();
+    if (vEl('cfg-poster-source') !== 'tmdb' || vEl('cfg-poster-pick') !== 'top'
+        || vEl('cfg-landscape-art-source') !== 'tmdb') build();
     document.getElementById('header-admin').hidden = !serverCaps.admin_link;
     
     if (serverCaps.trending_fetch_count) {
@@ -4824,6 +4894,7 @@ function updateScraperHint() {
   // "Consider Available if Source Found" needs quality data, so show it with
   // the quality-mode controls.
   document.getElementById('consider-available-field').style.display = qualityMode ? '' : 'none';
+  document.getElementById('quality-after-digital-field').style.display = qualityMode ? '' : 'none';
   // Every row in the Behaviour group is quality-mode-only, so the group heading
   // and its rule would otherwise stand alone in Hidden / Age Rating Only.
   document.getElementById('quality-behaviour-group').style.display = qualityMode ? '' : 'none';
@@ -4997,6 +5068,8 @@ function gbRender() {
       `<span class="${v === grp.align ? 'active' : ''}" onclick="gbSetAlign(${g}, '${v}')">${t}</span>`).join('');
   });
   document.getElementById('gb-cinema-style-field').style.display = st.assign.cinema ? '' : 'none';
+  document.getElementById('gb-quality-style-field').style.display =
+    (st.assign.video || st.assign.audio || st.assign.res) ? '' : 'none';
   list.innerHTML = '';
   st.order.forEach((id, idx) => {
     const slot = GB_SLOTS.find(s => s.id === id);
@@ -6519,6 +6592,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   // badge and info sizes to 1.00 on the next reload.
   if (emitLandscape || full) {
     params.set('landscape_art', vEl('cfg-landscape-art') || 'textless');
+    if (serverCaps.tvdb_posters && vEl('cfg-landscape-art-source') === 'tvdb') params.set('landscape_art_source', 'tvdb');
     params.set('badge_pos',     vEl('cfg-landscape-badge-pos') || 'top_left');
     params.set('landscape_badge_scale', n('cfg-landscape-badge-scale').toFixed(2));
     params.set('landscape_info_scale', n('cfg-landscape-info-scale').toFixed(2));
@@ -6533,6 +6607,27 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     if (c('tog-landscape-vignette-top')) params.set('landscape_vignette_top', 'true');
     params.set('landscape_score_out_of_10', c('tog-landscape-score-10') ? 'true' : 'false');
     params.set('landscape_score_star', c('tog-landscape-score-star') ? 'true' : 'false');
+    // Portrait settings brought over; each left out at its default.
+    if (c('tog-landscape-greyscale')) params.set('landscape_greyscale', 'true');
+    const _lbStyle = vEl('cfg-landscape-badge-style') || 'glass';
+    if (_lbStyle !== 'glass') {
+      params.set('landscape_badge_style', _lbStyle);
+      const _lbtc = document.getElementById('cfg-landscape-badge-text-color').value.trim();
+      if (/^[0-9a-fA-F]{6}$/.test(_lbtc)) params.set('landscape_badge_text_color', _lbtc);
+    }
+    if (c('tog-landscape-winner-star')) params.set('landscape_winner_star', 'true');
+    const _lls = n('cfg-landscape-logo-scale');
+    if (Math.abs(_lls - 1) > 1e-6) params.set('landscape_logo_scale', _lls.toFixed(2));
+    // The sites are the portrait's list, sent here too for a landscape-only URL.
+    if (c('tog-landscape-rating-badges') && vEl('cfg-rating-badges')) {
+      params.set('landscape_rating_badges', 'true');
+      params.set('rating_badges', ratingBadgesParam());
+      const _rbMax = ni('cfg-rating-badge-max');
+      if (_rbMax && _rbMax < ratingBadgeSources(vEl('cfg-rating-badges')).length)
+        params.set('rating_badge_max', _rbMax);
+      if (vEl('cfg-rating-badge-scale') === 'normalized') params.set('rating_badge_scale', 'normalized');
+      if (vEl('cfg-rating-badge-style') === 'mono') params.set('rating_badge_style', 'mono');
+    }
     // Only meaningful with a tinted band — there is nothing to link otherwise.
     if (lShared['tog-vignette-color-bottom'] === true || lShared['tog-vignette-color-bottom'] === 'true')
       params.set('landscape_color_link', vEl('cfg-landscape-color-link') || 'off');
@@ -6800,10 +6895,15 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   const _qualityShown = (emitAll && badgeUsesQuality(badgeMode, pGroups))
     || (emitLandscape && lBadgeMode === 7 && badgeUsesQuality(7, lGroups));
   if (_qualityShown && !params.has('badge_min_score')) params.set('badge_min_score', ni('cfg-badge-min-score'));
+  if (_qualityShown && c('tog-quality-after-digital')) params.set('quality_after_digital', 'true');
   // The cinema badge's style is one setting for both shapes, like the minimum.
   const _cinemaShown = (emitAll && badgeMode === 7 && pGroups.some(g => gbHasSlot(g, 'cinema')))
     || (emitLandscape && lBadgeMode === 7 && lGroups.some(g => gbHasSlot(g, 'cinema')));
   if (_cinemaShown && vEl('cfg-badge-cinema-style') === 'frosted') params.set('badge_cinema_style', 'frosted');
+  // Likewise the quality badges' look, wherever graphic badges show quality.
+  const _gbQualityShown = (emitAll && badgeMode === 7 && badgeUsesQuality(7, pGroups))
+    || (emitLandscape && lBadgeMode === 7 && badgeUsesQuality(7, lGroups));
+  if (_gbQualityShown && vEl('cfg-badge-quality-style') === 'frosted') params.set('badge_quality_style', 'frosted');
   if (_qualityShown && c('tog-wait-quality')) {
     params.set('wait_for_quality', 'true');
     if (c('tog-greyscale-noquality')) params.set('greyscale_no_quality', 'true');
@@ -7746,6 +7846,27 @@ function updateTrendingStyleFields() {
   if (style !== 'sash') initCustomMobileSliders();
 }
 
+// The Rating Badges group serves both shapes: the portrait's modes that print
+// a score, and landscape's own switch.
+function updateRatingBadgeRows() {
+  const hideRating = c('tog-hide-rating');
+  const shown = c('tog-landscape') ? c('tog-landscape-rating-badges') : _ratingLabelParts().badges;
+  document.getElementById('rating-badges-fields').style.display = (shown && !hideRating) ? '' : 'none';
+  document.getElementById('landscape-rating-badges-row').style.display = hideRating ? 'none' : '';
+}
+
+// The text colour is the dark pills'; the glass picks its own ink.
+function updateLandscapeBadgeFields() {
+  document.getElementById('landscape-badge-text-color-field').style.display =
+    (vEl('cfg-landscape-badge-style') || 'glass') !== 'glass' ? '' : 'none';
+}
+
+function _syncLandscapeBadgeColorPicker() {
+  const hex = document.getElementById('cfg-landscape-badge-text-color').value.trim();
+  if (/^[0-9a-fA-F]{6}$/.test(hex))
+    document.getElementById('cfg-landscape-badge-text-color-picker').value = '#' + hex;
+}
+
 function _syncSashColorPicker() {
   const hex = document.getElementById('cfg-sash-text-color').value.trim();
   if (/^[0-9a-fA-F]{6}$/.test(hex))
@@ -8106,6 +8227,8 @@ function updateShapeFields() {
   _updateLabelRows();
   document.getElementById('landscape-score10-row').style.display = c('tog-hide-rating') ? 'none' : '';
   document.getElementById('landscape-star-row').style.display    = c('tog-hide-rating') ? 'none' : '';
+  updateRatingBadgeRows();
+  updateLandscapeBadgeFields();
   // There is no diagonal sash or notch in landscape, only the badge: the mode
   // is drawn-or-not, so the segmented reads Hidden | Shown and the notch
   // button goes away.  "Shown" writes 'sash'; a 'notch' left over from an
@@ -8436,7 +8559,7 @@ function updateRatingFields() {
   document.getElementById('minimalist-score10-row').style.display   = (mode === 3 && !hideRating) ? '' : 'none';
   const labelParts = _ratingLabelParts();
   document.getElementById('bar-score10-row').style.display          = (labelParts.barScore && !hideRating) ? '' : 'none';
-  document.getElementById('rating-badges-fields').style.display     = (labelParts.badges && !hideRating) ? '' : 'none';
+  updateRatingBadgeRows();
   document.getElementById('rating-badge-scale-field').style.display = vEl('cfg-rating-badges') ? '' : 'none';
   // A cap means something once there is more than one site to choose from.
   document.getElementById('rating-badge-max-field').style.display =
@@ -8903,12 +9026,15 @@ function _buildPresetCard(grid, preset) {
 // Controls only one shape reads.  A preset for the other shape must not
 // touch them: a landscape preset says nothing about the rating bar, and
 // importing it would otherwise reset the rating bar to its defaults.
-const _LANDSCAPE_ONLY_CONTROLS = ['cfg-landscape-art', 'cfg-landscape-badge-pos',
+const _LANDSCAPE_ONLY_CONTROLS = ['cfg-landscape-art', 'cfg-landscape-art-source', 'cfg-landscape-badge-pos',
                                   'cfg-landscape-badge-scale', 'cfg-landscape-info-scale',
                                   'cfg-landscape-color-link', 'tog-landscape-score-10',
                                   'tog-landscape-score-star', 'cfg-landscape-logo-pos', 'cfg-landscape-logo-row',
                                   'cfg-landscape-info-row', 'cfg-landscape-info-col',
-                                  'tog-landscape-vignette-top'];
+                                  'tog-landscape-vignette-top', 'tog-landscape-greyscale',
+                                  'cfg-landscape-badge-style', 'cfg-landscape-badge-text-color',
+                                  'tog-landscape-winner-star', 'cfg-landscape-logo-scale',
+                                  'tog-landscape-rating-badges'];
 // Everything both shapes read, or that a preset never carries (identity and
 // keys — settingsOnly leaves them alone in any case).
 const _BOTH_SHAPES_CONTROLS = new Set([
@@ -9307,6 +9433,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (!preserveShape) {
     _setEl('tog-landscape', (p.get('shape') || '').toLowerCase() === 'landscape');
     _setEl('cfg-landscape-art',        p.get('landscape_art')        || 'textless');
+    _setEl('cfg-landscape-art-source', p.get('landscape_art_source') === 'tvdb' ? 'tvdb' : 'tmdb');
     _setEl('cfg-landscape-badge-pos',  p.get('badge_pos')            || 'top_left');
     _setEl('cfg-landscape-color-link', p.get('landscape_color_link') || 'badge_follows_vignette');
     _setEl('cfg-landscape-badge-scale', p.get('landscape_badge_scale') || '1.00');
@@ -9321,6 +9448,15 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
       _setEl('cfg-landscape-info-row', _okInfo ? _lir : 'auto');
       _setEl('cfg-landscape-info-col', _okInfo ? _lic : 'right'); }
     _setEl('tog-landscape-vignette-top', p.get('landscape_vignette_top') || 'false');
+    _setEl('tog-landscape-greyscale',   p.get('landscape_greyscale') || 'false');
+    _setEl('cfg-landscape-badge-style', ['black', 'silver', 'gold'].includes(p.get('landscape_badge_style'))
+      ? p.get('landscape_badge_style') : 'glass');
+    { const _lbtc = (p.get('landscape_badge_text_color') || '').replace('#', '').toUpperCase();
+      document.getElementById('cfg-landscape-badge-text-color').value = _lbtc;
+      _syncLandscapeBadgeColorPicker(); }
+    _setEl('tog-landscape-winner-star', p.get('landscape_winner_star') || 'false');
+    _setEl('cfg-landscape-logo-scale',  p.get('landscape_logo_scale') || '1.00');
+    _setEl('tog-landscape-rating-badges', p.get('landscape_rating_badges') || 'false');
   }
   // Anime ids carry no setting to restore: which ids a URL may use is decided
   // by the copy template now, so stremio_id / anilist_id / kitsu_id on an
@@ -9521,6 +9657,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('badge_group4')) _setEl('cfg-badge-group4', p.get('badge_group4'));
   // The old popcorn colours (timing, red, black, white) all read as Auto.
   _setEl('cfg-badge-cinema-style', p.get('badge_cinema_style') === 'frosted' ? 'frosted' : 'auto');
+  _setEl('cfg-badge-quality-style', p.get('badge_quality_style') === 'frosted' ? 'frosted' : 'solid');
   gbRender();
   // Seed the mode's defaults BEFORE applying the saved values, so a URL that
   // omits badge_height (/server-caps not answered yet) still gets a size that
@@ -9542,6 +9679,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('combined_badge_stacked'))  _setEl('tog-badge-stacked',    p.get('combined_badge_stacked') === 'true');
   if (p.has('wait_for_quality'))   _setEl('tog-wait-quality', p.get('wait_for_quality'));
   if (p.has('greyscale_no_quality')) _setEl('tog-greyscale-noquality', p.get('greyscale_no_quality'));
+  if (p.has('quality_after_digital')) _setEl('tog-quality-after-digital', p.get('quality_after_digital'));
 
   // ── Rating weights ──────────────────────────────────────────────────────
   function applyWeights(paramName, containerId, sources) {

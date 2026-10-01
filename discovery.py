@@ -512,6 +512,51 @@ def tv_release_facts(
     return None, None, None
 
 
+def tvdb_revival(
+    status: str | None,
+    tmdb_data: dict,
+    tvdb_series: dict | None,
+    *,
+    today: date | None = None,
+) -> "tuple[str, str | None, str | None] | None":
+    """``(status, upcoming_date, window)`` for a series TMDB has closed but
+    TVDB has carried on, else None.
+
+    TMDB can sit at "Ended" well after a show is renewed — Cyberpunk:
+    Edgerunners stayed a one-season miniseries there with its second season
+    already in TVDB.  A revival needs both halves of the evidence from TVDB
+    (tvdb.fetch_series_status): a season numbered past the last one TMDB
+    knows, and a dated sign of life — a future episode, or one aired in the
+    last TV_RECENT_EPISODE_DAYS.  Neither alone is enough: TVDB splits some
+    anime into more seasons than TMDB does, and its "continuing" is left on
+    some finished shows, so the status word isn't evidence on its own.
+    Needs TMDB's episode data to count seasons by, so a series from an anime
+    provider (one entry per season, no episode list) is never revived.
+
+    Read the way tv_release_facts reads TMDB's: a future episode dates the
+    renewal ("Oct 20 Season 2"), a recent one makes it on air.
+    """
+    if status not in ("Ended", "Cancelled") or not tvdb_series:
+        return None
+    today = today or date.today()
+    last_ep = tmdb_data.get("last_episode") or None
+    tmdb_last = max([_episode_season(last_ep) or 0,
+                     *(n for s in tmdb_data.get("seasons") or []
+                       if (n := _season_number(s)) is not None)])
+    if tmdb_last <= 0:
+        return None
+    newer = [n for n in tvdb_series.get("seasons") or [] if n > tmdb_last]
+    next_date = _parse_date(tvdb_series.get("next_aired"))
+    last_date = _parse_date(tvdb_series.get("last_aired"))
+    recent = last_date is not None and 0 <= (today - last_date).days <= TV_RECENT_EPISODE_DAYS
+    upcoming = next_date is not None and next_date >= today
+    if not (newer and (upcoming or recent)):
+        return None
+    if upcoming and next_date > today and not recent:
+        return "Renewed", next_date.isoformat(), season_window(newer[0])
+    return "Airing", None, None
+
+
 def _season_number(season: dict) -> int | None:
     try:
         return int(season.get("season_number"))

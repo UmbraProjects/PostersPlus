@@ -924,6 +924,7 @@ from discovery import (
     pick_sash,
     shown_trending_rank,
     tv_release_facts,
+    tvdb_revival,
 )
 from quality import (
     QUALITY_PENDING,
@@ -1819,6 +1820,9 @@ class RequestConfig:
     badge_group4:             str  = ""
     # The "cinema" slot's disc look — graphic_badges.CINEMA_STYLES.
     badge_cinema_style:       str  = graphic_badges.DEFAULT_CINEMA_STYLE
+    # The quality marks' look — graphic_badges.QUALITY_STYLES: "solid" (the
+    # filled boxes and bare Dolby marks) or "frosted" (each on a glass chip).
+    badge_quality_style:      str  = graphic_badges.DEFAULT_QUALITY_STYLE
 
     movie_weights: dict | None = None
     tv_weights:    dict | None = None
@@ -1948,6 +1952,11 @@ class RequestConfig:
     #   "original" — the highest-voted language-tagged backdrop (title treatment
     #                already baked in), served as-is with no logo of ours
     landscape_art: str = "textless"
+    # Where landscape art comes from: "tmdb" (default) or "tvdb" — TVDB's
+    # best no-language background for textless, or its best background in
+    # the request's language for original.  TMDB's when TVDB has none.
+    # Offered with the TVDB poster source (TVDB_POSTER_SOURCE).
+    landscape_art_source: str = "tmdb"
     # Where the info badge sits: a corner ("top_left" | "top_right" |
     # "bottom_left" | "bottom_right") or "logo", stacked on the logo; with no
     # logo of ours drawn it takes the logo's slot itself.  A badge that lands
@@ -1980,6 +1989,25 @@ class RequestConfig:
     landscape_info_scale: float = 1.0   # size of the landscape "Genre • Year • Score" line
     landscape_score_out_of_10: bool = False   # "8.7" rather than "87" on that line
     landscape_score_star: bool = False        # "★ 87" as Clean labels it, in place of "• 87"
+    # Portrait settings brought to landscape.  Each is a landscape setting of
+    # its own, off (or as it was) by default, so a "{shape}" URL's landscape
+    # side is unchanged until it asks:
+    #   landscape_greyscale        — greyscale art while a film is in cinemas or
+    #                                not out (cinema_greyscale, without needing
+    #                                the release-status sash)
+    #   landscape_badge_style      — the info pill: "glass" (the frosted glass it
+    #                                has always been) | "black" | "silver" | "gold"
+    #   landscape_badge_text_color — the dark pills' label colour
+    #   landscape_winner_star      — a ★ on an award winner's pill
+    #   landscape_logo_scale       — the logo's (or drawn title's) box, x0.5-1.5
+    #   landscape_rating_badges    — the rating_badges sites' scores on the info
+    #                                line, in place of the weighted score
+    landscape_greyscale: bool = False
+    landscape_badge_style: str = "glass"
+    landscape_badge_text_color: tuple[int, int, int] | None = None
+    landscape_winner_star: bool = False
+    landscape_logo_scale: float = 1.0
+    landscape_rating_badges: bool = False
     score_color_mode: int = 2
     score_custom_palette: CustomScorePalette | None = None
     sash_badge: bool = False              # legacy; superseded by sash_mode (kept for back-compat parsing)
@@ -2026,6 +2054,11 @@ class RequestConfig:
     trending_sash:     str   = "keep"
     wait_for_quality: bool = False  # block response until quality is fetched (for poster-warm workflows)
     greyscale_no_quality: bool = False  # greyscale art when no quality found (needs wait_for_quality)
+    # Drop the quality a film still in cinemas (or not out at all) turns up
+    # with: before its digital release a "4K" is a cam or a mislabel.  Out
+    # digitally is TMDB's digital or disc date passing, or a movieleaks post
+    # (the release status's own rule).  Movies only; series have no date.
+    quality_after_digital: bool = False
     rating_text_color: tuple[int, int, int] | None = None
     sash_text_color:   tuple[int, int, int] | None = None
 
@@ -2378,7 +2411,12 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "landscape_graphic_badges": False, "landscape_info_pos": "auto",
                               "rating_badge_kinds": "", "rating_badge_max": 0,
                               "sash_chip_x": 0.0, "sash_edge_y": 0.5, "meta_order": "",
-                              "label_font": fonts.DEFAULT_LABEL_FONT}
+                              "label_font": fonts.DEFAULT_LABEL_FONT,
+                              "quality_after_digital": False, "landscape_art_source": "tmdb",
+                              "landscape_greyscale": False, "landscape_badge_style": "glass",
+                              "landscape_badge_text_color": None, "landscape_winner_star": False,
+                              "landscape_logo_scale": 1.0, "landscape_rating_badges": False,
+                              "badge_quality_style": graphic_badges.DEFAULT_QUALITY_STYLE}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -2543,6 +2581,14 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.landscape_info_scale  = _f("landscape_info_scale",  cfg.landscape_info_scale,  0.5, 2.0)
     cfg.landscape_score_out_of_10 = _b("landscape_score_out_of_10", cfg.landscape_score_out_of_10)
     cfg.landscape_score_star      = _b("landscape_score_star",      cfg.landscape_score_star)
+    cfg.landscape_greyscale       = _b("landscape_greyscale",       cfg.landscape_greyscale)
+    _ls_style = (params.get("landscape_badge_style") or "").strip().lower()
+    if _ls_style in ("glass", "black", "silver", "gold"):
+        cfg.landscape_badge_style = _ls_style
+    cfg.landscape_badge_text_color = _parse_hex_color(params.get("landscape_badge_text_color"))
+    cfg.landscape_winner_star     = _b("landscape_winner_star",     cfg.landscape_winner_star)
+    cfg.landscape_logo_scale      = _f("landscape_logo_scale",      cfg.landscape_logo_scale, 0.5, 1.5)
+    cfg.landscape_rating_badges   = _b("landscape_rating_badges",   cfg.landscape_rating_badges)
 
     cfg.sash_badge              = _b("sash_badge",              cfg.sash_badge)
     # sash_mode supersedes the legacy sash_badge bool; fall back to it for old
@@ -2599,6 +2645,7 @@ def build_request_config(params: dict) -> RequestConfig:
         cfg.trending_sash = _tsash_raw
     cfg.wait_for_quality        = _b("wait_for_quality",        cfg.wait_for_quality)
     cfg.greyscale_no_quality    = _b("greyscale_no_quality",    cfg.greyscale_no_quality)
+    cfg.quality_after_digital   = _b("quality_after_digital",   cfg.quality_after_digital)
     cfg.score_color_mode        = _i("score_color_mode",       cfg.score_color_mode,       0,   3)
     cfg.score_custom_palette    = parse_custom_score_palette(params.get("score_custom_palette"))
     cfg.badge_display_mode      = _i("badge_display_mode",     cfg.badge_display_mode,     0,   7)
@@ -2699,6 +2746,9 @@ def build_request_config(params: dict) -> RequestConfig:
     _cinema_style = graphic_badges.cinema_style(params.get("badge_cinema_style"))
     if _cinema_style:
         cfg.badge_cinema_style = _cinema_style
+    _quality_style = graphic_badges.quality_style(params.get("badge_quality_style"))
+    if _quality_style:
+        cfg.badge_quality_style = _quality_style
 
     all_sources = list(_cfg.MOVIE_WEIGHTS.keys())
     cfg.movie_weights = _parse_weights(params.get("movie_weights"), all_sources)
@@ -2754,6 +2804,8 @@ def build_request_config(params: dict) -> RequestConfig:
         cfg.poster_pick = "random"
     if cfg.shape == "landscape":
         cfg.poster_source, cfg.poster_pick = "tmdb", "top"
+        if (params.get("landscape_art_source") or "").strip().lower() == "tvdb" and tvdb.poster_source_enabled():
+            cfg.landscape_art_source = "tvdb"
     cfg.sash_priority        = _parse_sash_priority(params.get("sash_priority"))
     cfg.rating_text_color    = _parse_hex_color(params.get("rating_text_color"))
     cfg.sash_text_color      = _parse_hex_color(params.get("sash_text_color"))
@@ -3863,16 +3915,7 @@ def _build_poster(
     #   - greyscale_no_quality: no stream quality was found.  Only meaningful
     #     when wait_for_quality is on (otherwise tokens may just not be fetched
     #     yet), so it's gated on it.
-    _cinema_grey = (cfg.cinema_greyscale and discovery_meta is not None
-                    and discovery_meta.release_status in ("Cinema", "Production"))
-    # Override: if a real digital source (Web / Remux) was found, the title is
-    # actually available — keep it in colour despite the cinema/production status.
-    if (_cinema_grey and cfg.cinema_greyscale_skip_if_available and quality_tokens
-            and any(t in ("WEBDL", "REMUX") for t in quality_tokens)):
-        _cinema_grey = False
-    _noquality_grey = (cfg.greyscale_no_quality and cfg.wait_for_quality and not quality_tokens
-                       and _uses_quality(cfg))
-    _greyscaled = _cinema_grey or _noquality_grey
+    _greyscaled = _greyscale_wanted(cfg, discovery_meta, quality_tokens, cfg.cinema_greyscale)
     if _greyscaled:
         image = ImageOps.grayscale(image).convert("RGBA")
 
@@ -4453,7 +4496,10 @@ def _build_poster(
     _frost_tint: tuple[float, float, float] | None = (
         dominant_frost_rgb(_frost_color_src)
         if (_bar_frosted or _notch_frosted or _sash_poster or _ribbon_frosted
-            or (cinema_run is not None and graphic_badges.wants_frost(cfg.badge_cinema_style))) else None
+            or (cinema_run is not None and graphic_badges.wants_frost(cfg.badge_cinema_style))
+            or (cfg.badge_display_mode == 7 and graphic_badges.wants_frost(cfg.badge_quality_style)
+                and quality_tokens and graphic_badges.groups_use_quality(cfg)
+                and _score_points(quality_tokens) >= cfg.badge_min_score)) else None
     )
     # A tinted vignette and a frosted notch sample the same artwork but answer
     # different questions — the vignette asks what the band's own stretch of art is
@@ -4996,9 +5042,13 @@ def _build_poster(
             badge_logos = (*badge_logos[:2], graphic_badges.cinema_ink(
                 cfg.badge_cinema_style, cinema_run,
                 _frosted_tint(*_frost_tint, saturation=_frost_sat, reference=_frost_ref)))
+        _qlook = graphic_badges.quality_look(
+            cfg.badge_quality_style,
+            _frosted_tint(*_frost_tint, saturation=_frost_sat, reference=_frost_ref)
+            if _frost_tint is not None else None)
         _draw_graphic_badges(image, cfg, quality_tokens or [], certification, age_rating,
                              _before_overlays, spread_beside_chip=_auto_notch, logo_box=_logo_box,
-                             logos=badge_logos)
+                             logos=badge_logos, quality_look=_qlook)
 
     return image
 
@@ -5090,6 +5140,26 @@ def _group_anchor(cfg: "RequestConfig", anchor: str) -> tuple[bool, bool]:
     return True, True
 
 
+def _greyscale_wanted(cfg: "RequestConfig", discovery_meta, quality_tokens: list[str] | None,
+                      cinema_on: bool, quality_shown: bool | None = None) -> bool:
+    """Whether to greyscale the art (see build_poster), for either shape.
+    ``cinema_on`` is the shape's own cinema switch (cinema_greyscale, or
+    landscape_greyscale); ``quality_shown`` whether this render draws quality
+    at all (portrait's _uses_quality by default)."""
+    cinema = (cinema_on and discovery_meta is not None
+              and discovery_meta.release_status in ("Cinema", "Production"))
+    # Override: if a real digital source (Web / Remux) was found, the title is
+    # actually available — keep it in colour despite the cinema/production status.
+    if (cinema and cfg.cinema_greyscale_skip_if_available and quality_tokens
+            and any(t in ("WEBDL", "REMUX") for t in quality_tokens)):
+        cinema = False
+    if quality_shown is None:
+        quality_shown = _uses_quality(cfg)
+    no_quality = (cfg.greyscale_no_quality and cfg.wait_for_quality and not quality_tokens
+                  and quality_shown)
+    return cinema or no_quality
+
+
 def _auto_notch_pos(cfg: "RequestConfig", tokens: list[str], certification: str | None,
                     age_rating: int | None, logos: tuple = (None, None)) -> str:
     """Where an "auto" notch goes on this title: beside the graphic badges
@@ -5129,9 +5199,10 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
                          certification: str | None, age_rating: int | None,
                          before: np.ndarray, spread_beside_chip: str | None = None,
                          logo_box: tuple[int, int, int, int] | None = None,
-                         logos: tuple = (None, None)) -> None:
+                         logos: tuple = (None, None), quality_look: str | None = None) -> None:
     """Each graphic badge group as a row at its anchor, in the space the other
-    overlays left.
+    overlays left.  ``quality_look`` (graphic_badges.quality_look) frosts the
+    quality marks.
 
     ``spread_beside_chip`` (an auto notch that became a side chip) lays a
     "chip" group out from the chip instead: "spread" fills the space beside
@@ -5170,7 +5241,8 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
         g_unit = max(8, round(group.size * 1.5 * height / 750))
         g_gap = px(width * group.spacing)
         items = graphic_badges.row_items(tokens, certification, age_rating, g_unit,
-                                         group.slots, show_quality, *logos)[:group.max_items]
+                                         group.slots, show_quality, *logos,
+                                         quality_look=quality_look)[:group.max_items]
         if not items:
             continue
         if group.xy is not None:
@@ -5197,7 +5269,7 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
                     image,
                     lambda unit, _g=group: graphic_badges.row_items(
                         tokens, certification, age_rating, unit, _g.slots, show_quality,
-                        *logos)[:_g.max_items],
+                        *logos, quality_look=quality_look)[:_g.max_items],
                     band_cols(top_line), right, top_line, margin, g_gap,
                     unit=g_unit, max_unit=band_h)):
             continue
@@ -9764,6 +9836,18 @@ async def get_poster(
                 # already in the art; don't double it with our logo.
                 is_textless = bool(backdrop_path)
             _use_backdrop = False
+            # TVDB's background instead, when asked for and it has one: the
+            # untagged ones are clean art, the tagged ones carry the title.
+            if rcfg.landscape_art_source == "tvdb" and not use_cinemeta:
+                _tv_bg = await tvdb.tvdb_poster_url(
+                    client, media_type=type, tmdb_id=tmdb_id if has_tmdb_id else None,
+                    imdb_id=effective_imdb_id, kind="backgrounds",
+                    languages=_poster_language_order if rcfg.landscape_art == "original" else None,
+                )
+                if _tv_bg:
+                    _ls_path    = _tv_bg
+                    is_textless = rcfg.landscape_art != "original"
+                    logger.info(f"TVDB landscape art for {tmdb_id}: {_tv_bg}")
             # The operator's chosen landscape art (dashboard → Artwork), by the
             # same language walk as original-art posters.  Rows cached before
             # the text-backdrop languages were kept don't know them, so there
@@ -10460,7 +10544,8 @@ async def get_poster(
             return (_scheduled_digital is None
                     or (_scheduled_digital - datetime.now().date()).days <= _LEAK_LEAD_DAYS)
         _status_sash = any(s in rcfg.sash_priority for s in _rs_slots)
-        _status_grey = rcfg.cinema_greyscale and rcfg.cinema_greyscale_without_sash
+        _status_grey = (rcfg.landscape_greyscale if _is_landscape
+                        else rcfg.cinema_greyscale and rcfg.cinema_greyscale_without_sash)
         # The cinema badge: a film still in cinemas (or not out at all),
         # shown without a sash — or beside a different one.
         # A series gets it too while it waits to premiere: its premiere date,
@@ -10469,7 +10554,11 @@ async def get_poster(
             (rcfg.landscape_graphic_badges if _is_landscape else rcfg.badge_display_mode == 7)
             and any("cinema" in g.slots for g in graphic_badges.cfg_groups(rcfg))
         )
-        if _status_sash or _status_grey or _cinema_badge or rcfg.hide_unreleased_rating:
+        # Quality found before a film is out digitally is set aside below
+        # (quality_after_digital), which needs the status to say whether it is.
+        _quality_gate = (rcfg.quality_after_digital and bool(quality_tokens)
+                         and type not in ("tv", "series"))
+        if _status_sash or _status_grey or _cinema_badge or rcfg.hide_unreleased_rating or _quality_gate:
             # Resolved for every title regardless of age.  There used to be an
             # age gate here that skipped the lookup for anything older than a
             # configurable limit, but it silently blanked the status on older
@@ -10496,6 +10585,16 @@ async def get_poster(
                     _release_status, _tv_upcoming_date, _tv_upcoming_window = (
                         tv_release_facts(tmdb_data.get("tmdb_status"), tmdb_data)
                     )
+                # TMDB is slow to reopen a show it has closed; TVDB may
+                # already list the next season (see tvdb_revival).
+                if type in ("tv", "series") and _release_status in ("Ended", "Cancelled"):
+                    _revived = tvdb_revival(_release_status, tmdb_data, await tvdb.fetch_series_status(
+                        client, tvdb_id_hint=tmdb_data.get("tvdb_id"), imdb_id=effective_imdb_id,
+                        tmdb_id=tmdb_id if has_tmdb_id else None))
+                    if _revived:
+                        logger.info(f"{canonical_id}: TMDB says {_release_status}, TVDB lists a "
+                                    f"later season -> {_revived}")
+                        _release_status, _tv_upcoming_date, _tv_upcoming_window = _revived
             elif use_cinemeta and tmdb_data.get("cinemeta_theatrical_date"):
                 # No key, so no /release_dates: Cinemeta's theatrical and disc
                 # dates stand in, through the same rule TMDB's dates go
@@ -10568,6 +10667,14 @@ async def get_poster(
         # hidden has to re-check on the status tier so the score appears once
         # the title is out.
         _status_for_ttl = _release_status
+        # "Cinema" and "Production" are the statuses of a film not yet out at
+        # home — a leak has already moved it on to "Streaming" above.  Cleared
+        # before the render, so every quality-driven thing (badges, the
+        # no-quality greyscale, "Consider Available") reads it as unfound.
+        if _quality_gate and _release_status in ("Cinema", "Production"):
+            logger.info(f"Quality for {canonical_id} set aside: {quality_tokens} "
+                        f"before digital release ({_release_status})")
+            quality_tokens = []
         if _status_grey and not _status_sash:
             # Kept for the greyscale alone.  No status slot is listed, so it is
             # never a sash, and build_poster's move of that slot to the front
@@ -10900,7 +11007,8 @@ async def get_poster(
         # instance).  A mark that can't be had yet leaves its badge out, so a
         # render missing one isn't kept.
         _rating_badges_missing = False
-        if (_render_cfg.rating_badges and not _is_landscape and rcfg.rating_display_mode in (2, 3, 4)
+        if (_render_cfg.rating_badges
+                and (rcfg.landscape_rating_badges if _is_landscape else rcfg.rating_display_mode in (2, 3, 4))
                 and not _render_cfg.hide_rating and isinstance(ratings_dict, dict)):
             _rb_shown = [p for p, _ in rating_badges.entries(ratings_dict, _render_cfg.rating_badges, score)]
             if rcfg.rating_badge_max:
