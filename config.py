@@ -195,6 +195,8 @@ CINEMETA_API_BASE = _env('CINEMETA_API_BASE', "https://v3-cinemeta.strem.io", gr
 # These engage only when a client passes an anime id (anilist_id / kitsu_id, or
 # one inside stremio_id), so metadata providers that only speak imdb/tmdb/tvdb
 # are completely unaffected.  Nothing is ever converted TO an anime id.  Neither provider requires an API key.
+# A MyAnimeList id (mal_id, or mal: in stremio_id) is rendered as the Kitsu or
+# AniList id the mapping below gives it, so it needs ANIME_ID_MAP_ENABLED.
 ANIME_SOURCES_ENABLED = _flag(_env("ANIME_SOURCES_ENABLED", "true", group='Anime sources', kind='bool', label='Anime sources', help='Serve art, titles, genres and a community score from AniList and Kitsu when a client passes an anilist_id or kitsu_id (or a kitsu:/anilist: stremio_id). Clients that only speak imdb/tmdb are unaffected. Neither provider needs an API key.'), True)
 # Composite a title logo over anime cover art. On by default: that art either
 # carries no logotype or a small block of Japanese corner text most viewers
@@ -210,7 +212,7 @@ ANIME_COMPOSITE_LOGO  = _flag(_env("ANIME_COMPOSITE_LOGO", "true", group='Anime 
 # enrichment.  This is what makes a client that can only send "{id}" for an
 # anime title (Nuvio's own pattern resolver: "kitsu:7442" and nothing else)
 # render the same poster as one that goes through AIOMetadata.
-ANIME_ID_MAP_ENABLED = _flag(_env("ANIME_ID_MAP_ENABLED", "true", group='Anime sources', kind='bool', label='Anime id mapping', help="Fill in the TMDB and IMDb ids an anime request didn't send, from the community Kitsu/AniList mapping list (downloaded daily into a local table). Lets a client that only sends a kitsu: or anilist: id get TMDB logos, landscape backdrops and IMDb-keyed ratings; art still comes from the anime provider."), True)
+ANIME_ID_MAP_ENABLED = _flag(_env("ANIME_ID_MAP_ENABLED", "true", group='Anime sources', kind='bool', label='Anime id mapping', help="Fill in the TMDB and IMDb ids an anime request didn't send, from the community Kitsu/AniList mapping list (downloaded daily into a local table). Lets a client that only sends a kitsu: or anilist: id get TMDB logos, landscape backdrops and IMDb-keyed ratings; art still comes from the anime provider. Also what lets a MyAnimeList id (mal_id, or a mal: stremio_id) render, as the Kitsu or AniList entry it maps to."), True)
 ANIME_ID_MAP_URL     = _env('ANIME_ID_MAP_URL', "https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-full.json", group='Anime sources', show_if=('ANIME_ID_MAP_ENABLED', 'true'), kind='url', label='Anime id mapping source', help="Where the mapping list is downloaded from. Must be Fribb's anime-list-full.json format.", advanced=True).strip()
 ANIME_ID_MAP_PATH    = "/app/cache/anime_ids.db"
 ANIME_ID_MAP_REFRESH_HOURS = 24

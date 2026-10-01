@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### MyAnimeList ids
+
+- Anime requested by **MyAnimeList id** now renders: `mal_id=`, or a
+  `mal:1535` Stremio id in `stremio_id={id}`. MAL itself needs auth, so the
+  id is looked up in the same community mapping as Kitsu/AniList ids and
+  rendered as its Kitsu entry (AniList when there's no Kitsu id). A Kitsu or
+  AniList id sent alongside wins; a MAL id the mapping doesn't know renders
+  as before.
+
 ### Landscape catches up, and frosted quality badges
 
 - **Frosted quality badges**: Quality Badge Style (Quality tab, Graphic

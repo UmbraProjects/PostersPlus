@@ -16,8 +16,14 @@ request is missing, so it renders the same poster the AIOMetadata request does.
 
 Same shape as imdb_dataset.py: one worker downloads the list on a timer and
 swaps it into a small SQLite table; every worker answers point lookups from
-that table. Lookups never touch the network. When disabled, or before the first
-download lands, lookups return None and requests render exactly as before.
+that table. Lookups never touch the network.
+
+MyAnimeList ids ride on the same list: MAL's API needs auth, so it is never an
+art source, but every MAL id the list knows is translated to the Kitsu (else
+AniList) id of the same entry, and the request renders as if it had sent that.
+
+When disabled, or before the first download lands, lookups return None and
+requests render exactly as before.
 """
 import asyncio
 import json
@@ -43,7 +49,9 @@ logger = logging.getLogger(__name__)
 
 # Shared across worker processes via cache.db's app_state table, so only one
 # worker per interval performs the download (see imdb_dataset_refresh_loop).
-_REFRESH_CLAIM_KEY = "anime_id_map_refresh_claimed_at"
+# Renamed when the tables gain one, so the first worker after an upgrade
+# rebuilds at once instead of waiting out the previous day's claim.
+_REFRESH_CLAIM_KEY = "anime_id_map_refresh_claimed_at:mal"
 _NOT_READY_RETRY_SECS = 60
 # The namespaces anime.py sources art from, and the list's field for each.
 _NAMESPACE_FIELDS = {"kitsu": "kitsu_id", "anilist": "anilist_id"}
@@ -56,6 +64,15 @@ _SCHEMA = """
         tmdb_movie  INTEGER,
         imdb_id     TEXT,
         PRIMARY KEY (namespace, anime_id)
+    )
+"""
+
+# MAL id -> the provider ids of the same entry (see mal_to_provider).
+_MAL_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS {table} (
+        mal_id      INTEGER PRIMARY KEY,
+        kitsu_id    INTEGER,
+        anilist_id  INTEGER
     )
 """
 
@@ -92,6 +109,7 @@ def _get_db() -> sqlite3.Connection:
         conn = sqlite3.connect(ANIME_ID_MAP_PATH, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(_SCHEMA.format(table="anime_id_map"))
+        conn.execute(_MAL_SCHEMA.format(table="anime_mal_map"))
         for ddl in _INDEXES:
             conn.execute(ddl)
         conn.commit()
@@ -160,6 +178,31 @@ def lookup(namespace: str, anime_id: int, media_type: str) -> MappedIds | None:
     return MappedIds(str(tmdb) if tmdb is not None else None, imdb_id or None)
 
 
+def mal_to_provider(mal_id: int) -> "tuple[str, int] | None":
+    """The provider id to render a MyAnimeList id as: ("kitsu", 7442), or
+    ("anilist", 16498) when the entry has no Kitsu id, or None when the list
+    doesn't know it. Kitsu first because its covers are about twice
+    AniList's resolution.  One indexed SQLite lookup, like lookup()."""
+    if not is_enabled():
+        return None
+    try:
+        row = _get_db().execute(
+            "SELECT kitsu_id, anilist_id FROM anime_mal_map WHERE mal_id = ?",
+            (int(mal_id),),
+        ).fetchone()
+    except Exception as exc:
+        logger.warning(f"Anime id mapping lookup failed for mal:{mal_id}: {exc}")
+        return None
+    if row is None:
+        return None
+    kitsu_id, anilist_id = row
+    if kitsu_id is not None:
+        return "kitsu", int(kitsu_id)
+    if anilist_id is not None:
+        return "anilist", int(anilist_id)
+    return None
+
+
 def reverse_lookup(media_type: str, tmdb_id: str | None, imdb_id: str | None) -> dict[str, int]:
     """The AniList and Kitsu ids the list gives a TMDB or IMDb title, by
     namespace ({"anilist": 21, "kitsu": 11}); empty when it isn't anime.
@@ -222,6 +265,27 @@ def _rows_from_list(entries: list) -> "list[tuple]":
     return list(rows.values())
 
 
+def _mal_rows_from_list(entries: list) -> "list[tuple]":
+    """(mal_id, kitsu_id, anilist_id) for every entry with a MAL id and at
+    least one provider id. Unlike _rows_from_list, an entry with no TMDB or
+    IMDb id still counts: the provider id alone is enough to render."""
+    rows: dict[int, tuple] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        mal_id = entry.get("mal_id")
+        if not isinstance(mal_id, int) or mal_id <= 0:
+            continue
+        kitsu_id = entry.get("kitsu_id")
+        anilist_id = entry.get("anilist_id")
+        kitsu_id = kitsu_id if isinstance(kitsu_id, int) else None
+        anilist_id = anilist_id if isinstance(anilist_id, int) else None
+        if kitsu_id is None and anilist_id is None:
+            continue
+        rows.setdefault(mal_id, (mal_id, kitsu_id, anilist_id))
+    return list(rows.values())
+
+
 async def refresh_mapping(client: httpx.AsyncClient) -> int:
     """Download the list and swap it into the table. Returns rows loaded."""
     global _last_refresh_ts, _last_refresh_error, _row_count
@@ -238,7 +302,9 @@ async def refresh_mapping(client: httpx.AsyncClient) -> int:
         return 0
 
     def _parse_and_load() -> int:
-        rows = _rows_from_list(json.loads(raw))
+        entries = json.loads(raw)
+        rows = _rows_from_list(entries)
+        mal_rows = _mal_rows_from_list(entries)
         if not rows:
             raise ValueError("the list parsed but mapped nothing — not replacing the table")
         conn = sqlite3.connect(ANIME_ID_MAP_PATH, check_same_thread=False)
@@ -253,15 +319,20 @@ async def refresh_mapping(client: httpx.AsyncClient) -> int:
             conn.executemany("INSERT INTO anime_id_map_new VALUES (?, ?, ?, ?, ?)", rows)
             conn.execute("DROP TABLE anime_id_map")
             conn.execute("ALTER TABLE anime_id_map_new RENAME TO anime_id_map")
+            conn.execute("DROP TABLE IF EXISTS anime_mal_map_new")
+            conn.execute(_MAL_SCHEMA.format(table="anime_mal_map_new"))
+            conn.executemany("INSERT INTO anime_mal_map_new VALUES (?, ?, ?)", mal_rows)
+            conn.execute("DROP TABLE IF EXISTS anime_mal_map")
+            conn.execute("ALTER TABLE anime_mal_map_new RENAME TO anime_mal_map")
             for ddl in _INDEXES:
                 conn.execute(ddl)
             conn.commit()
         finally:
             conn.close()
-        return len(rows)
+        return len(rows), len(mal_rows)
 
     try:
-        count = await asyncio.get_running_loop().run_in_executor(None, _parse_and_load)
+        count, mal_count = await asyncio.get_running_loop().run_in_executor(None, _parse_and_load)
     except Exception as exc:
         _last_refresh_error = f"parse/load failed: {exc}"
         logger.error(f"Anime id mapping parse/load failed: {exc}")
@@ -276,7 +347,7 @@ async def refresh_mapping(client: httpx.AsyncClient) -> int:
     _last_refresh_ts = time.time()
     _last_refresh_error = None
     _row_count = count
-    logger.info(f"Anime id mapping refreshed: {count} kitsu/anilist ids loaded")
+    logger.info(f"Anime id mapping refreshed: {count} kitsu/anilist ids, {mal_count} MAL ids loaded")
     return count
 
 

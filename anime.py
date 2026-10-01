@@ -50,6 +50,9 @@ from config import (
 # handler.  Kept as a tuple so the id-parsing helper and the query-param list in
 # main.py can't drift apart.
 NAMESPACES = ("anilist", "kitsu")
+# Also parsed, though never fetched from: MAL needs auth, so a MAL id is
+# translated to a provider id through anime_ids before anything is fetched.
+ID_NAMESPACES = NAMESPACES + ("mal",)
 
 _SENTINEL_MISS = {"__miss__": True}
 
@@ -86,7 +89,7 @@ def _get_semaphore(namespace: str) -> "asyncio.Semaphore":
 def parse_anime_id(namespace: str, raw: str) -> int | None:
     """Validate a caller-supplied anime id.  Both providers use plain positive
     integers; anything else is rejected rather than passed upstream."""
-    if namespace not in NAMESPACES:
+    if namespace not in ID_NAMESPACES:
         return None
     raw = (raw or "").strip()
     # Tolerate the Stremio-style prefixed form ("kitsu:12345") as well as a bare
@@ -114,16 +117,17 @@ def parse_stremio_id(raw: str) -> "tuple[str | None, int | None]":
 
     Stremio ids look like ``tt0903747``, ``tmdb:1396``, ``kitsu:7442`` or
     ``kitsu:7442:1:2`` (with season/episode). Only the anime namespaces we
-    actually support are recognised; everything else returns (None, None) so
-    the caller takes the ordinary TMDB path.
+    support are recognised — ``mal:`` included, which the caller translates to
+    a provider id; everything else returns (None, None) so the caller takes the
+    ordinary TMDB path.
     """
     raw = (raw or "").strip()
     if ":" not in raw:
         return None, None
     namespace, _, rest = raw.partition(":")
     namespace = namespace.strip().lower()
-    if namespace not in NAMESPACES:
-        # tt…, tmdb:, tvdb:, and the mal:/anidb: namespaces we don't source from.
+    if namespace not in ID_NAMESPACES:
+        # tt…, tmdb:, tvdb:, and anidb:, which we don't source from.
         return None, None
     # Drop any season/episode suffix.
     parsed = parse_anime_id(namespace, rest.split(":", 1)[0])

@@ -109,7 +109,7 @@ https://yourdomain.com/logo?tmdb_id={tmdb_id}&type={type}&lang=en
 
 Either id identifies the title, as on `/poster`. With both, `imdb_id` enables the Metahub fallback when TMDB metadata cannot supply one; without a TMDB key, Metahub is the only logo source. `access_key` and `tmdb_key` follow the same rules as `/poster`.
 
-### Anime IDs (AniList / Kitsu)
+### Anime IDs (AniList / Kitsu / MyAnimeList)
 
 Advanced metadata providers such as AIOMetadata can pass an anime-native id instead of `tmdb_id`/`imdb_id`, in which case the cover art, title, genres, air dates, status and community score all come from that provider:
 
@@ -118,7 +118,9 @@ https://yourdomain.com/poster?anilist_id={anilist_id}&type=series
 https://yourdomain.com/poster?kitsu_id={kitsu_id}&type=series
 ```
 
-No id conversion happens in either direction. If your client can't supply one of these ids, don't use these parameters — simpler providers group anime under TV series with `tmdb_id`/`imdb_id` and keep working exactly as before. Both bare (`12345`) and Stremio-prefixed (`kitsu:12345`) forms are accepted. When both params are supplied, AniList wins.
+A **MyAnimeList** id works too — `mal_id={mal_id}`, or `mal:1535` in `stremio_id` — but MAL's API needs auth, so it is never the art source: PostersPlus looks it up in the community mapping ([Fribb's anime-lists](https://github.com/Fribb/anime-lists), the same one AIOMetadata uses) and renders the Kitsu entry it maps to, or the AniList one when there's no Kitsu id. A MAL id the list doesn't know renders like any non-anime id. This needs `ANIME_ID_MAP_ENABLED` (on by default). When a Kitsu or AniList id is sent too, that one wins.
+
+If your client can't supply one of these ids, don't use these parameters — simpler providers group anime under TV series with `tmdb_id`/`imdb_id` and keep working exactly as before. Both bare (`12345`) and Stremio-prefixed (`kitsu:12345`) forms are accepted. When both params are supplied, AniList wins.
 
 There is nothing to switch on: the configurator's [client templates](#client-templates) append the placeholder for the clients that can resolve an anime id and leave it off for the ones that can't.
 
@@ -126,7 +128,7 @@ There is nothing to switch on: the configurator's [client templates](#client-tem
 ?tmdb_id={tmdb_id?}&imdb_id={imdb_id?}&stremio_id={id}&type={type}
 ```
 
-`{id}` is the raw Stremio / Nuvio meta id — `kitsu:7442` for a Kitsu-catalogue anime, `tt0903747` or `tmdb:1396` otherwise. PostersPlus reads the namespace off it and ignores anything that isn't an anime id, so the same URL serves your whole library. When it holds an IMDb id, that is also used as the title's identity, which shares its rating cache row with clients that send `imdb_id` directly.
+`{id}` is the raw Stremio / Nuvio meta id — `kitsu:7442` for a Kitsu-catalogue anime, `mal:1535` for a MyAnimeList one, `tt0903747` or `tmdb:1396` otherwise. PostersPlus reads the namespace off it and ignores anything that isn't an anime id, so the same URL serves your whole library. When it holds an IMDb id, that is also used as the title's identity, which shares its rating cache row with clients that send `imdb_id` directly.
 
 Why `{id}` rather than `{kitsu_id}`: the per-namespace placeholder is empty for every live-action title, and an empty *required* placeholder makes the resolver abandon the whole URL — so it would have to be the optional `{kitsu_id?}` form, which Bingecat and Discover+ reject at config time. `{id}` is a plain placeholder, present in every build, and always populated, so it can never null the URL.
 

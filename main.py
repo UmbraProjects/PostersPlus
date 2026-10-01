@@ -1383,7 +1383,7 @@ def _check_type(val: str) -> None:
 
 
 def _resolve_anime_request(
-    anilist_id: str, kitsu_id: str, stremio_id: str = ""
+    anilist_id: str, kitsu_id: str, stremio_id: str = "", mal_id: str = ""
 ) -> "tuple[str | None, int | None]":
     """Select the anime provider for this request, or (None, None) for the
     ordinary TMDB path.
@@ -1400,6 +1400,13 @@ def _resolve_anime_request(
     TMDB path, where it would surface as a confusing "Invalid tmdb_id".  AniList
     wins when both are supplied — arbitrary, but deterministic, so a client that
     sends both always lands on the same cache entry.
+
+    A MyAnimeList id ("mal:1535", or mal_id=) is never an art source itself;
+    it is translated through the community mapping to the Kitsu or AniList id
+    of the same entry and returned as that, so it shares the provider's cache
+    entry.  It comes last: a provider id sent alongside is the client's own
+    answer.  A well-formed MAL id the mapping doesn't know is the TMDB path,
+    as an unrecognised Stremio namespace is.
     """
     if not _cfg.ANIME_SOURCES_ENABLED:
         return None, None
@@ -1407,9 +1414,16 @@ def _resolve_anime_request(
     # A raw Stremio id is never malformed from our point of view — anything we
     # don't recognise is just a non-anime title — so it never raises.
     namespace, parsed = anime.parse_stremio_id(stremio_id)
-    if namespace is not None:
+    if namespace is not None and namespace != "mal":
         return namespace, parsed
-    for namespace, raw in (("anilist", anilist_id), ("kitsu", kitsu_id)):
+    # A mal: Stremio id is held back until the provider params have had their
+    # say, and is then tried ahead of mal_id.
+    stremio_mal = parsed if namespace == "mal" else None
+    for namespace, raw in (("anilist", anilist_id), ("kitsu", kitsu_id), ("mal", mal_id)):
+        if namespace == "mal" and stremio_mal is not None:
+            mapped = anime_ids.mal_to_provider(stremio_mal)
+            if mapped is not None:
+                return mapped
         raw = (raw or "").strip()
         if not raw:
             continue
@@ -1423,6 +1437,8 @@ def _resolve_anime_request(
         parsed = anime.parse_anime_id(namespace, raw)
         if parsed is None:
             raise HTTPException(status_code=400, detail=f"Invalid {namespace}_id")
+        if namespace == "mal":
+            return anime_ids.mal_to_provider(parsed) or (None, None)
         return namespace, parsed
     return None, None
 
@@ -6663,7 +6679,7 @@ _ADDON_CFG_PREFIX = "cfg-"
 _ADDON_CFG_MAX = 8192
 _ADDON_CFG_IDENTITY = frozenset({
     "tmdb_id", "imdb_id", "type", "stremio_id", "anilist_id", "kitsu_id",
-    "access_key", "shape",
+    "mal_id", "access_key", "shape",
 })
 
 
@@ -8635,6 +8651,7 @@ async def get_poster(
     anilist_id: str = "",
     kitsu_id: str = "",
     stremio_id: str = "",
+    mal_id: str = "",
     type: str = "movie",
     quality: str = "",
     season: int = 1,
@@ -8733,7 +8750,7 @@ async def get_poster(
     # a tt-prefixed IMDb id. See _canonical_rating_id(); the stream id sent to
     # quality sources is resolved separately, after metadata.
     # -----------------------------------------------------------------------
-    anime_namespace, anime_id = _resolve_anime_request(anilist_id, kitsu_id, stremio_id)
+    anime_namespace, anime_id = _resolve_anime_request(anilist_id, kitsu_id, stremio_id, mal_id)
     is_anime = anime_namespace is not None
     anime_key = anime.namespaced_id(anime_namespace, anime_id) if is_anime else ""
     # True when Cinemeta (not TMDB) is the art and metadata spine for this
@@ -8869,11 +8886,11 @@ async def get_poster(
         k: v for k, v in request.query_params.items()
         if k not in (
             "tmdb_id", "imdb_id", "anilist_id", "kitsu_id", "stremio_id",
-            # Not art sources here (MAL needs auth, AniDB's API is heavily
-            # restricted), but AIOMetadata templates carry the full placeholder
-            # set. Excluded so their presence — substituted or not — can't
-            # fragment the composite cache key across otherwise identical
-            # requests.
+            # mal_id resolves to the provider id above. anidb_id isn't a
+            # source (AniDB's API is heavily restricted), but AIOMetadata
+            # templates carry the full placeholder set. Excluded so their
+            # presence — substituted or not — can't fragment the composite
+            # cache key across otherwise identical requests.
             "mal_id", "anidb_id",
             "mdblist_key", "tmdb_key", "type",
             "quality", "season", "episode", "access_key", "debug", "nocache",

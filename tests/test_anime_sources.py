@@ -55,7 +55,10 @@ class ParseAnimeIdTests(unittest.TestCase):
                 self.assertIsNone(anime.parse_anime_id("anilist", bad))
 
     def test_rejects_unknown_namespace(self):
-        self.assertIsNone(anime.parse_anime_id("mal", "1"))
+        self.assertIsNone(anime.parse_anime_id("anidb", "1"))
+
+    def test_mal_is_parsed_for_translation(self):
+        self.assertEqual(anime.parse_anime_id("mal", "mal:1535"), 1535)
 
     def test_namespaced_id_cannot_collide_with_tmdb_or_imdb(self):
         canonical = anime.namespaced_id("kitsu", 7442)
@@ -642,10 +645,11 @@ class StremioIdTests(unittest.TestCase):
                 self.assertEqual(anime.parse_stremio_id(raw), (None, None))
 
     def test_unsupported_anime_namespaces_yield_the_tmdb_path(self):
-        # MAL needs auth and AniDB's API is restricted, so neither is a source.
-        for raw in ("mal:1535", "anidb:99"):
-            with self.subTest(raw=raw):
-                self.assertEqual(anime.parse_stremio_id(raw), (None, None))
+        # AniDB's API is restricted, so it is not a source.
+        self.assertEqual(anime.parse_stremio_id("anidb:99"), (None, None))
+
+    def test_mal_is_recognised_for_the_caller_to_translate(self):
+        self.assertEqual(anime.parse_stremio_id("mal:1535:1:2"), ("mal", 1535))
 
     def test_malformed_id_in_a_known_namespace_is_not_fatal(self):
         self.assertEqual(anime.parse_stremio_id("kitsu:notanid"), (None, None))
@@ -670,3 +674,54 @@ class StremioIdDispatchTests(unittest.TestCase):
 
     def test_stremio_id_wins_over_the_legacy_params(self):
         self.assertEqual(self.resolve("", "1", "kitsu:7442"), ("kitsu", 7442))
+
+
+class MalIdDispatchTests(unittest.TestCase):
+    """A MAL id renders as the Kitsu/AniList id the community mapping gives it."""
+
+    @classmethod
+    def setUpClass(cls):
+        import main
+        cls.main = main
+        cls.HTTPException = __import__("fastapi").HTTPException
+
+    def setUp(self):
+        from unittest import mock
+        table = {1535: ("kitsu", 1376), 16498: ("anilist", 16498)}
+        patcher = mock.patch.object(self.main.anime_ids, "mal_to_provider",
+                                    side_effect=lambda mal_id: table.get(mal_id))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def resolve(self, *args):
+        return self.main._resolve_anime_request(*args)
+
+    def test_mal_stremio_id_renders_as_its_provider_id(self):
+        self.assertEqual(self.resolve("", "", "mal:1535"), ("kitsu", 1376))
+        self.assertEqual(self.resolve("", "", "mal:16498:1:1"), ("anilist", 16498))
+
+    def test_mal_id_param_renders_as_its_provider_id(self):
+        self.assertEqual(self.resolve("", "", "", "1535"), ("kitsu", 1376))
+        self.assertEqual(self.resolve("", "", "", "mal:1535"), ("kitsu", 1376))
+
+    def test_an_unmapped_mal_id_takes_the_tmdb_path(self):
+        self.assertEqual(self.resolve("", "", "mal:999"), (None, None))
+        self.assertEqual(self.resolve("", "", "", "999"), (None, None))
+
+    def test_a_provider_id_sent_alongside_wins(self):
+        self.assertEqual(self.resolve("", "7442", "", "1535"), ("kitsu", 7442))
+        self.assertEqual(self.resolve("", "7442", "mal:1535"), ("kitsu", 7442))
+
+    def test_an_unmapped_mal_stremio_id_still_lets_the_params_through(self):
+        # As before MAL support, when "mal:" was an unknown namespace.
+        self.assertEqual(self.resolve("", "7442", "mal:999"), ("kitsu", 7442))
+        self.assertEqual(self.resolve("", "", "mal:999", "1535"), ("kitsu", 1376))
+
+    def test_the_stremio_mal_id_is_tried_ahead_of_mal_id(self):
+        self.assertEqual(self.resolve("", "", "mal:16498", "1535"), ("anilist", 16498))
+
+    def test_placeholder_is_absent_and_malformed_is_rejected(self):
+        self.assertEqual(self.resolve("", "", "", "{mal_id}"), (None, None))
+        with self.assertRaises(self.HTTPException) as ctx:
+            self.resolve("", "", "", "abc")
+        self.assertEqual(ctx.exception.detail, "Invalid mal_id")

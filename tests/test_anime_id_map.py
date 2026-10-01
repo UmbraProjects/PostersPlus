@@ -21,7 +21,7 @@ import anime_ids
 # Shapes lifted from the real list: themoviedb_id is a {kind: id} object,
 # imdb_id a list, and most entries carry only some of the ids.
 SAMPLE = [
-    {"type": "TV", "kitsu_id": 12, "anilist_id": 21,
+    {"type": "TV", "kitsu_id": 12, "anilist_id": 21, "mal_id": 20,
      "themoviedb_id": {"tv": 37854}, "imdb_id": ["tt0388629"]},
     {"type": "ONA", "kitsu_id": 49847, "anilist_id": 190327,
      "themoviedb_id": {"tv": 45790}, "imdb_id": ["tt2359704"],
@@ -30,7 +30,9 @@ SAMPLE = [
      "themoviedb_id": {"movie": 129}, "imdb_id": ["tt0245429"]},
     {"type": "TV", "kitsu_id": 7442, "imdb_id": ["tt2560140"]},        # no TMDB
     {"type": "TV", "kitsu_id": 99999, "mal_id": 5},                   # nothing usable
-    {"type": "TV", "anilist_id": 555, "themoviedb_id": {"tv": 1}},    # anilist only
+    {"type": "TV", "anilist_id": 555, "mal_id": 30,
+     "themoviedb_id": {"tv": 1}},                                     # anilist only
+    {"type": "TV", "mal_id": 40, "themoviedb_id": {"tv": 2}},         # no provider id
     {"type": "TV", "kitsu_id": 12, "themoviedb_id": {"tv": 777}},     # duplicate id
 ]
 
@@ -114,6 +116,41 @@ class MappingTests(_TempTable):
         anime_ids.init_db()
         self.assertFalse(anime_ids.is_ready())
         self.assertIsNone(anime_ids.lookup("kitsu", 12, "series"))
+
+
+class MalTranslationTests(_TempTable):
+    """MAL is never an art source (its API needs auth); its id is rendered as
+    the provider id of the same entry."""
+
+    def test_kitsu_is_preferred_for_its_larger_covers(self):
+        self._load()
+        self.assertEqual(anime_ids.mal_to_provider(20), ("kitsu", 12))
+
+    def test_anilist_when_the_entry_has_no_kitsu_id(self):
+        self._load()
+        self.assertEqual(anime_ids.mal_to_provider(30), ("anilist", 555))
+
+    def test_a_provider_id_alone_is_enough(self):
+        # No TMDB or IMDb id, so no anime_id_map row — but Kitsu can render it.
+        self._load()
+        self.assertEqual(anime_ids.mal_to_provider(5), ("kitsu", 99999))
+
+    def test_unknown_or_providerless_ids_are_not_mapped(self):
+        self._load()
+        self.assertIsNone(anime_ids.mal_to_provider(40))
+        self.assertIsNone(anime_ids.mal_to_provider(424242))
+
+    def test_disabled_or_not_yet_downloaded_is_inert(self):
+        self.assertIsNone(anime_ids.mal_to_provider(20))
+        self._load()
+        anime_ids.ANIME_ID_MAP_ENABLED = False
+        self.assertIsNone(anime_ids.mal_to_provider(20))
+
+    def test_a_reload_replaces_the_mal_table_too(self):
+        self._load()
+        self._load([{"kitsu_id": 1, "mal_id": 20, "themoviedb_id": {"tv": 3}}])
+        self.assertEqual(anime_ids.mal_to_provider(20), ("kitsu", 1))
+        self.assertIsNone(anime_ids.mal_to_provider(30))
 
 
 class RequestWiringTests(unittest.TestCase):

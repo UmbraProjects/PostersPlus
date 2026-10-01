@@ -50,7 +50,7 @@ _ID_RE = re.compile(r"^[0-9a-f]{12}$")
 _IMAGE_RE = re.compile(r"^[0-9a-f]{16}\.jpg$")
 _PARAM_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 # Who the poster is for, not how it looks — and never anything secret.
-_DROPPED_PARAMS = {"tmdb_id", "imdb_id", "type", "stremio_id", "anilist_id", "kitsu_id",
+_DROPPED_PARAMS = {"tmdb_id", "imdb_id", "type", "stremio_id", "anilist_id", "kitsu_id", "mal_id",
                    "access_key", "tmdb_key", "mdblist_key", "fanart_key", "tvdb_key",
                    "simkl_key", "api_key", "key", "token", "_ts"}
 _SECRET_WORDS = ("key", "token", "secret", "password", "auth")

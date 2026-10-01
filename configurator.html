@@ -6483,9 +6483,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   // so it would have to be optional too, where "{id}" is plain, present in
   // every build, and always populated, and can never null the URL.
   //
-  // Both clients also offer {mal_id} and {anidb_id}; neither is emitted because
-  // neither is wired as an art source (MAL needs auth, AniDB's API is heavily
-  // restricted). The server ignores them if you add them by hand.
+  // Both clients also offer {mal_id} and {anidb_id}. Neither is emitted: a
+  // "mal:" id already arrives through "{id}" and is mapped to its Kitsu or
+  // AniList entry server-side, and AniDB isn't a source (its API is heavily
+  // restricted). mal_id= also works if added by hand; anidb_id= is ignored.
   if (tmdbId) params.set('tmdb_id', tmdbId);
   if (imdbId) params.set('imdb_id', imdbId);
   if (usePlaceholders) {
@@ -8722,7 +8723,7 @@ const PRESETS = [
 const USER_PRESETS_KEY = 'postersplus_user_presets';
 const USER_PRESETS_MAX = 30;
 const PRESET_TAB_KEY   = 'postersplus_preset_tab';
-const _PRESET_DROPPED  = new Set(['tmdb_id', 'imdb_id', 'type', 'stremio_id', 'anilist_id', 'kitsu_id', '_ts']);
+const _PRESET_DROPPED  = new Set(['tmdb_id', 'imdb_id', 'type', 'stremio_id', 'anilist_id', 'kitsu_id', 'mal_id', '_ts']);
 let _presetTab = null;
 let _presetSaving = false;
 

@@ -1892,7 +1892,7 @@ function prParams(raw) {
   const p = new URLSearchParams(q);
   for (const k of [...p.keys()]) {
     const n = k.toLowerCase();
-    if (['tmdb_id', 'imdb_id', 'type', 'stremio_id', 'anilist_id', 'kitsu_id', '_ts'].includes(n) || /key|token|secret|password|auth/.test(n)) p.delete(k);
+    if (['tmdb_id', 'imdb_id', 'type', 'stremio_id', 'anilist_id', 'kitsu_id', 'mal_id', '_ts'].includes(n) || /key|token|secret|password|auth/.test(n)) p.delete(k);
   }
   return p;
 }
@@ -2738,7 +2738,7 @@ function artThumbFor(path, kind) {
 // or a request is dropped, and so are API keys, which stay out of storage
 // (the server's own are used).
 const ART_PREVIEW_KEY = 'postersplus_art_preview_params';
-const ART_PREVIEW_DROP = new Set(['tmdb_id', 'imdb_id', 'stremio_id', 'anilist_id', 'kitsu_id', 'type', 'shape',
+const ART_PREVIEW_DROP = new Set(['tmdb_id', 'imdb_id', 'stremio_id', 'anilist_id', 'kitsu_id', 'mal_id', 'type', 'shape',
   'access_key', 'tmdb_key', 'mdblist_key', 'logo_language', 'use_original_art', 'landscape_art', 'nocache', 'debug', '_', '_ts']);
 function artPreviewParams() {
   try { return new URLSearchParams(localStorage.getItem(ART_PREVIEW_KEY) || ''); } catch (_) { return new URLSearchParams(); }
