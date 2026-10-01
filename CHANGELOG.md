@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Updates keep the poster cache
+
+- Updating PostersPlus no longer re-renders every cached poster. The cache
+  key followed the language files' and genre backgrounds' timestamps, which
+  every image build resets; it now follows what they contain, so posters only
+  re-render when one of them actually changes. (This update itself re-renders
+  once.)
+
 ### MyAnimeList ids
 
 - Anime requested by **MyAnimeList id** now renders: `mal_id=`, or a

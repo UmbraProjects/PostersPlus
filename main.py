@@ -7227,9 +7227,31 @@ def _composite_is_stale(
 # or a telesync than a web release.
 _LEAK_LEAD_DAYS = 14
 _render_assets_signature = "startup"
+# path -> (size, mtime_ns, content digest), so a recompute (each sash-list
+# save) only re-reads the files that were touched since.
+_asset_digests: dict[str, tuple[int, int, bytes]] = {}
+
+
+def _asset_file_digest(path: str) -> bytes | None:
+    try:
+        stat = os.stat(path)
+        cached = _asset_digests.get(path)
+        if cached is not None and cached[:2] == (stat.st_size, stat.st_mtime_ns):
+            return cached[2]
+        with open(path, "rb") as asset_file:
+            content = hashlib.file_digest(asset_file, "sha256").digest()
+    except OSError:
+        return None
+    _asset_digests[path] = (stat.st_size, stat.st_mtime_ns, content)
+    return content
 
 
 def _compute_render_assets_signature() -> str:
+    """Busts every composite when a language file, genre background or the
+    sash lists change.  By content, not mtime: every image build checks the
+    repo out afresh, which restamps every file, so an mtime signature
+    re-rendered every cached poster on each update whether or not an asset
+    had changed."""
     digest = hashlib.sha256()
     roots = (
         os.path.join(BASE_DIR, "languages"),
@@ -7238,15 +7260,17 @@ def _compute_render_assets_signature() -> str:
     for root in roots:
         if not os.path.isdir(root):
             continue
-        for dirpath, _, filenames in os.walk(root):
+        for dirpath, dirnames, filenames in os.walk(root):
+            # os.walk's order is the filesystem's; sorted, so two copies of
+            # the same tree always hash the same.
+            dirnames.sort()
             for filename in sorted(filenames):
                 path = os.path.join(dirpath, filename)
-                try:
-                    stat = os.stat(path)
-                except OSError:
+                content = _asset_file_digest(path)
+                if content is None:
                     continue
                 digest.update(os.path.relpath(path, BASE_DIR).encode())
-                digest.update(f"{stat.st_size}:{stat.st_mtime_ns}".encode())
+                digest.update(content)
     override_path = discovery.override_path()
     try:
         with open(override_path, "rb") as override_file:
