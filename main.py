@@ -9588,7 +9588,7 @@ async def get_poster(
         # Animation genre on a Japanese-language original.
         _fanart_wanted = rcfg.poster_source == "fanart" or (
             rcfg.poster_source == "fanart_anime"
-            and (is_anime or (16 in _gid_set and _original_lang == "ja")))
+            and (is_anime or (16 in genre_ids and _original_lang == "ja")))
         if (_fanart_wanted and not using_anime_art
                 and not use_cinemeta):
             from fanart import fanart_poster_url
