@@ -7076,7 +7076,7 @@ const COPY_KEYS_LITERAL = { literalKeys: true };
 // URL copied for one client being pasted into another, now that every client
 // but Discover+ takes the same one.
 const COPY_TEMPLATES = [
-  { id: 'standard', name: 'AIOMetadata, Nuvio, Bingecat, Xperience',
+  { id: 'standard', name: 'Default', title: 'AIOMetadata, Nuvio, Bingecat and Xperience',
     ...COPY_SHAPE_OPTIMAL, ...COPY_SHAPE_DUAL, ...COPY_KEYS_LITERAL,
     where: "the client's poster URL pattern" },
   // Kept as its own entry: the one client whose URL differs, and the one that
@@ -7191,6 +7191,7 @@ function renderCopyMenu() {
       item.id = `copy-tpl-${t.id}`;
       item.setAttribute('role', 'menuitem');
       item.textContent = t.name;
+      if (t.title) item.title = t.title;
       item.onclick = () => copyTemplate(t.id);
       menu.appendChild(item);
     }

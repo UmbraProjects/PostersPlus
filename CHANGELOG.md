@@ -5,7 +5,7 @@
 ### One Copy config URL for AIOMetadata, Nuvio, Bingecat and Xperience
 
 - All four now take Nuvio's URL, with `{shape}` and the optional `{name?}`
-  ids, so the **Copy config** menu is down to that URL, **Discover+** and
+  ids, so the **Copy config** menu is down to that URL (**Default**), **Discover+** and
   **Share settings**. A left-click copies the shared URL straight away instead
   of asking first, which stops a URL copied for one client ending up in
   another. Picking Discover+ is still remembered for the next left-click.

@@ -37,7 +37,7 @@ class CopyTemplateCatalogueTests(unittest.TestCase):
 
     def test_every_supported_client_has_an_entry(self):
         for template_id, name in (
-            ("standard", "AIOMetadata, Nuvio, Bingecat, Xperience"),
+            ("standard", "Default"),
             ("discoverplus", "Discover+"),
         ):
             with self.subTest(client=template_id):
