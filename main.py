@@ -956,7 +956,7 @@ from ratings import (
     _score_color_alt,
     _score_color_metal,
 )
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, fetch_anime_trending_rank_entry, _expire_overlapping_lists, trending_kind, anime_split, ANIME_ENDPOINTS, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, resolve_tvdb_to_tmdb, IdResolveError, TmdbIdGone, mark_tmdb_id_gone, forget_imdb_mapping_to, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS, fetch_logo_image, logo_language_steps, logo_step_available, _image_matches_language, sanitise_source_url, fetch_cropped_art
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, fetch_anime_trending_rank_entry, _expire_overlapping_lists, trending_kind, anime_split, ANIME_ENDPOINTS, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, logo_priority_falls_back_to_art, split_logo_priority_at_art, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, resolve_tvdb_to_tmdb, IdResolveError, TmdbIdGone, mark_tmdb_id_gone, forget_imdb_mapping_to, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS, fetch_logo_image, logo_language_steps, logo_step_available, _image_matches_language, sanitise_source_url, fetch_cropped_art
 # How long a poster rendered while its trending list was unreadable is kept:
 # the same as that list's retry cooldown.
 from tmdb import _TRENDING_SOURCE_RETRY_SECS as _TRENDING_UNREAD_TTL
@@ -9893,6 +9893,97 @@ async def get_poster(
             _use_backdrop     = False
             is_textless       = bool(_cfg.ANIME_COMPOSITE_LOGO)
 
+        # Logo resolution across TMDB, the Metahub CDN, and (optionally) TVDB.
+        # TVDB's position in the chain is set by TVDB_LOGO_PRIORITY:
+        #   1 = TVDB first, 2 = after TMDB but before Metahub, 3 = last resort.
+        # Priority 3 (default) and a missing TVDB key both reduce to the original
+        # TMDB -> Metahub -> (TVDB) behaviour, so existing output is unchanged.
+        _tvdb_logo_pri = _cfg.TVDB_LOGO_PRIORITY if tvdb.tvdb_enabled() else 3
+
+        async def _resolve_logo(logo_priority):
+            _logo_override = art_overrides.pick_logo(
+                _title_art,
+                logo_language_steps(
+                    rcfg.logo_language, tmdb_data.get("original_language"),
+                    logo_priority, _effective_secondary,
+                ),
+                lambda step: logo_step_available(logos, step),
+            )
+            if _logo_override is not None:
+                try:
+                    _chosen = await fetch_logo_image(client, _logo_override.path)
+                    if _chosen is not None:
+                        logger.info(f"Operator logo for {tmdb_id}: {_logo_override.path}")
+                        return _chosen
+                except Exception as exc:
+                    logger.warning(f"Operator logo for {tmdb_id} failed ({exc}) — using the usual pick")
+
+            async def _tmdb(use_metahub):
+                return await fetch_logo(
+                    client, logos, rcfg.logo_language,
+                    imdb_id=effective_imdb_id,
+                    original_language=tmdb_data.get("original_language"),
+                    logo_priority=logo_priority,
+                    use_metahub=use_metahub,
+                    secondary_language=_effective_secondary,
+                    # The landscape logo box is wide and short, so a wordmark
+                    # fills it where a stacked logo of the same title is
+                    # capped small by its height.  See WIDE_LOGO_MIN_ASPECT.
+                    prefer_wide=_is_landscape,
+                )
+
+            async def _tvdb():
+                return await tvdb.tvdb_logo(
+                    client, media_type=type, logo_language=rcfg.logo_language,
+                    original_language=tmdb_data.get("original_language"),
+                    logo_priority=logo_priority,
+                    secondary_language=_effective_secondary,
+                    imdb_id=effective_imdb_id, tmdb_id=tmdb_id, tvdb_id_hint=tmdb_data.get("tvdb_id"),
+                )
+
+            async def _metahub():
+                # Metahub stands in for English, so it goes when English does.
+                return (await _fetch_metahub_logo(client, effective_imdb_id)
+                        if effective_imdb_id
+                        and "english" in logo_priority_sources(logo_priority)
+                        else None)
+
+            if _tvdb_logo_pri == 1:
+                return (await _tvdb()) or (await _tmdb(use_metahub=True))
+            if _tvdb_logo_pri == 2:
+                return (await _tmdb(use_metahub=False)) or (await _tvdb()) or (await _metahub())
+            # priority 3 — TMDB -> Metahub -> TVDB
+            return (await _tmdb(use_metahub=True)) or (await _tvdb())
+
+        # Original art as a logo-priority source ("art"): when no logo turns
+        # up in the sources above it, serve the title's original art (title
+        # baked in) the way original-art mode does, instead of carrying on to
+        # the sources below it — text, say.  That needs the answer before the
+        # art is picked, so those sources are looked up here rather than
+        # alongside the image fetch.  A title with no original art carries on
+        # down the list as if "art" weren't there.  Only where a logo of ours
+        # would go on the art: portrait, textless, not original-art mode
+        # already, and not art the operator chose.
+        _logo_priority = rcfg.logo_priority
+        _prefetched_logo = None
+        if (logo_priority_falls_back_to_art(rcfg.logo_priority)
+                and not _is_landscape and not _use_original_art
+                and not rcfg.textless and is_textless
+                and (poster_path or _use_backdrop)
+                and _art_override is None):
+            _before_art, _after_art = split_logo_priority_at_art(rcfg.logo_priority)
+            if _before_art:
+                _prefetched_logo = await _resolve_logo(_before_art)
+            if _prefetched_logo is None and _orig_art:
+                poster_path       = _orig_art
+                is_textless       = False
+                _use_backdrop     = False
+                _use_original_art = True
+                logger.info(f"No logo for {tmdb_id} — falling back to original art {poster_path} "
+                            f"(priority={rcfg.logo_priority})")
+            elif _prefetched_logo is None:
+                _logo_priority = _after_art
+
         if is_anime and not rating_already_cached and not effective_mdblist_key:
             # No IMDb id (or no key), so MDBList can't be asked. Supply what the
             # provider gave us instead of nothing. With an IMDb id this branch is
@@ -10343,67 +10434,6 @@ async def get_poster(
 
                 _image_coro = _fetch_image_and_schedule_detection()
 
-        # Logo resolution across TMDB, the Metahub CDN, and (optionally) TVDB.
-        # TVDB's position in the chain is set by TVDB_LOGO_PRIORITY:
-        #   1 = TVDB first, 2 = after TMDB but before Metahub, 3 = last resort.
-        # Priority 3 (default) and a missing TVDB key both reduce to the original
-        # TMDB -> Metahub -> (TVDB) behaviour, so existing output is unchanged.
-        _tvdb_logo_pri = _cfg.TVDB_LOGO_PRIORITY if tvdb.tvdb_enabled() else 3
-
-        async def _resolve_logo():
-            _logo_override = art_overrides.pick_logo(
-                _title_art,
-                logo_language_steps(
-                    rcfg.logo_language, tmdb_data.get("original_language"),
-                    rcfg.logo_priority, _effective_secondary,
-                ),
-                lambda step: logo_step_available(logos, step),
-            )
-            if _logo_override is not None:
-                try:
-                    _chosen = await fetch_logo_image(client, _logo_override.path)
-                    if _chosen is not None:
-                        logger.info(f"Operator logo for {tmdb_id}: {_logo_override.path}")
-                        return _chosen
-                except Exception as exc:
-                    logger.warning(f"Operator logo for {tmdb_id} failed ({exc}) — using the usual pick")
-
-            async def _tmdb(use_metahub):
-                return await fetch_logo(
-                    client, logos, rcfg.logo_language,
-                    imdb_id=effective_imdb_id,
-                    original_language=tmdb_data.get("original_language"),
-                    logo_priority=rcfg.logo_priority,
-                    use_metahub=use_metahub,
-                    secondary_language=_effective_secondary,
-                    # The landscape logo box is wide and short, so a wordmark
-                    # fills it where a stacked logo of the same title is
-                    # capped small by its height.  See WIDE_LOGO_MIN_ASPECT.
-                    prefer_wide=_is_landscape,
-                )
-
-            async def _tvdb():
-                return await tvdb.tvdb_logo(
-                    client, media_type=type, logo_language=rcfg.logo_language,
-                    original_language=tmdb_data.get("original_language"),
-                    logo_priority=rcfg.logo_priority,
-                    secondary_language=_effective_secondary,
-                    imdb_id=effective_imdb_id, tmdb_id=tmdb_id, tvdb_id_hint=tmdb_data.get("tvdb_id"),
-                )
-
-            async def _metahub():
-                # Metahub stands in for English, so it goes when English does.
-                return (await _fetch_metahub_logo(client, effective_imdb_id)
-                        if effective_imdb_id
-                        and "english" in logo_priority_sources(rcfg.logo_priority)
-                        else None)
-
-            if _tvdb_logo_pri == 1:
-                return (await _tvdb()) or (await _tmdb(use_metahub=True))
-            if _tvdb_logo_pri == 2:
-                return (await _tmdb(use_metahub=False)) or (await _tvdb()) or (await _metahub())
-            # priority 3 — TMDB -> Metahub -> TVDB
-            return (await _tmdb(use_metahub=True)) or (await _tvdb())
 
         # Anime ranks on the anime lists, whichever id the poster was asked
         # for by (see _anime_trending_keys); everything else on TMDB's.
@@ -10417,7 +10447,10 @@ async def get_poster(
             (trending_rank, trending_expires_at),
         ) = await asyncio.gather(
             _image_coro,
-            _resolve_logo() if (is_textless and not is_no_poster) else _resolved(None),
+            (_resolved(_prefetched_logo) if _prefetched_logo is not None
+             else _resolve_logo(_logo_priority) if (is_textless and not is_no_poster
+                                                     and _logo_priority)
+             else _resolved(None)),
             rating_coro,
             # Trending rank is a TMDB list lookup, so it needs a real tmdb_id —
             # which AIOMetadata does send alongside the anime id when it has one.

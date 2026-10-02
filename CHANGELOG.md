@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Original art in the Logo Priority list
+
+- Logo Priority has a new **Original Art** entry (`art` in `logo_priority`,
+  e.g. `logo_priority=native,english,art,text`). When no source above it
+  has a logo, the poster switches to the title's original art (its poster
+  with the title baked in, picked as original-art mode picks it) instead of
+  carrying on down the list, so drawing the title as text no longer has to
+  be the fallback. A title with no original art carries on to the sources
+  below it. Portrait posters only; landscape keeps its own Art setting.
+
 ### One Copy config URL for AIOMetadata, Nuvio, Bingecat and Xperience
 
 - All four now take Nuvio's URL, with `{shape}` and the optional `{name?}`

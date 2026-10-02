@@ -1553,12 +1553,15 @@ def _tmdb_include_image_languages(
 #                        are English in practice)
 #   neutral            — a TMDB logo tagged with no language, usually a symbol
 #                        or a wordmark nobody labelled
+#   art                — stop looking for a logo and serve the title's original
+#                        art (its poster with the title baked in), as original-
+#                        art mode would; passed over when the title has none
 #   text               — stop and draw the title as text
 # A source left out is never used; with no "text" a title that runs out of
 # logos gets no title at all.  "text" always ends the list: nothing after it
-# could be reached.
+# could be reached.  "art" can sit anywhere above it.
 LOGO_PRIORITY_SOURCES = (
-    "native", "native_if_original", "custom", "original", "english", "neutral", "text",
+    "native", "native_if_original", "custom", "original", "english", "neutral", "art", "text",
 )
 
 # The named priorities the configurator offered before the list, kept as the
@@ -1618,6 +1621,28 @@ def logo_priority_draws_text(logo_priority: str) -> bool:
     return "text" in logo_priority_sources(logo_priority)
 
 
+def logo_priority_falls_back_to_art(logo_priority: str) -> bool:
+    """Whether a title with no logo (by the sources above "art") falls back to
+    its original art."""
+    return "art" in logo_priority_sources(logo_priority)
+
+
+def split_logo_priority_at_art(logo_priority: str) -> tuple[str | None, str | None]:
+    """The priority either side of its "art" source, each a canonical
+    logo_priority or None when that side has no sources.  The part before is
+    what is tried ahead of falling back to original art; the part after is
+    what is left when the title has no original art to fall back to."""
+    sources = logo_priority_sources(logo_priority)
+    if "art" not in sources:
+        return logo_priority, None
+    at = sources.index("art")
+    before, after = sources[:at], sources[at + 1:]
+    return (
+        parse_logo_priority(",".join(before)) if before else None,
+        parse_logo_priority(",".join(after)) if after else None,
+    )
+
+
 def logo_language_steps(
     logo_language: str,
     original_language: str | None,
@@ -1629,11 +1654,15 @@ def logo_language_steps(
     one, and "metahub" for the Metahub CDN (which rides with English).  Ends
     before "text"; a source with no language to stand for (no secondary
     language, no known original language) is skipped, and a language already
-    tried is not tried twice."""
+    tried is not tried twice.  "art" contributes no step."""
     steps: list[str] = []
     for source in logo_priority_sources(logo_priority):
         if source == "text":
             break
+        if source == "art":
+            # Not a logo: the caller decides about original art (see
+            # split_logo_priority_at_art).
+            continue
         if source == "native":
             new = [logo_language]
         elif source == "native_if_original":
