@@ -47,6 +47,7 @@ from cache import (
     get_cached_trending_snapshot,
     get_cached_trending_snapshot_entry,
     set_cached_trending_snapshot,
+    expire_trending_snapshot,
     get_cached_tmdb_poster,
     set_cached_tmdb_poster,
     get_cached_tmdb_logo,
@@ -1843,7 +1844,7 @@ _MDBLIST_LIST_RE = re.compile(
 
 # On a movie or TV list's signature while anime is left to its own lists;
 # changed whenever what counts as anime does, so stored lists are rebuilt.
-_ANIME_SPLIT_MARK = "-anime-ja"
+_ANIME_SPLIT_MARK = "-anime-3"
 
 # The anime lists, series then films: AniList's unless a source replaces it.
 ANIME_ENDPOINTS = ("anime", "anime_movie")
@@ -1901,6 +1902,8 @@ def trending_source_signature(media_type: str) -> str:
     # Hiding unreleased titles, or leaving anime to its own lists, makes a
     # different list from the same source: one stored without it is rebuilt.
     out = "+released" if TRENDING_HIDE_UNRELEASED else ""
+    if out and media_type == "anime_movie":
+        out += "-home"            # AniList's films checked against TMDB's dates too
     if media_type not in ANIME_ENDPOINTS and anime_split():
         out += _ANIME_SPLIT_MARK
     url = _normalise_trending_url(trending_source_url(media_type))
@@ -2156,19 +2159,54 @@ async def _read_twice(read, label: str):
     return result
 
 
-def _without_anime(endpoint: str, ids: list[str], details: dict[str, dict]) -> list[str]:
-    """*ids* without the anime, which rank on the anime lists instead.
-    Anime here is Japanese: a TMDB row's Animation from Japan, or what the id
-    mapping knows as anime when the row is Japanese or says nothing of its
-    language.  Chinese and Korean animation, which AniList carries but rarely
-    trends, stays where it is ranked.  Numbered after this, so the ranks have
-    no gaps."""
+def _anime_list_tmdb_ids(kind: str) -> set[str]:
+    """The TMDB ids (of *kind*, "tv" or "movie") of every title on the stored
+    anime lists: AniList entries through the id mapping, and a custom
+    source's TMDB ids as they are."""
+    import anime_ids
+    out: set[str] = set()
+    anilist: set[int] = set()
+    for endpoint in ANIME_ENDPOINTS:
+        entry = get_cached_trending_snapshot_entry(endpoint, include_stale=True)
+        for key in (entry[0] if entry else {}):
+            if key.startswith("anilist:"):
+                if key[8:].isdigit():
+                    anilist.add(int(key[8:]))
+            elif trending_kind(endpoint) == kind:
+                out.add(key)
+    _kitsu, tv, movie = anime_ids.ids_for_anilist(anilist)
+    return out | {str(i) for i in (tv if kind == "tv" else movie)}
+
+
+def _expire_overlapping_lists() -> None:
+    """After an anime list is rebuilt: a movie or TV list still holding one of
+    its titles is rebuilt too, on its next read, so no title is on two lists
+    with two ranks.  The TMDB lists build the anime ones first, so this only
+    happens when an anime list is refreshed on its own."""
+    for endpoint in ("movie", "tv"):
+        entry = get_cached_trending_snapshot_entry(endpoint)
+        # None while a scheduled refresh rebuilds it anyway: nothing to check.
+        if entry and set(entry[0]) & _anime_list_tmdb_ids(endpoint):
+            logger.info(f"Trending {endpoint}: holds titles now on an anime list — rebuilding it")
+            expire_trending_snapshot(endpoint)
+
+
+def _without_anime(endpoint: str, ids: list[str], details: dict[str, dict],
+                   on_anime_lists: "set[str] | None" = None) -> list[str]:
+    """*ids* without the anime, which rank on the anime lists instead: every
+    title on those lists (*on_anime_lists*, their TMDB ids), whatever its
+    language, so no title is on two lists; and Japanese anime that isn't
+    trending there, a TMDB row's Animation from Japan or what the id mapping
+    knows as anime when the row is Japanese or says nothing of its language.
+    Chinese and Korean animation off the anime lists stays where it is ranked.
+    Numbered after this, so the ranks have no gaps."""
     import anime_ids
     kind = trending_kind(endpoint)
+    on_anime_lists = on_anime_lists or set()
 
     def is_anime(i: str) -> bool:
         detail = details.get(i) or {}
-        if detail.get("anime"):
+        if i in on_anime_lists or detail.get("anime"):
             return True
         if detail.get("lang", "ja") != "ja":
             return False
@@ -2193,15 +2231,27 @@ async def _released_only(
 
     A film is out at home once it streams or is on disc somewhere: TMDB's
     release dates, the same ones its release-status sash reads, so "Cinema"
-    and "Production" films are dropped.  A series is out once its first
+    and "Production" films are dropped.  An AniList film ("anilist:<id>") is
+    judged by its TMDB film through the id mapping.  A series is out once its first
     episode has aired, by the date on its trending row.  A title that can't
     be checked (a failed fetch, a custom source's row with no date) is kept:
     a hiccup shouldn't empty the row."""
     limit = max(TRENDING_FETCH_COUNT, TRENDING_BROAD_FETCH_COUNT)
     today = _date.today()
+    # AniList films are judged by the TMDB film the id mapping gives each, the
+    # dates its poster's release badge reads; unmapped, one is kept on
+    # AniList's word that it is out.
+    import anime_ids
+    tmdb_film = anime_ids.tmdb_films_for_anilist(
+        {int(i[8:]) for i in ids if i.startswith("anilist:") and i[8:].isdigit()})
 
     async def out_at_home(entry_id: str) -> bool:
         detail = details.get(entry_id) or {}
+        if entry_id.startswith("anilist:"):
+            film = tmdb_film.get(int(entry_id[8:])) if entry_id[8:].isdigit() else None
+            if film is None:
+                return True
+            entry_id, detail = str(film), {}
         if trending_kind(endpoint) == "tv":
             if "date" not in detail:
                 return True
@@ -2269,14 +2319,22 @@ async def ensure_trending_snapshot(
                 return None
             from anime import fetch_anilist_trending
             films = endpoint == "anime_movie"
-            ids = await _read_twice(lambda: fetch_anilist_trending(client, details, films=films),
+            # AniList calls a film released once it is in cinemas, so leaving
+            # out what isn't home yet checks each one's TMDB dates (below) and
+            # needs more of the list to have as many after.
+            check_home = films and TRENDING_HIDE_UNRELEASED
+            want = max(TRENDING_FETCH_COUNT, TRENDING_BROAD_FETCH_COUNT) * (2 if check_home else 1)
+            ids = await _read_twice(lambda: fetch_anilist_trending(client, details, films=films, limit=want),
                                     f"AniList {endpoint}")
             if not ids:
                 _trending_source_failed_at[endpoint] = time.monotonic()
                 return None
             _trending_source_failed_at.pop(endpoint, None)
+            if check_home:
+                ids = await _released_only(client, tmdb_key, endpoint, ids, details)
             rankings = {entry_id: position for position, entry_id in enumerate(ids, start=1)}
             await asyncio.to_thread(set_cached_trending_snapshot, endpoint, rankings, source_sig, details)
+            await asyncio.to_thread(_expire_overlapping_lists)
             return get_cached_trending_snapshot_entry(endpoint, source_sig) or (
                 rankings, time.time() + 86400
             )
@@ -2313,11 +2371,16 @@ async def ensure_trending_snapshot(
             _trending_source_failed_at.pop(cooldown_key, None)
 
         if endpoint not in ANIME_ENDPOINTS and anime_split():
-            ids = _without_anime(endpoint, ids, details)
+            # The anime lists first, so their titles can be left off this one.
+            for anime_endpoint in ANIME_ENDPOINTS:
+                await ensure_trending_snapshot(client, tmdb_key, anime_endpoint)
+            ids = _without_anime(endpoint, ids, details, _anime_list_tmdb_ids(trending_kind(endpoint)))
         if TRENDING_HIDE_UNRELEASED:
             ids = await _released_only(client, tmdb_key, endpoint, ids, details)
         rankings = {entry_id: position for position, entry_id in enumerate(ids, start=1)}
         await asyncio.to_thread(set_cached_trending_snapshot, endpoint, rankings, source_sig, details)
+        if endpoint in ANIME_ENDPOINTS:
+            await asyncio.to_thread(_expire_overlapping_lists)
         return get_cached_trending_snapshot_entry(endpoint, source_sig) or (
             rankings, time.time() + 86400
         )

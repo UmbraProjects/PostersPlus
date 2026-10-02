@@ -16,7 +16,11 @@ from fastapi.testclient import TestClient
 import anime
 import cache
 import main
+import tmdb
 from tests.test_trending_snapshot_turnover import _TempDb
+
+# The stored movie / TV lists' signature while anime has its own lists.
+TMDB_SIG = "tmdb" + tmdb._ANIME_SPLIT_MARK
 
 
 class _AddonTest(_TempDb):
@@ -91,7 +95,7 @@ class CatalogTests(_AddonTest):
             "11": {"name": "First", "year": "2026", "imdb_id": "tt0000011", "poster": "/a.jpg"},
             "22": {"name": "Second", "poster": "/b.jpg"},
             "33": {"name": "Third"},
-        }, "tmdb-anime-ja")
+        }, TMDB_SIG)
 
         async def _resolve(client, tmdb_id, media_type, key):
             return {"22": "tt0000022"}.get(tmdb_id)
@@ -104,14 +108,14 @@ class CatalogTests(_AddonTest):
         self.assertEqual([m["name"] for m in metas], ["First", "Second", "Third"])
         self.assertEqual(metas[0]["poster"], "https://image.tmdb.org/t/p/w500/a.jpg")
         self.assertTrue(all(m["type"] == "movie" for m in metas))
-        # Cached no longer than the snapshot, like the ranked posters.
+        # Cached briefly: the snapshot can be rebuilt before it expires.
         max_age = int(resp.headers["cache-control"].split("max-age=")[1])
-        self.assertAlmostEqual(max_age, 86400, delta=5)
+        self.assertEqual(max_age, main._CATALOG_MAX_AGE)
 
     def test_a_snapshot_without_details_is_filled_from_tmdb(self):
         # Snapshots written before details were stored carry ids only; Nuvio
         # showed those rows as blank tiles named by IMDb id.
-        cache.set_cached_trending_snapshot("movie", {"11": 1}, "tmdb-anime-ja")
+        cache.set_cached_trending_snapshot("movie", {"11": 1}, TMDB_SIG)
         calls = []
 
         async def _meta(client, tmdb_id, key, media_type, lang, secondary=""):
@@ -132,7 +136,7 @@ class CatalogTests(_AddonTest):
     def test_skip_returns_the_rest_of_the_list(self):
         self._store_with_details("tv", ["1", "2", "3"], {
             k: {"imdb_id": f"tt000000{k}"} for k in ("1", "2", "3")
-        }, "tmdb-anime-ja")
+        }, TMDB_SIG)
         resp = self.client.get("/trending/sekrit/catalog/series/pp.trending.series/skip=2.json")
         self.assertEqual([m["id"] for m in resp.json()["metas"]], ["tt0000003"])
         resp = self.client.get("/trending/sekrit/catalog/series/pp.trending.series/skip=3.json")
@@ -143,7 +147,7 @@ class CatalogTests(_AddonTest):
         main._cfg.TRENDING_BROAD_FETCH_COUNT = 2
         self._store_with_details("tv", ["1", "2", "3"], {
             k: {"imdb_id": f"tt000000{k}"} for k in ("1", "2", "3")
-        }, "tmdb-anime-ja")
+        }, TMDB_SIG)
         resp = self.client.get("/trending/sekrit/catalog/series/pp.trending.series.json")
         self.assertEqual(len(resp.json()["metas"]), 2)
 
@@ -175,7 +179,7 @@ class AddonConfigTests(_AddonTest):
 
     def setUp(self):
         super().setUp()
-        self._store_with_details("movie", ["11"], {"11": {"name": "A", "imdb_id": "tt0000011"}}, "tmdb-anime-ja")
+        self._store_with_details("movie", ["11"], {"11": {"name": "A", "imdb_id": "tt0000011"}}, TMDB_SIG)
         self._store_with_details("anime", ["anilist:5"], {"anilist:5": {"name": "Five"}}, "anilist")
 
     def _metas(self, path, **headers):
@@ -360,7 +364,7 @@ class AnimeRankTests(_AddonTest):
 
     def test_only_ranked_titles_keep_details(self):
         cache.set_cached_trending_snapshot(
-            "movie", {"1": 1}, "tmdb-anime-ja", {"1": {"name": "a"}, "2": {"name": "b"}},
+            "movie", {"1": 1}, TMDB_SIG, {"1": {"name": "a"}, "2": {"name": "b"}},
         )
         self.assertEqual(cache.get_cached_trending_details("movie"), {"1": {"name": "a"}})
 

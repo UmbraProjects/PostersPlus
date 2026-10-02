@@ -18,6 +18,9 @@ import tmdb
 import trending_rank
 from discovery import DiscoveryMeta
 
+# The stored movie / TV lists' signature while anime has its own lists.
+TMDB_SIG = "tmdb" + tmdb._ANIME_SPLIT_MARK
+
 
 def _art(kind: str) -> Image.Image:
     if kind == "dark":
@@ -131,6 +134,13 @@ class HideUnreleasedTests(unittest.TestCase):
                    "4": {}}                    # a source that gives none: kept
         self.assertEqual(self.run_filter("tv", ["1", "2", "3", "4"], details), ["2", "4"])
 
+    def test_anilist_films_are_judged_by_their_tmdb_film(self):
+        with mock.patch("anime_ids.tmdb_films_for_anilist",
+                        lambda ids: {a: m for a, m in {9: 822653, 8: 111}.items() if a in ids}):
+            kept = self.run_filter("anime_movie", ["anilist:9", "anilist:8", "anilist:7"], {},
+                                   {"822653": "Cinema", "111": "Streaming"})
+        self.assertEqual(kept, ["anilist:8", "anilist:7"])     # unmapped: kept
+
     def test_a_failed_check_keeps_the_title(self):
         async def boom(*_a, **_k):
             raise RuntimeError("down")
@@ -153,14 +163,14 @@ class HideUnreleasedTests(unittest.TestCase):
              mock.patch.object(tmdb, "anime_split", lambda: False):
             self.assertEqual(tmdb.trending_source_signature("movie"), "tmdb+released")
             self.assertEqual(tmdb.trending_source_signature("anime"), "anilist+released")  # never -anime
-            self.assertEqual(tmdb.trending_source_signature("anime_movie"), "anilist-films+released")
+            self.assertEqual(tmdb.trending_source_signature("anime_movie"), "anilist-films+released-home")
         with mock.patch.object(tmdb, "TRENDING_SOURCE_MOVIE", ""), \
              mock.patch.object(tmdb, "anime_split", lambda: False):
             self.assertEqual(tmdb.trending_source_signature("movie"), "tmdb")
         # Leaving anime to its own lists rebuilds the movie and TV ones.
         with mock.patch.object(tmdb, "TRENDING_SOURCE_MOVIE", ""), \
              mock.patch.object(tmdb, "anime_split", lambda: True):
-            self.assertEqual(tmdb.trending_source_signature("movie"), "tmdb-anime-ja")
+            self.assertEqual(tmdb.trending_source_signature("movie"), TMDB_SIG)
             self.assertEqual(tmdb.trending_source_signature("anime"), "anilist")
 
 
@@ -185,7 +195,7 @@ MAP = [
     {"type": "TV", "kitsu_id": 20, "anilist_id": 2, "mal_id": 102,
      "themoviedb_id": {"tv": 100}, "imdb_id": ["tt0000100"]},
     {"type": "MOVIE", "kitsu_id": 30, "anilist_id": 3, "mal_id": 103,
-     "themoviedb_id": {"movie": 300}},
+     "themoviedb_id": {"movie": [300]}},
     {"type": "TV", "kitsu_id": 40, "themoviedb_id": {"tv": 400}},
 ]
 
@@ -242,7 +252,7 @@ class AnimeRankLookupTests(_AddonTest):
 
     def test_off_the_anime_list_the_tmdb_rank_shows(self):
         self._store_with_details("anime", ["anilist:9"], {}, "anilist")
-        self._store_with_details("tv", ["5", "100"], {}, "tmdb-anime-ja")
+        self._store_with_details("tv", ["5", "100"], {}, TMDB_SIG)
         rank = lambda keys, tid: asyncio.run(main._anime_or_tmdb_rank(None, keys, tid, "k", "series"))[0]
         self.assertEqual(rank(["anilist:9", "100"], "100"), 1)     # the anime list wins
         self.assertEqual(rank(["anilist:1", "100"], "100"), 2)     # else its TMDB rank
@@ -304,3 +314,88 @@ class AnimeInvalidationTests(_TempTable):
         cache.invalidate_trending_turnover("anime", {"anilist:2"})
         left = {k for (k,) in cache.get_db().execute("SELECT cache_key FROM final_poster_cache")}
         self.assertEqual(left, {"kitsu:10:tt9:999:series:h", "tt5:5:series:h"})
+
+
+class OneListPerTitleTests(_TempTable):
+    """A title on an anime list is on no TMDB list, whatever its language."""
+
+    def setUp(self):
+        super().setUp()
+        self._load(MAP + [{"type": "ONA", "kitsu_id": 50, "anilist_id": 5, "mal_id": 105,
+                            "themoviedb_id": {"tv": 500}}])     # Korean, say
+        self._db = tempfile.TemporaryDirectory()
+        self._saved_db = (cache.DB_PATH, cache._initialised, getattr(cache._local, "conn", None))
+        cache.DB_PATH = os.path.join(self._db.name, "cache.db")
+        cache._local.conn = None
+        cache.init_db()
+        tmdb._trending_source_failed_at.clear()
+
+    def tearDown(self):
+        conn = getattr(cache._local, "conn", None)
+        if conn is not None:
+            conn.close()
+        cache.DB_PATH, cache._initialised, cache._local.conn = self._saved_db
+        self._db.cleanup()
+        super().tearDown()
+
+    def test_anime_list_titles_leave_whatever_their_language(self):
+        cache.set_cached_trending_snapshot("anime", {"anilist:5": 1}, "anilist")
+        on = tmdb._anime_list_tmdb_ids("tv")
+        self.assertEqual(on, {"500"})
+        self.assertEqual(tmdb._without_anime("tv", ["500", "8"], {"500": {"lang": "ko"}}, on), ["8"])
+
+    def test_an_overlapping_list_is_rebuilt(self):
+        with mock.patch.object(tmdb, "anime_split", lambda: True):
+            sig = tmdb.trending_source_signature("tv")
+        cache.set_cached_trending_snapshot("tv", {"500": 1, "8": 2}, sig)
+        cache.set_cached_trending_snapshot("anime", {"anilist:5": 1}, "anilist")
+        tmdb._expire_overlapping_lists()
+        self.assertIsNone(cache.get_cached_trending_snapshot_entry("tv", sig))
+        self.assertIsNotNone(cache.get_cached_trending_snapshot_entry("tv", include_stale=True))
+
+    def test_tmdb_list_is_built_after_the_anime_ones(self):
+        async def anilist(client, details_out=None, films=False, limit=None):
+            return [] if films else ["anilist:5"]
+
+        async def tmdb_ids(client, key, endpoint, details_out=None):
+            for i in ("500", "8"):
+                details_out[i] = {"lang": "ko"}
+            return ["500", "8"]
+        with mock.patch.object(tmdb, "anime_split", lambda: True), \
+             mock.patch.object(tmdb, "TRENDING_SOURCE_TV", ""), \
+             mock.patch.object(tmdb, "TRENDING_SOURCE_ANIME", ""), \
+             mock.patch.object(tmdb, "TRENDING_SOURCE_ANIME_MOVIE", ""), \
+             mock.patch("anime.fetch_anilist_trending", anilist), \
+             mock.patch.object(tmdb, "_fetch_tmdb_trending_ids", tmdb_ids), \
+             mock.patch.object(tmdb, "_TRENDING_RETRY_DELAY_SECS", 0):
+            rankings, _ = asyncio.run(tmdb.ensure_trending_snapshot(None, "k", "tv"))
+        self.assertEqual(rankings, {"8": 1})
+
+
+class ListVersionTests(_AddonTest):
+    """A catalog's poster URLs name the list they were cut from, so a rebuilt
+    list reaches a client that holds the old images for their max-age."""
+
+    def poster_urls(self):
+        from urllib.parse import parse_qs, urlsplit
+        metas = self.client.get("/trending/sekrit/cfg-dHJlbmRpbmdfc3R5bGU9cmliYm9u/catalog/movie/pp.trending.movie.json").json()["metas"]
+        return [parse_qs(urlsplit(m["poster"]).query) for m in metas]
+
+    def test_a_new_order_is_a_new_url(self):
+        self._store_with_details("movie", ["11", "22"], {}, TMDB_SIG)
+        first = self.poster_urls()
+        self.assertEqual(len({q["rv"][0] for q in first}), 1)
+        self.assertEqual(self.poster_urls(), first)                       # same list, same URLs
+        self._store_with_details("movie", ["22", "11"], {}, TMDB_SIG)
+        self.assertNotEqual(self.poster_urls()[0]["rv"], first[0]["rv"])
+
+    def test_the_render_ignores_it(self):
+        self.assertEqual(main._render_config_signature(main.build_request_config({"rv": "abc"})),
+                         main._render_config_signature(main.build_request_config({})))
+
+
+class CatalogMaxAgeTests(_AddonTest):
+    def test_a_catalog_is_held_briefly(self):
+        self._store_with_details("movie", ["11"], {}, TMDB_SIG)
+        cc = self.client.get("/trending/sekrit/catalog/movie/pp.trending.movie.json").headers["cache-control"]
+        self.assertEqual(cc, f"public, max-age={main._CATALOG_MAX_AGE}")

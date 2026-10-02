@@ -956,7 +956,7 @@ from ratings import (
     _score_color_alt,
     _score_color_metal,
 )
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, fetch_anime_trending_rank_entry, trending_kind, anime_split, ANIME_ENDPOINTS, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, resolve_tvdb_to_tmdb, IdResolveError, TmdbIdGone, mark_tmdb_id_gone, forget_imdb_mapping_to, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS, fetch_logo_image, logo_language_steps, logo_step_available, _image_matches_language, sanitise_source_url, fetch_cropped_art
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, fetch_anime_trending_rank_entry, _expire_overlapping_lists, trending_kind, anime_split, ANIME_ENDPOINTS, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, resolve_tvdb_to_tmdb, IdResolveError, TmdbIdGone, mark_tmdb_id_gone, forget_imdb_mapping_to, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS, fetch_logo_image, logo_language_steps, logo_step_available, _image_matches_language, sanitise_source_url, fetch_cropped_art
 # How long a poster rendered while its trending list was unreadable is kept:
 # the same as that list's retry cooldown.
 from tmdb import _TRENDING_SOURCE_RETRY_SECS as _TRENDING_UNREAD_TTL
@@ -6101,7 +6101,8 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
 def _trending_endpoints() -> tuple[str, ...]:
     """The snapshots the trending loop keeps current.  Anime is ranked on its
     own lists only for the trending catalogs addon."""
-    return ("movie", "tv", *ANIME_ENDPOINTS) if _cfg.TRENDING_CATALOGS_ENABLED else ("movie", "tv")
+    # Anime first: the movie and TV lists leave off what is on the anime ones.
+    return (*ANIME_ENDPOINTS, "movie", "tv") if _cfg.TRENDING_CATALOGS_ENABLED else ("movie", "tv")
 
 
 def _seconds_until_trending_due() -> float:
@@ -6417,7 +6418,9 @@ async def lifespan(app: FastAPI):
 
     background_task = asyncio.create_task(_run_background_jobs())
     imdb_dataset_task = asyncio.create_task(imdb_dataset_refresh_loop(_HTTP_CLIENT))
-    anime_ids_task = asyncio.create_task(anime_ids.anime_id_map_refresh_loop(_HTTP_CLIENT))
+    # A new mapping can put a title on an anime list and a TMDB one at once.
+    anime_ids_task = asyncio.create_task(anime_ids.anime_id_map_refresh_loop(
+        _HTTP_CLIENT, on_refresh=_expire_overlapping_lists))
     yield
     background_task.cancel()
     imdb_dataset_task.cancel()
@@ -6830,7 +6833,7 @@ def _public_base(request: Request) -> str:
 def _addon_poster_url(
     base: str, cfg: list[tuple[str, str]], key: str | None,
     endpoint: str, ctype: str, entry_id: str, imdb_id: str | None,
-    shape: str | None = None,
+    shape: str | None = None, version: str | None = None,
 ) -> str:
     if entry_id.startswith("anilist:"):
         ids = [("stremio_id", entry_id)]
@@ -6841,13 +6844,30 @@ def _addon_poster_url(
         ids.append(("shape", shape))
     if key:
         ids.append(("access_key", key))
+    if version:
+        # The list the row was cut from.  Unread by the render: a new list
+        # is a new URL, so a client holding last list's image (its rank
+        # baked in) for its max-age fetches this one's instead.
+        ids.append((_LIST_VERSION_PARAM, version))
     return f"{base}/poster?{urlencode(ids + cfg)}"
+
+
+_LIST_VERSION_PARAM = "rv"
+# How long a client may hold a trending catalog's response.
+_CATALOG_MAX_AGE = 600
+
+
+def _list_version(rankings: dict[str, int]) -> str:
+    """A short id of a trending list's order: changes whenever a rank does."""
+    order = "|".join(sorted(rankings, key=rankings.get))
+    return hashlib.sha256(order.encode()).hexdigest()[:10]
 
 
 async def _trending_catalog_meta(
     client: httpx.AsyncClient, entry_id: str, ctype: str, endpoint: str,
     details: dict, sem: asyncio.Semaphore,
     poster_cfg: "tuple[str, list, str | None] | None" = None,
+    version: str | None = None,
 ) -> dict:
     """One catalog item.  An IMDb id where we have one, since every client and
     metadata addon understands it; otherwise the namespaced TMDB or AniList id.
@@ -6890,11 +6910,13 @@ async def _trending_catalog_meta(
     landscape = None
     if poster_cfg is not None:
         base, settings, key = poster_cfg
-        poster = _addon_poster_url(base, settings, key, endpoint, ctype, entry_id, imdb_id)
+        poster = _addon_poster_url(base, settings, key, endpoint, ctype, entry_id, imdb_id,
+                                   version=version)
         # The same settings drawn 16:9, for clients that lay a row out in
         # landscape (Nuvio reads it from here, as AIOMetadata supplies it).
         landscape = _addon_poster_url(
             base, settings, key, endpoint, ctype, entry_id, imdb_id, shape="landscape",
+            version=version,
         )
     else:
         poster = detail.get("poster")
@@ -6939,13 +6961,19 @@ async def _trending_catalog(
     ordered = [entry_id for entry_id, _rank in sorted(rankings.items(), key=lambda kv: kv[1])][:limit]
     ordered = ordered[skip:]
     details = get_cached_trending_details(endpoint)
+    # Every poster URL names the list it was cut from (see _addon_poster_url).
+    version = _list_version(rankings)
     sem = asyncio.Semaphore(8)
     metas = await asyncio.gather(*(
-        _trending_catalog_meta(_HTTP_CLIENT, entry_id, ctype, endpoint, details, sem, poster_cfg)
+        _trending_catalog_meta(_HTTP_CLIENT, entry_id, ctype, endpoint, details, sem, poster_cfg,
+                               version)
         for entry_id in ordered
     ))
-    # Cached no longer than the snapshot, like the posters that print its ranks.
-    max_age = max(0, int(expires_at - time.time()))
+    # Cached no longer than the snapshot, like the posters that print its ranks,
+    # and not long either way: a list can be rebuilt before it expires (an
+    # anime list or the id mapping moving a title onto it), and a client
+    # holding the old row would fetch its posters with the new ranks.
+    max_age = max(0, min(int(expires_at - time.time()), _CATALOG_MAX_AGE))
     return JSONResponse(
         {"metas": list(metas)},
         headers={**_ADDON_HEADERS, "Cache-Control": f"public, max-age={max_age}"},

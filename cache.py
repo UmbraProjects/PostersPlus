@@ -1533,6 +1533,17 @@ def get_cached_trending_details(media_type: str) -> dict[str, dict]:
         return {}
 
 
+def expire_trending_snapshot(media_type: str) -> None:
+    """Mark *media_type*'s snapshot expired, so the next request rebuilds it.
+    Kept, not deleted: the rebuild diffs against it to invalidate what moved."""
+    try:
+        with _db_lock:
+            get_db().execute("UPDATE trending_cache SET cached_at = 0 WHERE media_type = ?", (media_type,))
+            get_db().commit()
+    except Exception as exc:
+        logger.error(f"Trending snapshot expire error: {exc}")
+
+
 def set_cached_trending_snapshot(
     media_type: str,
     rankings: dict[str, int],

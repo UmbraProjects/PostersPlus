@@ -9,8 +9,9 @@
   poster now shows its anime rank, whatever id it is requested by and whatever
   catalog it is in: an AniList or Kitsu (or MyAnimeList) id as that entry, a
   TMDB or IMDb id as the best rank of any of its seasons, else its TMDB rank.
-  Chinese and Korean animation stays on the series and movie lists, where it
-  trends. The movie and series rows (and the ranks on their posters) are
+  Anything on the anime lists is off the movie and series lists, so no title
+  is in two rows; Chinese and Korean animation that isn't trending on AniList
+  stays on the series and movie lists, where it trends. The movie and series rows (and the ranks on their posters) are
   renumbered once on update.
 - A new **Trending Anime Movies** catalog ranks AniList's trending anime
   films. Re-import the addon's manifest to see it.
@@ -19,12 +20,20 @@
   sources.
 - `TRENDING_HIDE_UNRELEASED` (off by default) leaves titles that aren't out at
   home yet off the trending lists: films still in cinemas or unreleased,
-  series not yet aired, anime not yet airing. The rest are ranked without
+  series not yet aired, anime not yet airing, and anime films still only in
+  cinemas (by their TMDB dates, as their release badge reads them). The rest are ranked without
   gaps, so the catalogs and poster ranks still agree.
+- The catalogs' poster URLs name the list they were cut from (`rv=`), so a
+  list rebuilt mid-day no longer leaves an app showing yesterday's ranks
+  until its cached images expire. The catalogs themselves may be cached for
+  10 minutes, rather than until the next refresh.
 - A quality badge under a trending number or ribbon sits the same distance
   below it on every poster, instead of nearer or further depending on the art.
 - Frosted quality badges and the frosted cinema disc use the frosted notch's
   opacity setting.
+- Anime films requested by Kitsu, AniList or MyAnimeList id alone now find
+  their TMDB entry (logo, backdrop, ratings). The id mapping lists a film's
+  TMDB id as a list, which was being dropped, so no anime film had one.
 
 ### Updates keep the poster cache
 

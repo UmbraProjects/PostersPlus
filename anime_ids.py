@@ -33,7 +33,7 @@ import sqlite3
 import threading
 import time
 from contextlib import suppress
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 import httpx
 
@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 # worker per interval performs the download (see imdb_dataset_refresh_loop).
 # Renamed when the tables gain one, so the first worker after an upgrade
 # rebuilds at once instead of waiting out the previous day's claim.
-_REFRESH_CLAIM_KEY = "anime_id_map_refresh_claimed_at:mal"
+_REFRESH_CLAIM_KEY = "anime_id_map_refresh_claimed_at:mal+films"   # films' TMDB ids, read from lists
 _NOT_READY_RETRY_SECS = 60
 # The namespaces anime.py sources art from, and the list's field for each.
 _NAMESPACE_FIELDS = {"kitsu": "kitsu_id", "anilist": "anilist_id"}
@@ -276,6 +276,20 @@ def anilist_for_title(media_type: str, tmdb_id: str | None, imdb_id: str | None)
     return []
 
 
+def tmdb_films_for_anilist(anilist_ids: "set[int]") -> dict[int, int]:
+    """{AniList id: its TMDB film} for each of *anilist_ids* the list maps
+    to a film."""
+    out: dict[int, int] = {}
+    ids = sorted(anilist_ids)
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        marks = ",".join("?" * len(chunk))
+        for a, m in _query(f"SELECT anime_id, tmdb_movie FROM anime_id_map WHERE namespace = 'anilist' "
+                           f"AND anime_id IN ({marks}) AND tmdb_movie IS NOT NULL", tuple(chunk)):
+            out[int(a)] = int(m)
+    return out
+
+
 def ids_for_anilist(anilist_ids: "set[int]") -> tuple[set[int], set[int], set[int]]:
     """(kitsu ids, TMDB series ids, TMDB movie ids) of *anilist_ids*: every id
     a poster of those entries can be requested and cached under."""
@@ -298,6 +312,14 @@ def ids_for_anilist(anilist_ids: "set[int]") -> tuple[set[int], set[int], set[in
     return kitsu, tv, movie
 
 
+def _first_id(value) -> int | None:
+    """A TMDB id as the list gives it: a number, or a list whose first entry
+    is the one meant."""
+    if isinstance(value, list):
+        value = next((v for v in value if isinstance(v, int)), None)
+    return value if isinstance(value, int) else None
+
+
 def _rows_from_list(entries: list) -> "list[tuple]":
     """(namespace, anime_id, tmdb_tv, tmdb_movie, imdb_id) for every entry that
     maps a namespace we source from to anything we can use."""
@@ -308,7 +330,8 @@ def _rows_from_list(entries: list) -> "list[tuple]":
         tmdb = entry.get("themoviedb_id")
         tmdb_tv = tmdb_movie = None
         if isinstance(tmdb, dict):
-            tmdb_tv, tmdb_movie = tmdb.get("tv"), tmdb.get("movie")
+            # A series' id is a number, a film's a list of them ("movie": [128]).
+            tmdb_tv, tmdb_movie = (_first_id(tmdb.get("tv")), _first_id(tmdb.get("movie")))
         imdb = entry.get("imdb_id")
         if isinstance(imdb, list):
             imdb = next((i for i in imdb if isinstance(i, str) and i.startswith("tt")), None)
@@ -413,10 +436,12 @@ async def refresh_mapping(client: httpx.AsyncClient) -> int:
     return count
 
 
-async def anime_id_map_refresh_loop(client: httpx.AsyncClient) -> None:
+async def anime_id_map_refresh_loop(client: httpx.AsyncClient,
+                                    on_refresh: "Callable[[], None] | None" = None) -> None:
     """Background task: refresh shortly after startup, then daily. Claimed
     across workers exactly as imdb_dataset_refresh_loop is, for the same
-    reasons; a worker that loses the claim re-reads the winner's table."""
+    reasons; a worker that loses the claim re-reads the winner's table.
+    *on_refresh* runs (in a thread) after each refresh this worker loads."""
     if not is_enabled():
         return
 
@@ -428,6 +453,8 @@ async def anime_id_map_refresh_loop(client: httpx.AsyncClient) -> None:
             if claim_app_state_slot(_REFRESH_CLAIM_KEY, time.time(), interval * 0.9):
                 if await refresh_mapping(client) == 0:
                     set_app_state(_REFRESH_CLAIM_KEY, "0")
+                elif on_refresh is not None:
+                    await asyncio.to_thread(on_refresh)
             else:
                 _local.conn = None
                 _row_count = _count_rows()

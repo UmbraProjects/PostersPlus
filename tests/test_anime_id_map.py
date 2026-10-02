@@ -27,7 +27,7 @@ SAMPLE = [
      "themoviedb_id": {"tv": 45790}, "imdb_id": ["tt2359704"],
      "season": {"tvdb": 6, "tmdb": 6}},
     {"type": "MOVIE", "kitsu_id": 1376, "anilist_id": 199,
-     "themoviedb_id": {"movie": 129}, "imdb_id": ["tt0245429"]},
+     "themoviedb_id": {"movie": [129]}, "imdb_id": ["tt0245429"]},     # a film's is a list
     {"type": "TV", "kitsu_id": 7442, "imdb_id": ["tt2560140"]},        # no TMDB
     {"type": "TV", "kitsu_id": 99999, "mal_id": 5},                   # nothing usable
     {"type": "TV", "anilist_id": 555, "mal_id": 30,
