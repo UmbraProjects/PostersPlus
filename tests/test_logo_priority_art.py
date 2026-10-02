@@ -18,6 +18,8 @@ import tmdb
 
 TEXTLESS = (200, 0, 0, 255)
 ORIGINAL = (0, 200, 0, 255)
+BACKDROP = (0, 0, 200, 255)
+TEXT_BACKDROP = (200, 200, 0, 255)
 
 
 def _art(colour):
@@ -39,6 +41,7 @@ class LogoPriorityArtTests(unittest.IsolatedAsyncioTestCase):
                 "_HTTP_CLIENT", "resolve_tmdb_to_imdb",
                 "_coalesced_fetch_poster_metadata", "fetch_poster_image",
                 "fetch_logo", "_fetch_metahub_logo", "build_poster",
+                "fetch_landscape_image", "build_landscape",
             )
         }
         self._retry_delay = tmdb._TRENDING_RETRY_DELAY_SECS
@@ -64,14 +67,16 @@ class LogoPriorityArtTests(unittest.IsolatedAsyncioTestCase):
         # Languages fetch_logo has a logo in; "en" stands for English.
         self.logo_languages: set[str] = set()
         self.original_poster = "/orig.jpg"
+        self.text_backdrop = "/tb.jpg"
         self.priorities: list[str] = []
         self.rendered: list[tuple] = []
 
         async def _meta(client, tmdb_id, key, media_type, lang, secondary=""):
             td = dict(cinemeta._blank_tmdb_data(), imdb_id="tt1129423",
                       original_language="en",
-                      original_poster_path=self.original_poster)
-            return [18], True, [], "2008", "Fireproof", "/p.jpg", None, td
+                      original_poster_path=self.original_poster,
+                      text_backdrop_path=self.text_backdrop)
+            return [18], True, [], "2008", "Fireproof", "/p.jpg", "/b.jpg", td
 
         async def _poster(client, tmdb_id, media_type, path):
             return _art(ORIGINAL if path == "/orig.jpg" else TEXTLESS)
@@ -93,7 +98,12 @@ class LogoPriorityArtTests(unittest.IsolatedAsyncioTestCase):
                                   kwargs["fallback_title"]))
             return image
 
+        async def _landscape(client, tmdb_id, path):
+            return _art(TEXT_BACKDROP if path == "/tb.jpg" else BACKDROP)
+
         main._coalesced_fetch_poster_metadata = _meta
+        main.fetch_landscape_image = _landscape
+        main.build_landscape = _build
         main.fetch_poster_image = _poster
         main.fetch_logo = _logo
         main._fetch_metahub_logo = _no_logo
@@ -171,6 +181,33 @@ class LogoPriorityArtTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pixel, TEXTLESS)
         self.assertIsNone(logo)
         self.assertIsNone(title)
+
+    async def test_landscape_art_serves_the_text_backdrop(self):
+        pixel, logo, title = await self._render("native,english,art,text", shape="landscape")
+        self.assertEqual(pixel, TEXT_BACKDROP)
+        self.assertIsNone(logo)
+        self.assertIsNone(title)
+
+    async def test_landscape_logo_above_art_wins(self):
+        self.logo_languages = {"en"}
+        pixel, logo, _ = await self._render("native,english,art,text", shape="landscape")
+        self.assertEqual(pixel, BACKDROP)
+        self.assertIs(logo, self.logo)
+        self.assertEqual(self.priorities, ["native,english"])
+
+    async def test_landscape_without_a_text_backdrop_carries_on(self):
+        self.text_backdrop = None
+        self.logo_languages = {"en"}
+        pixel, logo, _ = await self._render("native,art,english,text", shape="landscape")
+        self.assertEqual(pixel, BACKDROP)
+        self.assertIs(logo, self.logo)
+        self.assertEqual(self.priorities, ["native", "english,text"])
+
+    async def test_landscape_without_art_draws_text(self):
+        pixel, logo, title = await self._render("native,english,text", shape="landscape")
+        self.assertEqual(pixel, BACKDROP)
+        self.assertIsNone(logo)
+        self.assertEqual(title, "Fireproof")
 
 
 if __name__ == "__main__":

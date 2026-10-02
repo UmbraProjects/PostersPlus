@@ -9957,32 +9957,45 @@ async def get_poster(
 
         # Original art as a logo-priority source ("art"): when no logo turns
         # up in the sources above it, serve the title's original art (title
-        # baked in) the way original-art mode does, instead of carrying on to
-        # the sources below it — text, say.  That needs the answer before the
-        # art is picked, so those sources are looked up here rather than
+        # baked in) the way original-art mode does — the poster, or in
+        # landscape the text-bearing backdrop — instead of carrying on to the
+        # sources below it, text say.  That needs the answer before the art
+        # is picked, so those sources are looked up first rather than
         # alongside the image fetch.  A title with no original art carries on
         # down the list as if "art" weren't there.  Only where a logo of ours
-        # would go on the art: portrait, textless, not original-art mode
-        # already, and not art the operator chose.
+        # would go on the art: textless, not original art already, and not
+        # art the operator chose.
         _logo_priority = rcfg.logo_priority
         _prefetched_logo = None
-        if (logo_priority_falls_back_to_art(rcfg.logo_priority)
-                and not _is_landscape and not _use_original_art
-                and not rcfg.textless and is_textless
-                and (poster_path or _use_backdrop)
-                and _art_override is None):
-            _before_art, _after_art = split_logo_priority_at_art(rcfg.logo_priority)
+        _art_in_priority = (logo_priority_falls_back_to_art(rcfg.logo_priority)
+                            and not rcfg.textless)
+
+        async def _no_logo_above_art() -> bool:
+            """Look the sources above "art" up (the logo, if one turns up, is
+            kept for the render); True when none had a logo."""
+            nonlocal _prefetched_logo
+            _before_art, _ = split_logo_priority_at_art(rcfg.logo_priority)
             if _before_art:
                 _prefetched_logo = await _resolve_logo(_before_art)
-            if _prefetched_logo is None and _orig_art:
+            return _prefetched_logo is None
+
+        def _carry_on_below_art() -> None:
+            nonlocal _logo_priority
+            _, _logo_priority = split_logo_priority_at_art(rcfg.logo_priority)
+
+        if (_art_in_priority and not _is_landscape and not _use_original_art
+                and is_textless and (poster_path or _use_backdrop)
+                and _art_override is None
+                and await _no_logo_above_art()):
+            if _orig_art:
                 poster_path       = _orig_art
                 is_textless       = False
                 _use_backdrop     = False
                 _use_original_art = True
                 logger.info(f"No logo for {tmdb_id} — falling back to original art {poster_path} "
                             f"(priority={rcfg.logo_priority})")
-            elif _prefetched_logo is None:
-                _logo_priority = _after_art
+            else:
+                _carry_on_below_art()
 
         if is_anime and not rating_already_cached and not effective_mdblist_key:
             # No IMDb id (or no key), so MDBList can't be asked. Supply what the
@@ -10179,6 +10192,28 @@ async def get_poster(
                 if _ls_path is not None:
                     logger.info(f"No TMDB backdrop for {tmdb_id} — landscape using Metahub background")
                     is_textless = True
+            # "art" in the logo priority: no logo above it swaps the textless
+            # backdrop for the text-bearing one, as landscape_art=original
+            # would pick it (TVDB's first, when that is the source).
+            if (_art_in_priority and rcfg.landscape_art != "original"
+                    and is_textless and _ls_path is not None
+                    and _ls_override is None
+                    and await _no_logo_above_art()):
+                _ls_orig = None
+                if rcfg.landscape_art_source == "tvdb" and not use_cinemeta:
+                    _ls_orig = await tvdb.tvdb_poster_url(
+                        client, media_type=type, tmdb_id=tmdb_id if has_tmdb_id else None,
+                        imdb_id=effective_imdb_id, kind="backgrounds",
+                        languages=_poster_language_order,
+                    )
+                _ls_orig = _ls_orig or _ls_text_bd
+                if _ls_orig:
+                    _ls_path    = _ls_orig
+                    is_textless = False
+                    logger.info(f"No logo for {tmdb_id} — landscape falling back to original art "
+                                f"{_ls_path} (priority={rcfg.logo_priority})")
+                else:
+                    _carry_on_below_art()
             is_no_poster  = _ls_path is None
             if _ls_path is None:
                 logger.info(f"No backdrop for {tmdb_id} — landscape falls back to genre canvas")
