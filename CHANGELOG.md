@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Anime rating badges on landscape posters
+
+- Landscape posters with rating badges (`landscape_rating_badges`) now show
+  **AniList and Kitsu** scores on anime, as portrait does. Landscape decided
+  whether to fetch them by portrait's rating mode, which a landscape URL
+  never sends, so those badges only appeared on titles requested by that
+  site's own id. Affected landscape posters re-render once.
+
 ### Films stop reading "Cinema" when TMDB never adds a digital date
 
 - A movie whose only past release is theatrical, with no digital date
