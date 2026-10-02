@@ -9982,6 +9982,9 @@ async def get_poster(
         def _carry_on_below_art() -> None:
             nonlocal _logo_priority
             _, _logo_priority = split_logo_priority_at_art(rcfg.logo_priority)
+            # Only text below: no logo left to look for.
+            if _logo_priority and set(logo_priority_sources(_logo_priority)) <= {"text"}:
+                _logo_priority = None
 
         if (_art_in_priority and not _is_landscape and not _use_original_art
                 and is_textless and (poster_path or _use_backdrop)

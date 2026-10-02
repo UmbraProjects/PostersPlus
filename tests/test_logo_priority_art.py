@@ -209,6 +209,14 @@ class LogoPriorityArtTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(logo)
         self.assertEqual(title, "Fireproof")
 
+    async def test_only_text_below_art_looks_no_further(self):
+        self.original_poster = None
+        pixel, logo, title = await self._render("native,art,text")
+        self.assertEqual(pixel, TEXTLESS)
+        self.assertEqual(title, "Fireproof")
+        self.assertEqual(self.priorities, ["native"])
+        main.tvdb.tvdb_logo.assert_awaited_once()
+
 
 if __name__ == "__main__":
     unittest.main()
