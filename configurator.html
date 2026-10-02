@@ -7257,6 +7257,9 @@ function openCopyMenu(ev) {
   menu.hidden = false;
   _copyMenuOpenedAt = Date.now();
   btn.setAttribute('aria-expanded', 'true');
+  // As wide as the button it drops from, rather than the shared 172px floor;
+  // a longer label still widens it.
+  menu.style.minWidth = `${btn.getBoundingClientRect().width}px`;
   positionMenu(menu, btn);
   return false;
 }
