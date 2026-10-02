@@ -81,6 +81,9 @@ _INDEXES = (
     "CREATE INDEX IF NOT EXISTS anime_id_map_tmdb_tv    ON anime_id_map (tmdb_tv)",
     "CREATE INDEX IF NOT EXISTS anime_id_map_tmdb_movie ON anime_id_map (tmdb_movie)",
     "CREATE INDEX IF NOT EXISTS anime_id_map_imdb       ON anime_id_map (imdb_id)",
+    # For the anime trending ranks: a Kitsu entry's AniList id, and back.
+    "CREATE INDEX IF NOT EXISTS anime_mal_map_kitsu     ON anime_mal_map (kitsu_id)",
+    "CREATE INDEX IF NOT EXISTS anime_mal_map_anilist   ON anime_mal_map (anilist_id)",
 )
 
 _local = threading.local()
@@ -234,6 +237,65 @@ def reverse_lookup(media_type: str, tmdb_id: str | None, imdb_id: str | None) ->
         if rows:
             return {ns: int(aid) for ns, aid in rows if ns in _NAMESPACE_FIELDS}
     return {}
+
+
+def _query(sql: str, args: tuple) -> list:
+    if not is_enabled():
+        return []
+    try:
+        return _get_db().execute(sql, args).fetchall()
+    except Exception as exc:
+        logger.warning(f"Anime id mapping query failed: {exc}")
+        return []
+
+
+def anilist_for_kitsu(kitsu_id: int) -> list[int]:
+    """The AniList id of the same entry as Kitsu *kitsu_id* (the list pairs
+    them on its MyAnimeList rows), or [] when it doesn't know one."""
+    return [int(a) for (a,) in _query(
+        "SELECT DISTINCT anilist_id FROM anime_mal_map WHERE kitsu_id = ? AND anilist_id IS NOT NULL",
+        (int(kitsu_id),))]
+
+
+def anilist_for_title(media_type: str, tmdb_id: str | None, imdb_id: str | None) -> list[int]:
+    """Every AniList entry the list maps to a TMDB or IMDb title: a show's
+    seasons all map to the show, and AniList ranks each season apart, so the
+    one trending now is any of them.  The TMDB id wins over the IMDb id when
+    it matches anything, as in reverse_lookup."""
+    col = "tmdb_movie" if media_type == "movie" else "tmdb_tv"
+    tries = []
+    if tmdb_id and str(tmdb_id).isascii() and str(tmdb_id).isdigit():
+        tries.append((col, int(tmdb_id)))
+    if imdb_id and str(imdb_id).startswith("tt"):
+        tries.append(("imdb_id", imdb_id))
+    for column, value in tries:
+        rows = _query(f"SELECT anime_id FROM anime_id_map WHERE namespace = 'anilist' AND {column} = ?",
+                      (value,))
+        if rows:
+            return sorted(int(a) for (a,) in rows)
+    return []
+
+
+def ids_for_anilist(anilist_ids: "set[int]") -> tuple[set[int], set[int], set[int]]:
+    """(kitsu ids, TMDB series ids, TMDB movie ids) of *anilist_ids*: every id
+    a poster of those entries can be requested and cached under."""
+    kitsu: set[int] = set()
+    tv: set[int] = set()
+    movie: set[int] = set()
+    ids = sorted(anilist_ids)
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        marks = ",".join("?" * len(chunk))
+        for (k,) in _query(f"SELECT kitsu_id FROM anime_mal_map WHERE anilist_id IN ({marks}) "
+                           "AND kitsu_id IS NOT NULL", tuple(chunk)):
+            kitsu.add(int(k))
+        for t, m in _query(f"SELECT tmdb_tv, tmdb_movie FROM anime_id_map "
+                           f"WHERE namespace = 'anilist' AND anime_id IN ({marks})", tuple(chunk)):
+            if t is not None:
+                tv.add(int(t))
+            if m is not None:
+                movie.add(int(m))
+    return kitsu, tv, movie
 
 
 def _rows_from_list(entries: list) -> "list[tuple]":

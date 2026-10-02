@@ -1200,9 +1200,11 @@ def _build_landscape(
             from awards import dominant_frost_rgb, _frosted_tint
             tint = _frosted_tint(*(badge_source or dominant_frost_rgb(art)),
                                  saturation=cfg.sash_badge_frost_saturation, reference=cfg.frost_reference)
-        badge_logos = (*badge_logos[:2], graphic_badges.cinema_ink(cfg.badge_cinema_style, cinema_run, tint))
+        badge_logos = (*badge_logos[:2], graphic_badges.cinema_ink(cfg.badge_cinema_style, cinema_run, tint,
+                                                                     cfg.sash_badge_frost_opacity))
         _draw_graphic_badges(image, before, cfg, quality_tokens or [], certification, age_rating,
                              badge_logos, logo_box, badge_position,
-                             graphic_badges.quality_look(cfg.badge_quality_style, tint))
+                             graphic_badges.quality_look(cfg.badge_quality_style, tint,
+                                                         cfg.sash_badge_frost_opacity))
 
     return image

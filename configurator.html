@@ -3842,14 +3842,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <div class="sash-list" id="gb-badge-list"></div>
               </div>
               <div class="field" id="gb-cinema-style-field" style="display:none">
-                <label class="field-label" data-tip="The Cinema badge shows on a film that is still in cinemas, or not out yet, without taking the sash: a small disc with the day it reaches home (its first digital or disc release), month over day. Without a date it shows a popcorn bucket for a film in cinemas, or a clapperboard for one still in production. A series that hasn't aired yet shows its premiere date, or the clapperboard. Auto picks the disc's tone from what it sits on: white to silver over dark art, black to grey over light. Frosted is the frosted notch's glass, the poster blurred under its tint.">Cinema Badge Style</label>
+                <label class="field-label" data-tip="The Cinema badge shows on a film that is still in cinemas, or not out yet, without taking the sash: a small disc with the day it reaches home (its first digital or disc release), month over day. Without a date it shows a popcorn bucket for a film in cinemas, or a clapperboard for one still in production. A series that hasn't aired yet shows its premiere date, or the clapperboard. Auto picks the disc's tone from what it sits on: white to silver over dark art, black to grey over light. Frosted is the frosted notch's glass, the poster blurred under its tint at the notch's frost opacity.">Cinema Badge Style</label>
                 <select id="cfg-badge-cinema-style" onchange="build(); queuePreviewReload()">
                   <option value="auto" selected>Auto (Light / Dark)</option>
                   <option value="frosted">Frosted</option>
                 </select>
               </div>
               <div class="field" id="gb-quality-style-field" style="display:none">
-                <label class="field-label" data-tip="How the quality badges (Video, Audio and Resolution) are drawn. Solid: filled boxes for 4K, HD and HDR, and the bare Dolby and DTS marks. Frosted: each on a chip of the frosted notch's glass, the poster blurred under its tint, with the mark or label in the tint's ink.">Quality Badge Style</label>
+                <label class="field-label" data-tip="How the quality badges (Video, Audio and Resolution) are drawn. Solid: filled boxes for 4K, HD and HDR, and the bare Dolby and DTS marks. Frosted: each on a chip of the frosted notch's glass, the poster blurred under its tint at the notch's frost opacity, with the mark or label in the tint's ink.">Quality Badge Style</label>
                 <select id="cfg-badge-quality-style" onchange="build(); queuePreviewReload()">
                   <option value="solid" selected>Solid</option>
                   <option value="frosted">Frosted</option>

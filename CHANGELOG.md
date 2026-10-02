@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Anime trends on its own lists, and trending can skip what isn't out
+
+- With the trending catalogs addon on, **Japanese anime leaves Trending
+  Movies and Trending Series** and ranks only on the anime lists. Every anime
+  poster now shows its anime rank, whatever id it is requested by and whatever
+  catalog it is in: an AniList or Kitsu (or MyAnimeList) id as that entry, a
+  TMDB or IMDb id as the best rank of any of its seasons, else its TMDB rank.
+  Chinese and Korean animation stays on the series and movie lists, where it
+  trends. The movie and series rows (and the ranks on their posters) are
+  renumbered once on update.
+- A new **Trending Anime Movies** catalog ranks AniList's trending anime
+  films. Re-import the addon's manifest to see it.
+- `TRENDING_SOURCE_ANIME` and `TRENDING_SOURCE_ANIME_MOVIE` replace AniList's
+  lists with an MDBList page or TMDB-shaped JSON, like the movie and TV
+  sources.
+- `TRENDING_HIDE_UNRELEASED` (off by default) leaves titles that aren't out at
+  home yet off the trending lists: films still in cinemas or unreleased,
+  series not yet aired, anime not yet airing. The rest are ranked without
+  gaps, so the catalogs and poster ranks still agree.
+- A quality badge under a trending number or ribbon sits the same distance
+  below it on every poster, instead of nearer or further depending on the art.
+- Frosted quality badges and the frosted cinema disc use the frosted notch's
+  opacity setting.
+
 ### Updates keep the poster cache
 
 - Updating PostersPlus no longer re-renders every cached poster. The cache

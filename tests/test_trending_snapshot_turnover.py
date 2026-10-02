@@ -161,7 +161,7 @@ class TmdbRankTests(unittest.TestCase):
         pages = {1: [{"id": 1}, {"id": 2}], 2: [{"id": 2}, {"id": 3}], 3: [], 4: [], 5: []}
 
         async def _get(url, params):
-            return _Resp({"results": pages[params["page"]]})
+            return _Resp({"results": pages.get(params["page"], [])})
 
         client = mock.Mock(get=_get)
         ids = asyncio.run(tmdb._fetch_tmdb_trending_ids(client, "k", "movie"))
@@ -173,8 +173,12 @@ class EnsureSnapshotTests(_TempDb):
         super().setUp()
         self._src = (tmdb.TRENDING_SOURCE_MOVIE, tmdb.TRENDING_SOURCE_TV)
         tmdb.TRENDING_SOURCE_MOVIE = tmdb.TRENDING_SOURCE_TV = ""
+        # TMDB's own lists, without the anime split's marker on them.
+        self._split = mock.patch.object(tmdb, "anime_split", lambda: False)
+        self._split.start()
 
     def tearDown(self):
+        self._split.stop()
         tmdb.TRENDING_SOURCE_MOVIE, tmdb.TRENDING_SOURCE_TV = self._src
         super().tearDown()
 
@@ -259,7 +263,7 @@ class RetryTests(_TempDb):
     def test_a_second_anilist_read_rescues_a_failed_first(self):
         results = [None, ["anilist:1"]]
 
-        async def _read(client, details_out=None):
+        async def _read(client, details_out=None, **_kw):
             return results.pop(0)
 
         with mock.patch("anime.fetch_anilist_trending", side_effect=_read):
@@ -297,7 +301,7 @@ class UnreadTtlTests(unittest.TestCase):
     def test_a_render_without_its_trending_list_is_kept_for_the_cooldown(self):
         src = Path("main.py").read_text(encoding="utf-8")
         self.assertIn(
-            "if (_trending_by_anilist or _trending_by_tmdb) and trending_expires_at is None:",
+            "if (_anime_rank_keys or _trending_by_tmdb) and trending_expires_at is None:",
             src,
         )
         self.assertEqual(main._TRENDING_UNREAD_TTL, tmdb._TRENDING_SOURCE_RETRY_SECS)

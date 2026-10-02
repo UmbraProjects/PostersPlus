@@ -357,7 +357,28 @@ QUALITY_STYLES = ("solid", "frosted")
 DEFAULT_QUALITY_STYLE = "solid"
 _CHIP_MARK  = 0.68    # a mark's height inside its chip, of the chip height
 _CHIP_PAD   = 0.50    # a mark's total horizontal padding, of the chip height
-_CHIP_FROST = 0.78    # the tint layer's opacity, as the frosted disc
+_CHIP_FROST = 0.78    # the tint layer's opacity when no other is given
+
+
+def _frost_look(tint: tuple[float, float, float], opacity: float | None) -> str:
+    """"rgb:r,g,b" for a frost tint, with "@alpha" (0-255) after it when the
+    tint layer's opacity is set: the sash's, so the chips and disc read as
+    the same glass as the frosted notch beside them."""
+    look = "rgb:" + ",".join(str(int(round(c))) for c in tint[:3])
+    if opacity is not None:
+        look += f"@{round(255 * min(1.0, max(0.0, opacity)))}"
+    return look
+
+
+def _parse_look(look: str) -> tuple[tuple[int, int, int] | None, int]:
+    """(tint, tint alpha) of a look: the tint None for "auto"."""
+    alpha = round(255 * _CHIP_FROST)
+    if "@" in look:
+        look, a = look.split("@", 1)
+        alpha = int(a)
+    if look.startswith("rgb:"):
+        return tuple(int(c) for c in look[4:].split(",")), alpha
+    return None, alpha
 
 
 def quality_style(value: str | None) -> str | None:
@@ -366,13 +387,15 @@ def quality_style(value: str | None) -> str | None:
     return v if v in QUALITY_STYLES else None
 
 
-def quality_look(style: str, tint: tuple[float, float, float] | None = None) -> str | None:
+def quality_look(style: str, tint: tuple[float, float, float] | None = None,
+                 opacity: float | None = None) -> str | None:
     """What row_items takes for the quality badges: None for the solid ones,
-    else the frost tint ("rgb:r,g,b"), or "auto" while it isn't sampled (the
-    layout pass: a chip is the same size either way)."""
+    else the frost tint ("rgb:r,g,b", then "@alpha" with an *opacity*), or
+    "auto" while it isn't sampled (the layout pass: a chip is the same size
+    either way)."""
     if style != "frosted":
         return None
-    return "rgb:" + ",".join(str(int(round(c))) for c in tint[:3]) if tint is not None else "auto"
+    return _frost_look(tint, opacity) if tint is not None else "auto"
 
 
 def _chip_ink(content: str, h: int) -> Image.Image | None:
@@ -423,9 +446,10 @@ def _frost_chip(content: str, h: int, look: str) -> Image.Image | None:
 
 
 def _glass(image: Image.Image, x: int, y: int, w: int, h: int,
-           tint: tuple[int, int, int] | None) -> tuple[Image.Image, tuple[int, int, int]] | None:
+           tint: tuple[int, int, int] | None,
+           alpha: int = round(255 * _CHIP_FROST)) -> tuple[Image.Image, tuple[int, int, int]] | None:
     """The frosted notch's glass for a (w, h) badge at (x, y): the art under
-    it blurred beneath the tint at _CHIP_FROST, unmasked.  ``tint`` None
+    it blurred beneath the tint at *alpha*, unmasked.  ``tint`` None
     samples one from that art.  Returns (glass, tint), or None off-canvas."""
     box = (max(0, x), max(0, y), min(image.width, x + w), min(image.height, y + h))
     if box[2] <= box[0] or box[3] <= box[1]:
@@ -438,7 +462,7 @@ def _glass(image: Image.Image, x: int, y: int, w: int, h: int,
     glass.paste(under.filter(ImageFilter.GaussianBlur(max(2.0, h * 0.35))).convert("RGBA"),
                 (box[0] - x, box[1] - y))
     frost = Image.new("RGBA", (w, h), (*tint, 0))
-    frost.putalpha(Image.new("L", (w, h), round(255 * _CHIP_FROST)))
+    frost.putalpha(Image.new("L", (w, h), alpha))
     return Image.alpha_composite(glass, frost), tint
 
 
@@ -447,8 +471,7 @@ def _resolve_chip(image: Image.Image, im: Image.Image, x: int, y: int) -> Image.
     from awards import _frost_ink
     look, ink = im.info["frost_chip"]
     w, h = im.size
-    made = _glass(image, x, y, w, h,
-                  tuple(int(c) for c in look[4:].split(",")) if look.startswith("rgb:") else None)
+    made = _glass(image, x, y, w, h, *_parse_look(look))
     if made is None:
         return im
     glass, tint = made
@@ -505,16 +528,16 @@ class CinemaRun:
 
 
 def cinema_ink(style: str, run: CinemaRun | None,
-               tint: tuple[float, float, float] | None = None) -> str | None:
+               tint: tuple[float, float, float] | None = None,
+               opacity: float | None = None) -> str | None:
     """The badge's key for ``row_items`` ("disc|<look>|<face>"), or None when
     there is no badge.  The look is "auto" or the frost tint ("rgb:r,g,b"),
     "auto" too for a frosted disc whose tint isn't sampled yet (the layout
-    pass: same size either way).  The face is the date ("OCT 16"), else
+    pass: same size either way); an *opacity* follows the tint as "@alpha".  The face is the date ("OCT 16"), else
     "popcorn" or "clapper"."""
     if run is None:
         return None
-    look = ("rgb:" + ",".join(str(int(round(c))) for c in tint[:3])
-            if style == "frosted" and tint is not None else "auto")
+    look = _frost_look(tint, opacity) if style == "frosted" and tint is not None else "auto"
     if run.home_date is not None:
         face = f"{_MONTHS[run.home_date.month - 1]} {run.home_date.day}"
     else:
@@ -683,7 +706,7 @@ def _resolve_disc(image: Image.Image, im: Image.Image, x: int, y: int) -> Image.
         return im
     if look.startswith("rgb:"):
         from awards import _frost_ink
-        glass, tint = _glass(image, x, y, h, h, tuple(int(c) for c in look[4:].split(",")))
+        glass, tint = _glass(image, x, y, h, h, *_parse_look(look))
         glass.putalpha(_disc_mask(h))
         glass.alpha_composite(_disc_face(face, h, _frost_ink(*tint)))
         return glass

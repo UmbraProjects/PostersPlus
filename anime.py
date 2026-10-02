@@ -293,39 +293,46 @@ async def _fetch_anilist(client: httpx.AsyncClient, anime_id: int) -> dict | Non
 
 
 _ANILIST_TRENDING_QUERY = """
-query ($page: Int, $perPage: Int) {
+query ($page: Int, $perPage: Int, $statusNot: MediaStatus, $formats: [MediaFormat]) {
   Page(page: $page, perPage: $perPage) {
     pageInfo { hasNextPage }
-    media(type: ANIME, sort: TRENDING_DESC, isAdult: false, format_in: [TV, TV_SHORT, ONA]) {
+    media(type: ANIME, sort: TRENDING_DESC, isAdult: false, format_in: $formats,
+          status_not: $statusNot) {
       id
       title { romaji english }
       seasonYear
+      startDate { year }
       coverImage { extraLarge large }
     }
   }
 }
 """
 
-# Series formats only: the catalog is a series catalog, and an anime film typed
+# Series and films are ranked apart, one list per catalog: an anime film typed
 # as a series would open as one.  Ranks are numbered after this filter, so a
-# rank is always the title's position in the catalog.
+# rank is always the title's position in its catalog.
+_ANILIST_SERIES_FORMATS = ["TV", "TV_SHORT", "ONA"]
+_ANILIST_FILM_FORMATS = ["MOVIE"]
 _ANILIST_TRENDING_PAGE = 50
 
 
 async def fetch_anilist_trending(
-    client: httpx.AsyncClient, details_out: dict | None = None,
+    client: httpx.AsyncClient, details_out: dict | None = None, films: bool = False,
 ) -> "list[str] | None":
-    """AniList's trending anime series as ``anilist:<id>`` keys, in rank order,
-    up to the broad trending count.  None when AniList could not be read.
+    """AniList's trending anime series (or with *films*, anime films) as
+    ``anilist:<id>`` keys, in rank order, up to the broad trending count.
+    None when AniList could not be read.
 
-    For the trending catalogs addon: the anime catalog and the rank printed on
-    a poster requested with an AniList id both come from this list.
+    For the trending catalogs addon: the anime catalogs and the rank printed
+    on any anime poster both come from these lists.
     """
-    from config import TRENDING_BROAD_FETCH_COUNT, TRENDING_FETCH_COUNT
+    from config import TRENDING_BROAD_FETCH_COUNT, TRENDING_FETCH_COUNT, TRENDING_HIDE_UNRELEASED
     limit = max(TRENDING_FETCH_COUNT, TRENDING_BROAD_FETCH_COUNT)
+    # AniList drops what hasn't started airing itself; null filters nothing.
+    status_not = "NOT_YET_RELEASED" if TRENDING_HIDE_UNRELEASED else None
     ids: list[str] = []
     page = 1
-    logger.info("External API Call: AniList trending anime")
+    logger.info(f"External API Call: AniList trending anime {'films' if films else 'series'}")
     try:
         while len(ids) < limit:
             async with _get_semaphore("anilist"):
@@ -333,7 +340,10 @@ async def fetch_anilist_trending(
                     ANILIST_API_URL,
                     json={
                         "query": _ANILIST_TRENDING_QUERY,
-                        "variables": {"page": page, "perPage": _ANILIST_TRENDING_PAGE},
+                        "variables": {"page": page, "perPage": _ANILIST_TRENDING_PAGE,
+                                      "statusNot": status_not,
+                                      "formats": _ANILIST_FILM_FORMATS if films
+                                      else _ANILIST_SERIES_FORMATS},
                     },
                     timeout=15.0,
                 )
@@ -348,9 +358,11 @@ async def fetch_anilist_trending(
                 if details_out is not None:
                     title = media.get("title") or {}
                     cover = media.get("coverImage") or {}
+                    # Films have no season; their start year stands in.
+                    year = media.get("seasonYear") or (media.get("startDate") or {}).get("year")
                     details_out[key] = {k: v for k, v in {
                         "name": title.get("english") or title.get("romaji"),
-                        "year": str(media["seasonYear"]) if media.get("seasonYear") else None,
+                        "year": str(year) if year else None,
                         "poster": cover.get("extraLarge") or cover.get("large"),
                     }.items() if v}
                 if len(ids) >= limit:

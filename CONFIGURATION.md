@@ -117,7 +117,10 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `TRENDING_BROAD_FETCH_COUNT` | `100` | Lower-ranked trending titles, from the trending count up to this rank, qualify for the lower-priority Trending (Broad) sash. |
 | `TRENDING_SOURCE_MOVIE` | - | An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces TMDB's global movie trending list. Blank keeps TMDB's list. |
 | `TRENDING_SOURCE_TV` | - | An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces TMDB's global TV trending list for both sashes and cache warming. Blank keeps TMDB's list. |
-| `TRENDING_CATALOGS_ENABLED` | `true` | Serve the trending lists behind the Trending sashes as a Stremio addon with Trending Movies, Series and Anime catalogs, at /trending/manifest.json (/trending/<access key>/manifest.json when an access key is set). Import it into your metadata addon and the "#N Today" labels match the row order. Also gives posters requested with an AniList id the AniList trending rank used by the anime catalog. On by default; turn off to serve no addon. `true` or `false`. |
+| `TRENDING_SOURCE_ANIME` | - | An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces AniList's trending anime series, for the Trending Anime catalog and the rank on every anime series poster. Blank keeps AniList's list. Only used while the trending catalogs addon is on. |
+| `TRENDING_SOURCE_ANIME_MOVIE` | - | An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces AniList's trending anime films, for the Trending Anime Movies catalog and the rank on every anime film poster. Blank keeps AniList's list. Only used while the trending catalogs addon is on. |
+| `TRENDING_CATALOGS_ENABLED` | `true` | Serve the trending lists behind the Trending sashes as a Stremio addon with Trending Movies, Series, Anime and Anime Movies catalogs, at /trending/manifest.json (/trending/<access key>/manifest.json when an access key is set). Import it into your metadata addon and the "#N Today" labels match the row order. Anime then ranks on its own lists (from AniList, unless an anime trending source is set) and leaves the movie and TV lists, so every anime poster, whatever id it is requested by, carries its rank in the anime catalogs. On by default; turn off to serve no addon. `true` or `false`. |
+| `TRENDING_HIDE_UNRELEASED` | `false` | Leave titles that are not out at home yet off the trending lists: films still in cinemas or not released at all, series whose first episode has not aired, and anime AniList lists as not yet released. The remaining titles are ranked 1, 2, 3 without gaps, so the catalogs and the rank on every poster still agree. Takes effect at the next trending refresh. Off by default. `true` or `false`. |
 
 #### Watchlist
 
@@ -321,17 +324,20 @@ Set `TRENDING_SOURCE_MOVIE` and/or `TRENDING_SOURCE_TV` to an ordinary MDBList p
 
 The Trending sashes print a rank ("#10 Today"), but a Trending row in your metadata addon is built from its own copy of the list, fetched at a different time. TMDB's list moves every few minutes, so the two rarely agree. PostersPlus serves the lists behind the sashes as a small Stremio addon, so the row order matches the labels exactly. It is on by default; set `TRENDING_CATALOGS_ENABLED=false` to turn it off.
 
-The manifest is at `/trending/manifest.json`, or `/trending/<ACCESS_KEY>/manifest.json` when an access key is set (the configurator shows the full URL under Core). It has three catalogs:
+The manifest is at `/trending/manifest.json`, or `/trending/<ACCESS_KEY>/manifest.json` when an access key is set (the configurator shows the full URL under Core). It has four catalogs:
 
 | Catalog | List |
 |---|---|
-| Trending Movies | TMDB's day list, or `TRENDING_SOURCE_MOVIE` |
-| Trending Series | TMDB's day list, or `TRENDING_SOURCE_TV` |
-| Trending Anime | AniList's trending anime (TV, TV short and ONA) |
+| Trending Movies | TMDB's day list, or `TRENDING_SOURCE_MOVIE`, without anime |
+| Trending Series | TMDB's day list, or `TRENDING_SOURCE_TV`, without anime |
+| Trending Anime | AniList's trending anime series (TV, TV short and ONA), or `TRENDING_SOURCE_ANIME` |
+| Trending Anime Movies | AniList's trending anime films, or `TRENDING_SOURCE_ANIME_MOVIE` |
 
 Each catalog lists ranks 1 to `TRENDING_BROAD_FETCH_COUNT`, and item N is rank N. In AIOMetadata, import the manifest as a custom manifest and set each catalog's cache time to 0, so the row is re-read from PostersPlus whenever it opens. A longer cache time works too, but the row then lags the labels for up to that long after each daily refresh. AIOMetadata's own filters, such as an age-rating cap, can still remove titles from a row, which leaves a gap in the numbers.
 
-The anime catalog gives its titles AniList ids, and with the addon enabled a poster requested with an AniList id shows its AniList trending rank. Posters requested with a Kitsu, TMDB or IMDb id keep the TMDB rank, so a show that is in both lists shows the rank for the row it is in.
+With the addon enabled, Japanese anime ranks only on the two anime lists: Japanese titles the anime id mapping knows, and Japanese animation it doesn't know yet, are left off the movie and series lists, which are numbered without them. Chinese and Korean animation stays on the series and movie lists (AniList carries it, but it rarely trends there), and so does Western animation. Every anime poster then shows its anime rank, whatever id it is requested by and whichever catalog it is in. An AniList or Kitsu id (a MyAnimeList id arrives as one of those) is one entry, a season on both sites, and shows that entry's rank. A TMDB or IMDb id is the whole show and shows the best rank any of its seasons holds. A title that isn't on the anime list shows its TMDB rank, if it has one.
+
+`TRENDING_SOURCE_ANIME` and `TRENDING_SOURCE_ANIME_MOVIE` replace AniList's lists, in the same shapes as the movie and TV sources. Their rows are TMDB ids, so their catalogs hand out IMDb (or TMDB) ids and posters are ranked by the TMDB id they carry.
 
 ## Customising directors, studios and cast
 

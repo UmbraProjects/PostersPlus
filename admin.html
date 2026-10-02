@@ -1123,7 +1123,7 @@ function renderOverview() {
     ['Quality cache', fmtNum(cache.quality_cache)],
     ['Release-status cache', fmtNum(cache.release_status_cache)],
     ['Trending refresh', s.trending && s.trending.fetch_time ? `daily at ${esc(s.trending.fetch_time)} ${esc(s.trending.timezone)}` : 'every 24 h from startup'],
-    ['Trending sources', s.trending ? [(s.trending.source_movie ? 'custom movie list' : 'TMDB movies'), (s.trending.source_tv ? 'custom TV list' : 'TMDB TV')].join(' · ') : '—'],
+    ['Trending sources', s.trending ? [(s.trending.source_movie ? 'custom movie list' : 'TMDB movies'), (s.trending.source_tv ? 'custom TV list' : 'TMDB TV'), (s.trending.source_anime ? 'custom anime list' : 'AniList anime'), (s.trending.source_anime_movie ? 'custom anime film list' : 'AniList anime films')].join(' · ') : '—'],
     ['Rating fetches in flight', fmtNum(rt.rating_fetches_in_flight)],
     ['Titles in rating back-off', fmtNum(rt.rating_backoff_titles)],
     ['MDBList burst pause', rt.mdblist_burst_pause_secs ? `<span style="color:var(--danger)">${rt.mdblist_burst_pause_secs}s</span> · per-IP limit hit, all keys paused` : (rt.mdblist_min_interval ? `none · paced at ${Math.round(1 / rt.mdblist_min_interval)} calls/s` : 'none · pacing off')],

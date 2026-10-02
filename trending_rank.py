@@ -85,6 +85,28 @@ def number_box(width: int, scale: float = 1.0) -> tuple[int, int]:
     return round(_NUM_INSET * width), round((_NUM_INSET + _NUM_H * scale) * width)
 
 
+def _number_layout(w: int, text: str, max_w: float | None, scale: float) -> tuple:
+    """(font, track, ink_w, ink_h, pad, glyphs, adv) of the numeral at SS:
+    each digit's ink box and advance too.  Shared by the drawing and its
+    footprint."""
+    ink_h = _NUM_H * scale * w
+    if max_w is not None:
+        font, _ = _digit_font(ink_h)
+        natural = font.getlength(text) * 0.97
+        if natural > max_w:
+            ink_h *= max(0.6, max_w / natural)
+    font, _ = _digit_font(ink_h * _SS)
+    # Tighten the digits a touch: display numerals at this size read loose.
+    track = -round(font.size * 0.03)
+    glyphs = [font.getbbox(ch, anchor="ls") for ch in text]
+    adv = [font.getlength(ch) for ch in text]
+    x0 = min(0, glyphs[0][0])
+    ink_w = sum(adv[:-1]) + track * (len(text) - 1) + glyphs[-1][2] - x0
+    ink_h = -min(b[1] for b in glyphs)
+    pad = round(0.04 * w * _SS)          # room for the shadow's blur
+    return font, track, ink_w, ink_h, pad, glyphs, adv
+
+
 def draw_rank_number(image: Image.Image, rank: int, right: bool = False,
                      max_w: float | None = None, scale: float = 1.0) -> Image.Image:
     """The rank as a large silver numeral in the top-left (or top-right) corner.
@@ -95,22 +117,8 @@ def draw_rank_number(image: Image.Image, rank: int, right: bool = False,
     """
     w = image.width
     text = str(rank)
-    ink_h = _NUM_H * scale * w
-    if max_w is not None:
-        font, _ = _digit_font(ink_h)
-        natural = font.getlength(text) * 0.97
-        if natural > max_w:
-            ink_h *= max(0.6, max_w / natural)
-    font, _ = _digit_font(ink_h * _SS)
-    # Tighten the digits a touch: display numerals at this size read loose.
-    track = -round(font.size * 0.03)
-    glyphs = [(ch, font.getbbox(ch, anchor="ls")) for ch in text]
-    adv = [font.getlength(ch) for ch in text]
-    x0 = min(0, glyphs[0][1][0])
-    ink_w = sum(adv[:-1]) + track * (len(text) - 1) + glyphs[-1][1][2] - x0
-    top = min(b[1] for _, b in glyphs)
-    ink_h = -top
-    pad = round(0.04 * w * _SS)          # room for the shadow's blur
+    font, track, ink_w, ink_h, pad, glyphs, adv = _number_layout(w, text, max_w, scale)
+    x0 = min(0, glyphs[0][0])
 
     lw, lh = round(ink_w) + 2 * pad, round(ink_h) + 2 * pad
     mask = Image.new("L", (lw, lh), 0)
@@ -183,6 +191,56 @@ def _ribbon_body(style: str, size: tuple[int, int], yb: float, region: Image.Ima
     return grad.resize(size)
 
 
+def _ribbon_geometry(w: int, rank: int, right: bool, label: bool, scale: float,
+                     corner: bool, top_inset: int) -> tuple:
+    """(widen, rib_w, body_h, pad, grow, lift, rx): the ribbon's size and
+    where its layer goes, shared by the drawing and its footprint."""
+    widen = 1 + 0.28 * max(0, len(str(rank)) - 2)
+    rib_w = _RIB_W * scale * w * widen
+    body_h = rib_w * (_RIB_BODY + (_RIB_LABEL_BAND if label else 0))
+    pad = round(0.03 * w)                # room for the shadow's blur
+    grow, lift = max(0, top_inset), min(0, top_inset)
+    inset = 0 if corner else _RIB_INSET * w
+    rx = round(w - inset - rib_w - pad) if right else round(inset - pad)
+    return widen, rib_w, body_h, pad, grow, lift, rx
+
+
+# How far past a mark its drop shadow still reads, of the poster width: the
+# part of the shadow a badge is kept clear of, like the mark itself.
+_SHADE = 0.016
+
+
+def ribbon_footprint(w: int, rank: int, right: bool = False, label: bool = False,
+                     scale: float = 1.0, corner: bool = False,
+                     top_inset: int = 0) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
+    """(body, extent) of the ribbon draw_rank_ribbon draws with these
+    arguments, as (x0, y0, x1, y1) pixel boxes: the ribbon down to the tips
+    of its notch, with as much of its shadow as reads, and everything the
+    drawing touches, the shadow's faint tail included."""
+    _, rib_w, body_h, pad, grow, lift, rx = _ribbon_geometry(w, rank, right, label, scale,
+                                                             corner, top_inset)
+    lw, lh = round(rib_w + 2 * pad), round(grow + body_h + pad)
+    off = max(1, round(0.004 * w))
+    shade = _SHADE * w
+    body = (round(rx + pad - shade), 0, round(rx + pad + rib_w + shade),
+            max(0, round(lift + grow + body_h + shade)))
+    return body, (rx, 0, rx + lw + off, max(0, lift + lh + off))
+
+
+def number_footprint(w: int, rank: int, right: bool = False, max_w: float | None = None,
+                     scale: float = 1.0) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
+    """(body, extent) of the numeral draw_rank_number draws with these
+    arguments, as ribbon_footprint gives them for the ribbon."""
+    _font, _track, ink_w, ink_h, pad, _glyphs, _adv = _number_layout(w, str(rank), max_w, scale)
+    inset = round(_NUM_INSET * w)
+    iw, ih = round(ink_w / _SS), round(ink_h / _SS)
+    x0 = w - inset - iw if right else inset
+    shade = round(_SHADE * w)
+    body = (x0 - shade, inset - shade, x0 + iw + shade, inset + ih + shade)
+    grow = round(pad / _SS) + max(1, round(0.004 * w))
+    return body, (max(0, x0 - grow), max(0, inset - grow), min(w, x0 + iw + grow), inset + ih + grow)
+
+
 def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
                      label: str | None = None, scale: float = 1.0,
                      corner: bool = False, style: str = "charcoal",
@@ -211,14 +269,9 @@ def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
         style = "charcoal"
     w = image.width
     text = str(rank)
-    widen = 1 + 0.28 * max(0, len(text) - 2)
-    rib_w = _RIB_W * scale * w * widen
-    body_h = rib_w * (_RIB_BODY + (_RIB_LABEL_BAND if label else 0))
+    widen, rib_w, body_h, pad, grow, lift, rx = _ribbon_geometry(
+        w, rank, right, bool(label), scale, corner, top_inset)
     notch = rib_w * _RIB_NOTCH
-    pad = round(0.03 * w)                # room for the shadow's blur
-    grow, lift = max(0, top_inset), min(0, top_inset)
-    inset = 0 if corner else _RIB_INSET * w
-    rx = round(w - inset - rib_w - pad) if right else round(inset - pad)
 
     S = _SS
     lw, lh = round(rib_w + 2 * pad), round(grow + body_h + pad)

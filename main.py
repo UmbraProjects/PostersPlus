@@ -956,7 +956,7 @@ from ratings import (
     _score_color_alt,
     _score_color_metal,
 )
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, resolve_tvdb_to_tmdb, IdResolveError, TmdbIdGone, mark_tmdb_id_gone, forget_imdb_mapping_to, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS, fetch_logo_image, logo_language_steps, logo_step_available, _image_matches_language, sanitise_source_url, fetch_cropped_art
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, fetch_anime_trending_rank_entry, trending_kind, anime_split, ANIME_ENDPOINTS, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, resolve_tvdb_to_tmdb, IdResolveError, TmdbIdGone, mark_tmdb_id_gone, forget_imdb_mapping_to, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS, fetch_logo_image, logo_language_steps, logo_step_available, _image_matches_language, sanitise_source_url, fetch_cropped_art
 # How long a poster rendered while its trending list was unreadable is kept:
 # the same as that list's retry cooldown.
 from tmdb import _TRENDING_SOURCE_RETRY_SECS as _TRENDING_UNREAD_TTL
@@ -1380,6 +1380,53 @@ def _quality_identity(
 def _check_type(val: str) -> None:
     if val not in _VALID_TYPES:
         raise HTTPException(status_code=400, detail="Invalid type")
+
+
+async def _anime_or_tmdb_rank(client: httpx.AsyncClient, keys: list[str], tmdb_id: str | None,
+                              tmdb_key: str, media_type: str) -> "tuple[int | None, float | None]":
+    """An anime poster's rank: its place on the anime list, else (for a title
+    the TMDB lists keep, such as Chinese animation) its TMDB rank.  The
+    expiry is the anime list's unless the TMDB rank is the one shown."""
+    rank, expires_at = await fetch_anime_trending_rank_entry(client, keys, tmdb_key,
+                                                             film=media_type == "movie")
+    if rank is None and tmdb_id:
+        t_rank, t_expires = await fetch_trending_rank_entry(client, tmdb_id, tmdb_key, media_type)
+        if t_rank is not None:
+            return t_rank, t_expires
+        # Unranked on both: kept until the sooner list changes.  An anime list
+        # that couldn't be read stays None, so the render is kept only for the
+        # retry cooldown and the rank it may be missing turns up soon.
+        if expires_at is not None and t_expires is not None:
+            expires_at = min(expires_at, t_expires)
+    return rank, expires_at
+
+
+def _anime_trending_keys(namespace: str | None, anime_id: int | None, media_type: str,
+                         tmdb_id: str, imdb_id: str, has_tmdb_id: bool) -> list[str]:
+    """The ids an anime poster's rank is looked up by on the anime lists, or
+    [] for a title that isn't anime (it ranks on TMDB's lists).
+
+    An AniList or Kitsu id (a MyAnimeList id arrives as one of those) names
+    one entry, a season on both sites, so it is ranked as that entry alone.
+    A TMDB or IMDb id names the whole show, whose seasons AniList ranks
+    apart, so any of them counts.  The TMDB id goes along too, for an anime
+    list from a custom source, which ranks by it."""
+    keys: list[int] = []
+    if namespace == "anilist" and anime_id is not None:
+        keys = [anime_id]
+    elif namespace == "kitsu" and anime_id is not None:
+        keys = anime_ids.anilist_for_kitsu(anime_id)
+    else:
+        keys = anime_ids.anilist_for_title(media_type, tmdb_id if has_tmdb_id else None,
+                                           imdb_id or None)
+    if namespace is None and not keys and not (
+            # Mapped through Kitsu alone: still anime, and so off TMDB's lists.
+            has_tmdb_id and anime_ids.reverse_lookup(media_type, tmdb_id, imdb_id or None)):
+        return []                                   # not anime
+    out = [anime.namespaced_id("anilist", k) for k in keys]
+    if has_tmdb_id:
+        out.append(str(tmdb_id))
+    return out
 
 
 def _resolve_anime_request(
@@ -5048,8 +5095,11 @@ def _build_poster(
     # --- Trending rank mark ---
     # After the sash, so the numeral can shrink to clear a notch beside it.
     if _rank is not None:
-        image = _draw_trending_rank(image, cfg, _rank, _before_rank, media_kind,
-                                    frost=(_frost_tint, _frost_ref))
+        _pre_rank = np.asarray(image) if _before_overlays is not None else None
+        image, _rank_print = _draw_trending_rank(image, cfg, _rank, _before_rank, media_kind,
+                                                 frost=(_frost_tint, _frost_ref))
+        if _before_overlays is not None:
+            _claim_footprint(_before_overlays, _pre_rank, np.asarray(image), *_rank_print)
 
     # --- Graphic badge groups ---
     # Drawn last because they lay themselves out around everything else.
@@ -5057,11 +5107,14 @@ def _build_poster(
         if cinema_run is not None and _frost_tint is not None and graphic_badges.wants_frost(cfg.badge_cinema_style):
             badge_logos = (*badge_logos[:2], graphic_badges.cinema_ink(
                 cfg.badge_cinema_style, cinema_run,
-                _frosted_tint(*_frost_tint, saturation=_frost_sat, reference=_frost_ref)))
+                _frosted_tint(*_frost_tint, saturation=_frost_sat, reference=_frost_ref),
+                cfg.sash_badge_frost_opacity))
+        # Frosted chips take the frosted notch's opacity, so the two read as one glass.
         _qlook = graphic_badges.quality_look(
             cfg.badge_quality_style,
             _frosted_tint(*_frost_tint, saturation=_frost_sat, reference=_frost_ref)
-            if _frost_tint is not None else None)
+            if _frost_tint is not None else None,
+            cfg.sash_badge_frost_opacity)
         _draw_graphic_badges(image, cfg, quality_tokens or [], certification, age_rating,
                              _before_overlays, spread_beside_chip=_auto_notch, logo_box=_logo_box,
                              logos=badge_logos, quality_look=_qlook)
@@ -5106,6 +5159,10 @@ def _draw_trending_rank(image: Image.Image, cfg: "RequestConfig", rank: int,
         if cfg.trending_label and media_kind in trending_rank.KIND_LABELS:
             label = upper_label(translate_sash(trending_rank.KIND_LABELS[media_kind],
                                                cfg.logo_language), cfg.logo_language)
+        top_inset = round(image.height * cfg.sash_badge_inset)
+        footprint = trending_rank.ribbon_footprint(image.width, rank, right=right, label=bool(label),
+                                                   scale=cfg.trending_scale,
+                                                   corner=cfg.trending_corner, top_inset=top_inset)
         return trending_rank.draw_rank_ribbon(image, rank, right=right, label=label,
                                               scale=cfg.trending_scale,
                                               corner=cfg.trending_corner,
@@ -5115,7 +5172,7 @@ def _draw_trending_rank(image: Image.Image, cfg: "RequestConfig", rank: int,
                                               frost_saturation=cfg.trending_frost_saturation,
                                               frost_reference=frost[1],
                                               text_color=cfg.sash_text_color,
-                                              top_inset=round(image.height * cfg.sash_badge_inset))
+                                              top_inset=top_inset), footprint
     max_w = None
     if before is not None:
         w = image.width
@@ -5125,8 +5182,34 @@ def _draw_trending_rank(image: Image.Image, cfg: "RequestConfig", rank: int,
         taken = np.flatnonzero(cols)
         if taken.size:
             max_w = max(1.0, taken[0] - 0.03 * w)
+    footprint = trending_rank.number_footprint(image.width, rank, right=right, max_w=max_w,
+                                               scale=cfg.trending_scale)
     return trending_rank.draw_rank_number(image, rank, right=right, max_w=max_w,
-                                          scale=cfg.trending_scale)
+                                          scale=cfg.trending_scale), footprint
+
+
+def _claim_footprint(before: np.ndarray, pre: np.ndarray, post: np.ndarray,
+                     body: tuple[int, int, int, int], extent: tuple[int, int, int, int]) -> None:
+    """Make the graphic badges see a mark by its known *body*, not by what
+    its drawing changed.  Measured by change, a dark ribbon on dark art and
+    its soft shadow on bright art register differently, and a badge beneath
+    it lands nearer or further from one poster to the next.
+
+    *before* is the badges' reference canvas, edited in place: across the
+    mark's *extent* (*pre* and *post* being the canvas either side of the
+    mark), what only the mark changed is written back as unchanged, and its
+    *body* is then marked taken outright, however little it changed the art."""
+    h, w = before.shape[:2]
+    x0, y0, x1, y1 = max(0, extent[0]), max(0, extent[1]), min(w, extent[2]), min(h, extent[3])
+    if x1 > x0 and y1 > y0:
+        ref, was, now = before[y0:y1, x0:x1], pre[y0:y1, x0:x1, :3], post[y0:y1, x0:x1]
+        untouched = (np.abs(was.astype(np.int16) - ref[..., :3]).sum(axis=2) <= _OCCUPIED_DELTA)
+        ref[untouched] = now[untouched]
+    x0, y0, x1, y1 = max(0, body[0]), max(0, body[1]), min(w, body[2]), min(h, body[3])
+    if x1 > x0 and y1 > y0:
+        # The opposite extreme of each channel: a change well past _OCCUPIED_DELTA.
+        now = post[y0:y1, x0:x1]
+        before[y0:y1, x0:x1] = np.where(now > 127, 0, 255).astype(before.dtype)
 
 
 # How far a group may move off its anchor's line to find room, as a fraction
@@ -5293,11 +5376,29 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
         limit = height * _GROUP_SEARCH["top" if top else "bottom"]
         step = max(2, g_unit // 3)
         offset = 0.0
-        while offset <= limit:
-            cy = start + offset if top else start - offset
+        def fits(off: float) -> list:
+            cy = start + off if top else start - off
             budget = graphic_badges.free_run(band_cols(cy), right, margin) - clear
-            fitted = graphic_badges.fit(items, budget, g_gap)
+            return graphic_badges.fit(items, budget, g_gap)
+
+        while offset <= limit:
+            fitted = fits(offset)
+            if fitted and offset > 0:
+                # Stepped past the first line with room: walk back to it, so
+                # the gap to whatever is above (a ribbon, say) is the same on
+                # every poster rather than anywhere up to a step wider.  The
+                # same number of badges must still fit.
+                lo, hi = offset - step, offset
+                while hi - lo > 1:
+                    mid = (lo + hi) / 2
+                    if len(fits(mid)) >= len(fitted):
+                        hi = mid
+                    else:
+                        lo = mid
+                offset = hi
+                fitted = fits(offset)
             if fitted:
+                cy = start + offset if top else start - offset
                 row_w = graphic_badges.row_width(fitted, g_gap)
                 graphic_badges.draw_row(image, fitted, center_y=cy, gap=g_gap,
                                         left_x=width - margin - row_w if right else margin)
@@ -5950,7 +6051,7 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
     trending_pairs: set[tuple[str, str]] = set()
     anime_keys: set[str] = set()
     for endpoint in _trending_endpoints():
-        if endpoint != "anime" and not (_cfg.SERVER_TMDB_KEY or trending_source_url(endpoint)):
+        if endpoint not in ANIME_ENDPOINTS and not (_cfg.SERVER_TMDB_KEY or trending_source_url(endpoint)):
             continue
         before = get_cached_trending_snapshot_entry(endpoint, include_stale=True)
         try:
@@ -5965,10 +6066,16 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
             logger.info(f"Trending fetch: {endpoint} snapshot still current, nothing to re-render")
             continue
         ids = set(after[0]) | (set(before[0]) if before else set())
-        if endpoint == "anime":
-            anime_keys.update(ids)
-            continue
-        types = ("tv", "series") if endpoint == "tv" else ("movie",)
+        types = ("tv", "series") if trending_kind(endpoint) == "tv" else ("movie",)
+        if endpoint in ANIME_ENDPOINTS:
+            # Any anime poster carries these ranks: by its AniList entry, its
+            # Kitsu one, or its TMDB title (see invalidate_trending_turnover).
+            anilist = {int(k.split(":", 1)[1]) for k in ids if k.startswith("anilist:")}
+            anime_keys.update(f"anilist:{a}" for a in anilist)
+            kitsu, tmdb_tv, tmdb_movie = anime_ids.ids_for_anilist(anilist)
+            anime_keys.update(f"kitsu:{k}" for k in kitsu)
+            ids = {k for k in ids if not k.startswith("anilist:")} | {
+                str(t) for t in (tmdb_tv if types[0] == "tv" else tmdb_movie)}
         trending_pairs.update((tid, mt) for tid in ids for mt in types)
     # The composites of titles whose rank changed were deleted when the new
     # snapshot was written (invalidate_trending_turnover), so the scan below
@@ -5992,9 +6099,9 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
 
 
 def _trending_endpoints() -> tuple[str, ...]:
-    """The snapshots the trending loop keeps current.  Anime is ranked only for
-    the trending catalogs addon."""
-    return ("movie", "tv", "anime") if _cfg.TRENDING_CATALOGS_ENABLED else ("movie", "tv")
+    """The snapshots the trending loop keeps current.  Anime is ranked on its
+    own lists only for the trending catalogs addon."""
+    return ("movie", "tv", *ANIME_ENDPOINTS) if _cfg.TRENDING_CATALOGS_ENABLED else ("movie", "tv")
 
 
 def _seconds_until_trending_due() -> float:
@@ -6012,7 +6119,7 @@ def _seconds_until_trending_due() -> float:
         entry = get_cached_trending_snapshot_entry(endpoint, include_stale=True)
         if entry is not None:
             expiries.append(entry[1])
-        elif endpoint == "anime" or _cfg.SERVER_TMDB_KEY or trending_source_url(endpoint):
+        elif endpoint in ANIME_ENDPOINTS or _cfg.SERVER_TMDB_KEY or trending_source_url(endpoint):
             # A list that has never been read (its first read failed) is as
             # past due as one whose refresh failed.
             expiries.append(now)
@@ -6637,6 +6744,7 @@ _TRENDING_CATALOGS = (
     ("pp.trending.movie", "movie", "movie", "Trending Movies"),
     ("pp.trending.series", "series", "tv", "Trending Series"),
     ("pp.trending.anime", "series", "anime", "Trending Anime"),
+    ("pp.trending.anime.movie", "movie", "anime_movie", "Trending Anime Movies"),
 )
 _TMDB_POSTER_BASE = "https://image.tmdb.org/t/p/w500"
 _ADDON_HEADERS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"}
@@ -6652,7 +6760,7 @@ def _trending_addon_guard(key: str | None) -> None:
 def _trending_addon_manifest(base: str) -> dict:
     return {
         "id": "community.postersplus.trending",
-        "version": "1.0.1",
+        "version": "1.1.0",
         "name": "Posters+ Trending",
         # Absolute: Stremio resolves the logo on its own, not against the
         # manifest's URL.  /static is public, so no access key rides on it.
@@ -6724,7 +6832,7 @@ def _addon_poster_url(
     endpoint: str, ctype: str, entry_id: str, imdb_id: str | None,
     shape: str | None = None,
 ) -> str:
-    if endpoint == "anime":
+    if entry_id.startswith("anilist:"):
         ids = [("stremio_id", entry_id)]
     else:
         ids = [("tmdb_id", entry_id)] + ([("imdb_id", imdb_id)] if imdb_id else [])
@@ -6748,7 +6856,11 @@ async def _trending_catalog_meta(
     poster settings: the item's poster, and its landscape poster, are then
     Posters+ renders of it."""
     detail = details.get(entry_id) or {}
-    if endpoint != "anime" and not detail.get("name") and _cfg.SERVER_TMDB_KEY:
+    # AniList's rows are "anilist:<id>"; everything else (an anime list from a
+    # custom source too) is a TMDB id of the list's kind.
+    by_anilist = entry_id.startswith("anilist:")
+    kind = trending_kind(endpoint)
+    if not by_anilist and not detail.get("name") and _cfg.SERVER_TMDB_KEY:
         # A snapshot written before details were stored (or a source whose
         # rows carry no title) has only ids.  Replacing it early would move
         # ranks under posters already cached, so fill the gaps from the TMDB
@@ -6756,7 +6868,7 @@ async def _trending_catalog_meta(
         async with sem:
             try:
                 (_g, _t, _l, year, title, poster_path, _b, _d) = await _coalesced_fetch_poster_metadata(
-                    client, entry_id, _cfg.SERVER_TMDB_KEY, endpoint, _cfg.DEFAULT_LOGO_LANGUAGE,
+                    client, entry_id, _cfg.SERVER_TMDB_KEY, kind, _cfg.DEFAULT_LOGO_LANGUAGE,
                 )
                 detail = {**detail, **{k: v for k, v in {
                     "name": title, "year": year, "poster": poster_path,
@@ -6764,14 +6876,14 @@ async def _trending_catalog_meta(
             except Exception as exc:
                 logger.warning(f"Trending catalog: no TMDB details for {endpoint} {entry_id}: {exc}")
     imdb_id = None
-    if endpoint == "anime":
+    if by_anilist:
         meta_id = entry_id
     else:
         imdb_id = detail.get("imdb_id")
         if not imdb_id and _cfg.SERVER_TMDB_KEY:
             async with sem:
                 try:
-                    imdb_id = await resolve_tmdb_to_imdb(client, entry_id, endpoint, _cfg.SERVER_TMDB_KEY)
+                    imdb_id = await resolve_tmdb_to_imdb(client, entry_id, kind, _cfg.SERVER_TMDB_KEY)
                 except IdResolveError:
                     imdb_id = None
         meta_id = imdb_id or f"tmdb:{entry_id}"
@@ -7193,6 +7305,19 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
         applies=lambda cfg: cfg.logo_language.split("-", 1)[0] == "he",
         stale=lambda cfg, facts: True,
     ),
+    # 18: Graphic badges under a trending number or ribbon sit a fixed gap
+    #     below it on every poster, and frosted quality chips and cinema discs
+    #     take the frosted notch's opacity.  Badges elsewhere only move where
+    #     a group slid past something, which a rank mark is by far the most
+    #     common case of, so only these re-render.
+    _RenderRevision(
+        rev=18,
+        applies=lambda cfg: cfg.shape != "landscape" and cfg.badge_display_mode == 7 and (
+            cfg.trending_style != "sash"
+            or graphic_badges.wants_frost(cfg.badge_quality_style)
+            or graphic_badges.wants_frost(cfg.badge_cinema_style)),
+        stale=lambda cfg, facts: True,
+    ),
 )
 _RENDER_REVISION = max((r.rev for r in _RENDER_REVISIONS), default=0)
 
@@ -7426,6 +7551,8 @@ async def _build_stats() -> dict:
             "timezone":       _cfg.TRENDING_FETCH_TIMEZONE,
             "source_movie":   bool(_cfg.TRENDING_SOURCE_MOVIE),
             "source_tv":      bool(_cfg.TRENDING_SOURCE_TV),
+            "source_anime":   bool(_cfg.TRENDING_SOURCE_ANIME),
+            "source_anime_movie": bool(_cfg.TRENDING_SOURCE_ANIME_MOVIE),
         },
         "cache_warm": {
             "enabled":        _cfg.CACHE_WARM_ENABLED,
@@ -10228,7 +10355,10 @@ async def get_poster(
             # priority 3 — TMDB -> Metahub -> TVDB
             return (await _tmdb(use_metahub=True)) or (await _tvdb())
 
-        _trending_by_anilist = anime_namespace == "anilist" and _cfg.TRENDING_CATALOGS_ENABLED
+        # Anime ranks on the anime lists, whichever id the poster was asked
+        # for by (see _anime_trending_keys); everything else on TMDB's.
+        _anime_rank_keys = _anime_trending_keys(anime_namespace, anime_id, type, tmdb_id, imdb_id,
+                                                has_tmdb_id) if anime_split() else []
         _trending_by_tmdb = bool(has_tmdb_id and (effective_tmdb_key or trending_source_url(type)))
         (
             image,
@@ -10244,12 +10374,12 @@ async def get_poster(
             # An operator-configured source (an MDBList page) needs no key,
             # only the id to look up.
             #
-            # With the trending catalogs addon on, a poster requested by its
-            # AniList id is ranked on AniList's list instead: that is the id
-            # the addon's anime catalog hands out, so the rank is the poster's
-            # position in that row.
-            fetch_trending_rank_entry(client, anime_key, effective_tmdb_key, "anime")
-            if _trending_by_anilist
+            # With the trending catalogs addon on, anime is ranked on the
+            # anime lists instead, which the TMDB ones leave it to, so the
+            # rank is its position in the Trending Anime (Movies) row.
+            _anime_or_tmdb_rank(client, _anime_rank_keys, tmdb_id if _trending_by_tmdb else None,
+                                effective_tmdb_key, type)
+            if _anime_rank_keys
             else fetch_trending_rank_entry(client, tmdb_id, effective_tmdb_key, type)
             if _trending_by_tmdb
             else _resolved((None, None)),
@@ -11134,7 +11264,7 @@ async def get_poster(
             # long as the list's retry cooldown, so the next render after that
             # tries again; not caching it at all would re-render the whole
             # poster on every request for as long as the source is down.
-            if (_trending_by_anilist or _trending_by_tmdb) and trending_expires_at is None:
+            if (_anime_rank_keys or _trending_by_tmdb) and trending_expires_at is None:
                 _ttl_override = (
                     _TRENDING_UNREAD_TTL if _ttl_override is None
                     else min(_ttl_override, _TRENDING_UNREAD_TTL)

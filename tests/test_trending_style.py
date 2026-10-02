@@ -136,7 +136,7 @@ class RibbonOptionTests(unittest.TestCase):
     def test_ribbon_takes_the_primary_clients_top_inset(self):
         def foot(client):
             cfg = main.build_request_config({"trending_style": "ribbon", "primary_client": client})
-            return self._foot(main._draw_trending_rank(_poster(), cfg, 3, None))
+            return self._foot(main._draw_trending_rank(_poster(), cfg, 3, None)[0])
         self.assertEqual(foot("stremio_desktop_web"), foot("stremio_tv_nuvio") + round(750 * 0.004))
 
     def test_long_label_stays_inside_the_ribbon(self):
@@ -309,12 +309,12 @@ class RankSideTests(unittest.TestCase):
     def test_numeral_clears_what_the_sash_drew_beside_it(self):
         cfg = main.build_request_config({"trending_style": "number"})
         art = Image.new("RGBA", (500, 750), (0, 0, 0, 255))
-        free = main._draw_trending_rank(art.copy(), cfg, 24, None)
+        free = main._draw_trending_rank(art.copy(), cfg, 24, None)[0]
         before = np.asarray(art)[:trending_rank.number_box(500)[1]].copy()
         # A block standing in for a notch, from x=150 across the top band.
         blocked = art.copy()
         blocked.paste((255, 255, 255, 255), (150, 0, 350, 60))
-        out = main._draw_trending_rank(blocked, cfg, 24, before)
+        out = main._draw_trending_rank(blocked, cfg, 24, before)[0]
         lit = lambda im: np.flatnonzero(np.asarray(im)[40:120, :150, :3].max(axis=(0, 2)) > 100)
         self.assertLess(lit(out)[-1], lit(free)[-1])
 

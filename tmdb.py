@@ -82,7 +82,12 @@ from config import (
     CINEMA_MAX_AGE_YEARS,
     TRENDING_SOURCE_MOVIE,
     TRENDING_SOURCE_TV,
+    TRENDING_SOURCE_ANIME,
+    TRENDING_SOURCE_ANIME_MOVIE,
     TRENDING_SOURCE_MAX_ITEMS,
+    TRENDING_HIDE_UNRELEASED,
+    TRENDING_FETCH_COUNT,
+    TRENDING_BROAD_FETCH_COUNT,
     CINEMETA_ENABLED,
 )
 
@@ -1836,9 +1841,33 @@ _MDBLIST_LIST_RE = re.compile(
 )
 
 
+# On a movie or TV list's signature while anime is left to its own lists;
+# changed whenever what counts as anime does, so stored lists are rebuilt.
+_ANIME_SPLIT_MARK = "-anime-ja"
+
+# The anime lists, series then films: AniList's unless a source replaces it.
+ANIME_ENDPOINTS = ("anime", "anime_movie")
+
+
 def trending_source_url(media_type: str) -> str:
     """Configured trending source for *media_type*, or "" when unset."""
+    if media_type == "anime":
+        return TRENDING_SOURCE_ANIME
+    if media_type == "anime_movie":
+        return TRENDING_SOURCE_ANIME_MOVIE
     return TRENDING_SOURCE_TV if media_type in ("tv", "series") else TRENDING_SOURCE_MOVIE
+
+
+def trending_kind(endpoint: str) -> str:
+    """"tv" or "movie": what a trending list's TMDB ids name."""
+    return "tv" if endpoint in ("tv", "series", "anime") else "movie"
+
+
+def anime_split() -> bool:
+    """Whether anime ranks on its own lists, and so leaves the movie and TV
+    ones: while the trending catalogs addon serves those lists."""
+    import config
+    return config.TRENDING_CATALOGS_ENABLED
 
 
 def sanitise_source_url(url: str) -> str:
@@ -1869,12 +1898,17 @@ def trending_source_signature(media_type: str) -> str:
     and the URL it identifies may contain credentials.  All the signature has to
     do is differ when the configured source differs.
     """
-    if media_type == "anime":
-        return "anilist"
+    # Hiding unreleased titles, or leaving anime to its own lists, makes a
+    # different list from the same source: one stored without it is rebuilt.
+    out = "+released" if TRENDING_HIDE_UNRELEASED else ""
+    if media_type not in ANIME_ENDPOINTS and anime_split():
+        out += _ANIME_SPLIT_MARK
     url = _normalise_trending_url(trending_source_url(media_type))
+    if not url and media_type in ANIME_ENDPOINTS:
+        return ("anilist" if media_type == "anime" else "anilist-films") + out
     if not url:
-        return "tmdb"
-    return "url:" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+        return "tmdb" + out
+    return "url:" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:16] + out
 
 
 def _normalise_trending_url(url: str) -> str:
@@ -1920,7 +1954,19 @@ def _trending_item_details(item: dict) -> dict:
         "imdb_id": item.get("imdb_id") if str(item.get("imdb_id") or "").startswith("tt") else None,
         "poster": item.get("poster_path") or item.get("poster"),
     }
-    return {k: v for k, v in out.items() if v}
+    out = {k: v for k, v in out.items() if v}
+    # TMDB's rows: Animation from Japan, for telling anime apart when the id
+    # mapping doesn't know the title, and the language for when it does.
+    lang = item.get("original_language")
+    if isinstance(lang, str) and lang:
+        out["lang"] = lang
+    if 16 in (item.get("genre_ids") or []) and lang == "ja":
+        out["anime"] = True
+    if "release_date" in item or "first_air_date" in item:
+        # Kept even when empty: a row with the field and no date is a title
+        # with no release date yet, which TRENDING_HIDE_UNRELEASED leaves out.
+        out["date"] = date
+    return out
 
 
 def _parse_trending_payload(payload, media_type: str, details_out: dict | None = None) -> list[str]:
@@ -1944,7 +1990,7 @@ def _parse_trending_payload(payload, media_type: str, details_out: dict | None =
     if not isinstance(items, list):
         return []
 
-    wanted = "show" if media_type in ("tv", "series") else "movie"
+    wanted = "show" if trending_kind(media_type) == "tv" else "movie"
     rows: list[tuple[float, str]] = []
     for position, item in enumerate(items):
         if not isinstance(item, dict):
@@ -2049,7 +2095,8 @@ async def _fetch_tmdb_trending_ids(
     client: httpx.AsyncClient, tmdb_key: str, endpoint: str,
     details_out: dict | None = None,
 ) -> list[str] | None:
-    """TMDB's day-trending ids for *endpoint*, pages 1-5, in rank order.
+    """TMDB's day-trending ids for *endpoint*, pages 1-5 (1-10 when unreleased
+    titles or anime are left out, to have as many after), in rank order.
 
     The pages are fetched concurrently, and TMDB's list can shift between those
     requests, so a title can turn up on two pages. The first appearance wins
@@ -2057,7 +2104,10 @@ async def _fetch_tmdb_trending_ids(
     this used to, left rank numbers that no title held and put the titles
     around them a place out.
     """
-    logger.info("External API Call: Refreshing TMDB trending snapshot (pages 1-5 concurrent)")
+    # Anime is a fifth of TV's list, and unreleased films a good share of
+    # movies': twice the pages keeps the broad sash's ranks filled after.
+    pages_n = 10 if (TRENDING_HIDE_UNRELEASED or anime_split()) else 5
+    logger.info(f"External API Call: Refreshing TMDB trending snapshot (pages 1-{pages_n} concurrent)")
 
     async def _fetch_page(page: int) -> list[dict]:
         resp = await client.get(
@@ -2068,7 +2118,7 @@ async def _fetch_tmdb_trending_ids(
         return resp.json().get("results", [])
 
     try:
-        pages = await asyncio.gather(*(_fetch_page(page) for page in range(1, 6)))
+        pages = await asyncio.gather(*(_fetch_page(page) for page in range(1, pages_n + 1)))
     except Exception as exc:
         logger.error(f"TMDB trending fetch error: {exc}")
         return None
@@ -2106,6 +2156,83 @@ async def _read_twice(read, label: str):
     return result
 
 
+def _without_anime(endpoint: str, ids: list[str], details: dict[str, dict]) -> list[str]:
+    """*ids* without the anime, which rank on the anime lists instead.
+    Anime here is Japanese: a TMDB row's Animation from Japan, or what the id
+    mapping knows as anime when the row is Japanese or says nothing of its
+    language.  Chinese and Korean animation, which AniList carries but rarely
+    trends, stays where it is ranked.  Numbered after this, so the ranks have
+    no gaps."""
+    import anime_ids
+    kind = trending_kind(endpoint)
+
+    def is_anime(i: str) -> bool:
+        detail = details.get(i) or {}
+        if detail.get("anime"):
+            return True
+        if detail.get("lang", "ja") != "ja":
+            return False
+        return bool(anime_ids.reverse_lookup(kind, i, detail.get("imdb_id")))
+
+    kept = [i for i in ids if not is_anime(i)]
+    if len(kept) < len(ids):
+        logger.info(f"Trending {endpoint}: {len(ids) - len(kept)} anime title(s) left to the anime lists")
+    return kept
+
+
+# Titles checked at once while dropping unreleased ones from a trending list.
+_RELEASED_BATCH = 20
+
+
+async def _released_only(
+    client: httpx.AsyncClient, tmdb_key: str, endpoint: str,
+    ids: list[str], details: dict[str, dict],
+) -> list[str]:
+    """*ids* in order without the titles not out at home yet
+    (TRENDING_HIDE_UNRELEASED), up to as many as the trending sashes rank.
+
+    A film is out at home once it streams or is on disc somewhere: TMDB's
+    release dates, the same ones its release-status sash reads, so "Cinema"
+    and "Production" films are dropped.  A series is out once its first
+    episode has aired, by the date on its trending row.  A title that can't
+    be checked (a failed fetch, a custom source's row with no date) is kept:
+    a hiccup shouldn't empty the row."""
+    limit = max(TRENDING_FETCH_COUNT, TRENDING_BROAD_FETCH_COUNT)
+    today = _date.today()
+
+    async def out_at_home(entry_id: str) -> bool:
+        detail = details.get(entry_id) or {}
+        if trending_kind(endpoint) == "tv":
+            if "date" not in detail:
+                return True
+            aired = _parse_tmdb_date(detail["date"])
+            return aired is not None and aired <= today
+        if not tmdb_key:
+            return True
+        try:
+            info = await fetch_movie_release_info(client, entry_id, tmdb_key, None,
+                                                  primary_release_date=detail.get("date"))
+        except Exception as exc:
+            logger.warning(f"Trending: release check failed for movie {entry_id}: {exc}")
+            return True
+        return info is None or info.get("status") not in ("Cinema", "Production")
+
+    kept: list[str] = []
+    checked = 0
+    for start in range(0, len(ids), _RELEASED_BATCH):
+        batch = ids[start:start + _RELEASED_BATCH]
+        checked += len(batch)
+        for entry_id, ok in zip(batch, await asyncio.gather(*(out_at_home(i) for i in batch))):
+            if ok:
+                kept.append(entry_id)
+        if len(kept) >= limit:
+            break
+    dropped = checked - len(kept)
+    if dropped:
+        logger.info(f"Trending {endpoint}: left out {dropped} title(s) not out at home yet")
+    return kept[:limit]
+
+
 async def ensure_trending_snapshot(
     client: httpx.AsyncClient,
     tmdb_key: str,
@@ -2134,19 +2261,20 @@ async def ensure_trending_snapshot(
     _trending_inflight[endpoint] = event_to_set
     details: dict[str, dict] = {}
     try:
-        if endpoint == "anime":
-            # Only the trending catalogs addon ranks anime on its own list.
-            # A failed read is not retried for a while: every poster requested
-            # with an AniList id would otherwise try again, against a rate
-            # limit the anime art fetches share.
-            if _trending_cooling_down("anime"):
+        if endpoint in ANIME_ENDPOINTS and not trending_source_url(endpoint):
+            # AniList's list, for the trending catalogs addon.  A failed read
+            # is not retried for a while: every anime poster would otherwise
+            # try again, against a rate limit the anime art fetches share.
+            if _trending_cooling_down(endpoint):
                 return None
             from anime import fetch_anilist_trending
-            ids = await _read_twice(lambda: fetch_anilist_trending(client, details), "AniList anime")
+            films = endpoint == "anime_movie"
+            ids = await _read_twice(lambda: fetch_anilist_trending(client, details, films=films),
+                                    f"AniList {endpoint}")
             if not ids:
-                _trending_source_failed_at["anime"] = time.monotonic()
+                _trending_source_failed_at[endpoint] = time.monotonic()
                 return None
-            _trending_source_failed_at.pop("anime", None)
+            _trending_source_failed_at.pop(endpoint, None)
             rankings = {entry_id: position for position, entry_id in enumerate(ids, start=1)}
             await asyncio.to_thread(set_cached_trending_snapshot, endpoint, rankings, source_sig, details)
             return get_cached_trending_snapshot_entry(endpoint, source_sig) or (
@@ -2184,6 +2312,10 @@ async def ensure_trending_snapshot(
                 return None
             _trending_source_failed_at.pop(cooldown_key, None)
 
+        if endpoint not in ANIME_ENDPOINTS and anime_split():
+            ids = _without_anime(endpoint, ids, details)
+        if TRENDING_HIDE_UNRELEASED:
+            ids = await _released_only(client, tmdb_key, endpoint, ids, details)
         rankings = {entry_id: position for position, entry_id in enumerate(ids, start=1)}
         await asyncio.to_thread(set_cached_trending_snapshot, endpoint, rankings, source_sig, details)
         return get_cached_trending_snapshot_entry(endpoint, source_sig) or (
@@ -2203,7 +2335,7 @@ async def fetch_trending_rank_entry(
     """(rank, expires_at): the title's rank and when the snapshot it came from
     is replaced.  A poster that prints the rank is cached until then."""
     endpoint = (
-        "anime" if media_type == "anime"
+        media_type if media_type in ANIME_ENDPOINTS
         else "tv" if media_type in ("tv", "series") else "movie"
     )
     entry = await ensure_trending_snapshot(client, tmdb_key, endpoint)
@@ -2216,6 +2348,27 @@ async def fetch_trending_rank_entry(
     if rank:
         logger.info(f"Trending rank for {tmdb_id}: #{rank}")
 
+    return rank, expires_at
+
+
+async def fetch_anime_trending_rank_entry(
+    client: httpx.AsyncClient,
+    keys: list[str],
+    tmdb_key: str,
+    film: bool = False,
+) -> "tuple[int | None, float | None]":
+    """(rank, expires_at) on the anime series (or *film*) list: the best rank
+    any of *keys* holds there.  The keys are every id the poster's title goes
+    by — "anilist:<id>" for each AniList entry it maps to, and its TMDB id for
+    a source that ranks by TMDB id."""
+    entry = await ensure_trending_snapshot(client, tmdb_key, "anime_movie" if film else "anime")
+    if entry is None:
+        return None, None
+    snapshot, expires_at = entry
+    ranks = [snapshot[k] for k in keys if k in snapshot]
+    rank = min(ranks) if ranks else None
+    if rank:
+        logger.info(f"Anime trending rank for {keys[0]}: #{rank}")
     return rank, expires_at
 
 

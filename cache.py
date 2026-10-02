@@ -907,23 +907,33 @@ def invalidate_trending_turnover(media_type: str, changed_ids: "set[str]") -> in
     them in Python the way the per-title calls did, and deletes the matches in
     one transaction.  Returns the number of rows deleted.
 
-    *media_type* is the snapshot's: "anime" ids are "anilist:<id>", the anime
-    namespace a composite key leads with; anything else is a TMDB id matched
-    against the key's tail, with "tv" and "series" treated as one.
+    *media_type* is the snapshot's.  A TMDB id is matched against the key's
+    tail, with "tv" and "series" treated as one.  The anime lists' ids are
+    "anilist:<id>" (or TMDB ids, from a custom source), and any anime poster
+    carries their rank, whatever id it was asked for by: each AniList id is
+    matched as the anime namespace a composite key leads with, and through
+    the id mapping as its Kitsu entry and its TMDB title too.
     """
     if not changed_ids:
         return 0
-    if media_type == "anime":
-        prefixes = tuple(f"{anime_key}:" for anime_key in changed_ids)
+    prefixes: tuple[str, ...] = ()
+    tail_ids = set(changed_ids)
+    tv_like = media_type in ("tv", "series", "anime")
+    if media_type in ("anime", "anime_movie"):
+        import anime_ids
+        anilist = {int(k.split(":", 1)[1]) for k in changed_ids
+                   if k.startswith("anilist:") and k.split(":", 1)[1].isdigit()}
+        tail_ids -= {k for k in changed_ids if k.startswith("anilist:")}
+        kitsu, tmdb_tv, tmdb_movie = anime_ids.ids_for_anilist(anilist)
+        prefixes = tuple([f"anilist:{a}:" for a in anilist] + [f"kitsu:{k}:" for k in kitsu])
+        tail_ids |= {str(t) for t in (tmdb_tv if tv_like else tmdb_movie)}
+    types = ("tv", "series") if tv_like else ("movie",)
 
-        def _match(key: str) -> bool:
-            return key.startswith(prefixes)
-    else:
-        types = ("tv", "series") if media_type in ("tv", "series") else (media_type,)
-
-        def _match(key: str) -> bool:
-            parts = key.split(":")
-            return len(parts) >= 4 and parts[-3] in changed_ids and parts[-2] in types
+    def _match(key: str) -> bool:
+        if prefixes and key.startswith(prefixes):
+            return True
+        parts = key.split(":")
+        return len(parts) >= 4 and parts[-3] in tail_ids and parts[-2] in types
 
     if COMPOSITE_MEM_ENTRIES > 0:
         with _composite_l1_lock:
