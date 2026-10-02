@@ -2540,7 +2540,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
             </div>
             <div class="field">
-              <label class="field-label" data-tip="Where a title's logo comes from, tried top to bottom — the first that has one wins. Native is your language; Original is the title's own language; Custom is a second language of your choice; English includes the Metahub logo library; Neutral is a logo TMDB has not tagged with any language, usually a symbol or an untagged wordmark. Text draws the title as text when nothing above has a logo; disable it to show no title at all. Drag to reorder, ✕ to disable.">Logo Priority</label>
+              <label class="field-label" data-tip="Where a title's logo comes from, tried top to bottom — the first that has one wins. Native is your language; Original is the title's own language; Custom is a second language of your choice; English includes the Metahub logo library; Neutral is a logo TMDB has not tagged with any language, usually a symbol or an untagged wordmark. Original Art swaps in the title's original art (poster or backdrop, title baked in) when nothing above has a logo, skipped when it has none. Text draws the title as text when nothing above has a logo; disable it to show no title at all. Drag to reorder, ✕ to disable.">Logo Priority</label>
               <input type="hidden" id="cfg-logo-priority" value="native_original" data-default="native_original">
               <div class="sash-list lp-list" id="logo-priority-list"></div>
             </div>
@@ -5866,6 +5866,7 @@ const LOGO_SOURCES = [
   { id: 'original',           label: 'Original', tip: "The title's own language" },
   { id: 'english',            label: 'English',  tip: 'TMDB English, then Metahub' },
   { id: 'neutral',            label: 'Neutral',  tip: 'Logos TMDB has tagged with no language — often a symbol or an untagged wordmark' },
+  { id: 'art',                label: 'Original Art', tip: "Use the title's original art (its poster, or in landscape its backdrop, with the title already in it) when no source above has a logo. Skipped when the title has none, so the sources below it still apply" },
   { id: 'text',               label: 'Text',     tip: 'Draw the title as text. Always last; disable it to show no title when no logo is found' },
 ];
 const LOGO_PRIORITY_PRESETS = {
