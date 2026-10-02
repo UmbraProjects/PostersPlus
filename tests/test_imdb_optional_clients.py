@@ -35,16 +35,15 @@ class ConfiguratorTemplateTests(unittest.TestCase):
 
     def test_the_optional_form_is_reserved_for_the_clients_that_take_it(self):
         # "{imdb_id?}" is how an IMDb id can ride along without ever nulling a
-        # URL, but Bingecat and Discover+ reject "{name?}" at config time and
-        # will not save the URL at all, so only the templates that set
+        # URL, but Discover+ accepts a "{name?}" URL and then serves nothing, so only the templates that set
         # imdbOptional get it.
         self.assertIn("if (template.imdbOptional) params.set('imdb_id',", self.html)
         # And nowhere else: one occurrence, inside that branch.
         self.assertEqual(self.html.count("'{imdb_id?}'"), 1)
-        for client in ("aiometadata", "nuvio", "xperience"):
+        for client in ("standard",):
             with self.subTest(client=client):
                 self.assertEqual(_shape_of(self.html, client), "COPY_SHAPE_OPTIMAL")
-        for client in ("bingecat", "discoverplus"):
+        for client in ("discoverplus",):
             with self.subTest(client=client):
                 self.assertEqual(_shape_of(self.html, client), "COPY_SHAPE_REQUIRED")
 
@@ -62,7 +61,7 @@ class ConfiguratorTemplateTests(unittest.TestCase):
         # is worth a lost poster.
         self.assertIn("const COPY_SHAPE_OPTIMAL  = { tmdbOptional: true,  "
                       "imdbOptional: true,  animeIds: true  };", self.html)
-        for client in ("aiometadata", "nuvio", "xperience"):
+        for client in ("standard",):
             with self.subTest(client=client):
                 self.assertEqual(_shape_of(self.html, client), "COPY_SHAPE_OPTIMAL")
 

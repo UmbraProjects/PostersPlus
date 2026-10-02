@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### One Copy config URL for AIOMetadata, Nuvio, Bingecat and Xperience
+
+- All four now take Nuvio's URL, with `{shape}` and the optional `{name?}`
+  ids, so the **Copy config** menu is down to that URL (**Default**), **Discover+** and
+  **Share settings**. A left-click copies the shared URL straight away instead
+  of asking first, which stops a URL copied for one client ending up in
+  another. Picking Discover+ is still remembered for the next left-click.
+- AIOMetadata and Xperience URLs now carry `shape={shape}` (one URL for
+  portrait and landscape) and the TMDB / MDBList keys typed into the
+  configurator, as Nuvio's always did. Bingecat now gets the optional ids and
+  anime ids too.
+
 ### Anime rating badges on landscape posters
 
 - Landscape posters with rating badges (`landscape_rating_badges`) now show

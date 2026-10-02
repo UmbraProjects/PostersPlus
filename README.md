@@ -114,7 +114,7 @@ Prefer environment variables? Everything the dashboard sets can be set that way 
 
 ## Connecting your client
 
-Open your instance's address in a browser to get the configurator. Pick a style, then press **Copy config**. The first time, it asks which client the URL is for (AIOMetadata, Nuvio, Bingecat and so on) and copies the right format. After that, a left-click copies for the same client and a right-click lets you pick another. The URL is built from whatever address you opened the configurator at, so open it from the address your client will use.
+Open your instance's address in a browser to get the configurator. Pick a style, then press **Copy config**. A left-click copies the URL for AIOMetadata, Nuvio, Bingecat and Xperience, which all take the same one. Right-click (or long press) to copy it for Discover+ or to share your settings; if you pick Discover+, a left-click keeps copying that until you pick otherwise. The URL is built from whatever address you opened the configurator at, so open it from the address your client will use.
 
 > **Exposing it safely.** Clients need to reach PostersPlus over **HTTPS**, e.g. behind [Caddy](https://caddyserver.com/) or [Traefik](https://traefik.io/), with `ACCESS_KEY` set. If you use AIOMetadata, you can instead turn on its image proxy and keep PostersPlus off the internet entirely: use `http://postersplus:8000` as the address so the two talk over Docker's internal network. That's a little slower but the most secure option.
 

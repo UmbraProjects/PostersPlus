@@ -323,19 +323,18 @@ class ConfiguratorAnimeIdTests(unittest.TestCase):
         )
 
     def test_the_clients_that_reject_optional_syntax_send_no_anime_ids(self):
-        # Bingecat and Discover+ won't save a URL containing "{name?}" at all,
-        # so their template is tmdb_id alone — no anime ids, no optional
+        # Discover+ serves nothing for a URL containing "{name?}", so its
+        # template is tmdb_id alone — no anime ids, no optional
         # imdb_id.
-        for client in ("bingecat", "discoverplus"):
+        for client in ("discoverplus",):
             with self.subTest(client=client):
                 self.assertEqual(_shape_of(self.html, client), "COPY_SHAPE_REQUIRED")
         self.assertIn("const COPY_SHAPE_REQUIRED = { tmdbOptional: false, "
                       "imdbOptional: false, animeIds: false };", self.html)
 
     def test_the_clients_that_resolve_them_send_them(self):
-        # Xperience builds Nuvio configurations, so its patterns reach the same
-        # resolver and it takes the same shape.
-        for client in ("aiometadata", "nuvio", "xperience"):
+        # AIOMetadata, Nuvio, Bingecat and Xperience share one URL.
+        for client in ("standard",):
             with self.subTest(client=client):
                 self.assertEqual(_shape_of(self.html, client), "COPY_SHAPE_OPTIMAL")
         self.assertIn("const COPY_SHAPE_OPTIMAL  = { tmdbOptional: true,  "
@@ -360,10 +359,10 @@ class ConfiguratorAnimeIdTests(unittest.TestCase):
         # malformed one — which is what made the required form load-bearing
         # before. A client that rejects "{name?}" still gets the required form.
         self.assertIn("template.tmdbOptional ? '{tmdb_id?}' : '{tmdb_id}'", self.html)
-        for client in ("bingecat", "discoverplus"):
+        for client in ("discoverplus",):
             with self.subTest(client=client):
                 self.assertEqual(_shape_of(self.html, client), "COPY_SHAPE_REQUIRED")
-        for client in ("aiometadata", "nuvio", "xperience"):
+        for client in ("standard",):
             with self.subTest(client=client):
                 self.assertEqual(_shape_of(self.html, client), "COPY_SHAPE_OPTIMAL")
 
