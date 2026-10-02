@@ -81,6 +81,9 @@ from config import (
     TMDB_POSTER_MIN_VOTES,
     TMDB_POSTER_MAX_SCORE_DROP,
     CINEMA_MAX_AGE_YEARS,
+    CINEMA_ASSUMED_DIGITAL_DAYS,
+    CINEMA_POPULAR_VOTES,
+    CINEMA_POPULAR_DIGITAL_DAYS,
     TRENDING_SOURCE_MOVIE,
     TRENDING_SOURCE_TV,
     TRENDING_SOURCE_ANIME,
@@ -1965,6 +1968,10 @@ def _trending_item_details(item: dict) -> dict:
         out["lang"] = lang
     if 16 in (item.get("genre_ids") or []) and lang == "ja":
         out["anime"] = True
+    # TMDB's vote count, for the cinema window TRENDING_HIDE_UNRELEASED
+    # judges a film's release status by (cinema_window_days).
+    if isinstance(item.get("vote_count"), int):
+        out["votes"] = item["vote_count"]
     if "release_date" in item or "first_air_date" in item:
         # Kept even when empty: a row with the field and no date is a title
         # with no release date yet, which TRENDING_HIDE_UNRELEASED leaves out.
@@ -2260,8 +2267,12 @@ async def _released_only(
         if not tmdb_key:
             return True
         try:
-            info = await fetch_movie_release_info(client, entry_id, tmdb_key, None,
-                                                  primary_release_date=detail.get("date"))
+            # A row without a vote count (AniList's, a custom source's) is
+            # still trending, which is popularity enough for the long window.
+            info = await fetch_movie_release_info(
+                client, entry_id, tmdb_key, None,
+                primary_release_date=detail.get("date"),
+                vote_count=detail.get("votes", CINEMA_POPULAR_VOTES))
         except Exception as exc:
             logger.warning(f"Trending: release check failed for movie {entry_id}: {exc}")
             return True
@@ -3165,12 +3176,32 @@ def _parse_tmdb_date(value: str | None) -> _date | None:
         return None
 
 
+def cinema_window_days(vote_count: int | None) -> int:
+    """Days a theatrical-only movie may stay "Cinema" with no digital date
+    published before it is assumed to be streaming; 0 means no limit short of
+    CINEMA_MAX_AGE_YEARS.
+
+    TMDB is often slow to add a digital date and sometimes never does, so most
+    films get the usual studio window.  A film with enough votes is one TMDB
+    will keep current, and one that can play for months (Oppenheimer ran ~120
+    days), so it gets the longer window.  An unknown vote count is not
+    evidence of popularity."""
+    try:
+        votes = int(vote_count) if vote_count is not None else None
+    except (TypeError, ValueError):
+        votes = None
+    popular = (CINEMA_POPULAR_VOTES > 0 and votes is not None
+               and votes >= CINEMA_POPULAR_VOTES)
+    return CINEMA_POPULAR_DIGITAL_DAYS if popular else CINEMA_ASSUMED_DIGITAL_DAYS
+
+
 def _compute_movie_status_from_dates(
     theatrical_date: _date | None,
     digital_date: _date | None,
     physical_date: _date | None,
     tmdb_status: str | None,
     premiere_date: _date | None = None,
+    vote_count: int | None = None,
 ) -> str:
     today = _date.today()
     has_physical = physical_date is not None and physical_date <= today
@@ -3182,14 +3213,15 @@ def _compute_movie_status_from_dates(
     elif has_digital:
         return "Streaming"
     elif has_theatrical:
-        if (
-            CINEMA_MAX_AGE_YEARS > 0
-            and theatrical_date is not None
-            and (today - theatrical_date).days > CINEMA_MAX_AGE_YEARS * 365
-        ):
+        days_out = (today - theatrical_date).days
+        if CINEMA_MAX_AGE_YEARS > 0 and days_out > CINEMA_MAX_AGE_YEARS * 365:
             return "Streaming"
-        else:
-            return "Cinema"
+        # A published digital date, even a future one, is the answer, so the
+        # window is only a stand-in for a date nobody has given.
+        window = cinema_window_days(vote_count)
+        if digital_date is None and window > 0 and days_out > window:
+            return "Streaming"
+        return "Cinema"
     elif tmdb_status == "Released" and not any(
         d is not None and d > today
         for d in (theatrical_date, digital_date, physical_date, premiere_date)
@@ -3219,7 +3251,27 @@ def _release_info_expiry(info: dict) -> int:
         parsed = _parse_tmdb_date(info.get(key))
         if parsed is not None and parsed > today:
             upcoming.append(int(_datetime.combine(parsed, _time.min).timestamp()))
-    return release_status_expiry(info.get("status"), upcoming_dates=upcoming)
+    status = info.get("status")
+    # "Streaming" assumed from the cinema window (cinema_window_days) is a
+    # guess standing in for a digital date TMDB hasn't published, so the row
+    # keeps the Cinema tier's daily re-check until it does.  Past
+    # CINEMA_MAX_AGE_YEARS nothing is expected any more.
+    if status == "Streaming" and _theatrical_only_within_max_age(info, today):
+        status = "Cinema"
+    return release_status_expiry(status, upcoming_dates=upcoming)
+
+
+def _theatrical_only_within_max_age(info: dict, today: _date) -> bool:
+    """A row whose only past release is theatrical, younger than
+    CINEMA_MAX_AGE_YEARS (or with that gate off)."""
+    theatrical = _parse_tmdb_date(info.get("theatrical_date"))
+    if theatrical is None or theatrical > today:
+        return False
+    for key in ("digital_date", "physical_date"):
+        parsed = _parse_tmdb_date(info.get(key))
+        if parsed is not None and parsed <= today:
+            return False
+    return CINEMA_MAX_AGE_YEARS <= 0 or (today - theatrical).days <= CINEMA_MAX_AGE_YEARS * 365
 
 
 def _release_info_is_current(info: dict) -> bool:
@@ -3251,8 +3303,13 @@ async def fetch_movie_release_info(
     tmdb_key: str,
     tmdb_status: str | None,
     primary_release_date: str | None = None,
+    vote_count: int | None = None,
 ) -> dict | None:
     """Cached TMDB movie release-date facts used by release-status and freshness sashes.
+
+    *vote_count* (TMDB's) picks the film's cinema window — see
+    cinema_window_days — for the ``status`` returned; the dates don't depend
+    on it.
 
     A film TMDB still calls unreleased (Planned, In Production, ...) normally
     skips /release_dates: there is nothing out to date.  Given its primary
@@ -3271,6 +3328,7 @@ async def fetch_movie_release_info(
             _parse_tmdb_date(cached.get("physical_date")),
             tmdb_status,
             _parse_tmdb_date(cached.get("premiere_date")),
+            vote_count,
         )
         return cached
 
@@ -3348,6 +3406,7 @@ async def fetch_movie_release_info(
         earliest_physical,
         tmdb_status,
         earliest_premiere,
+        vote_count,
     )
 
     info = {
@@ -3465,6 +3524,7 @@ async def fetch_release_status(
     tmdb_key: str,
     media_type: str,
     tmdb_status: str | None,
+    vote_count: int | None = None,
 ) -> str | None:
     """
     Determine the current release status for the info sash.
@@ -3475,7 +3535,9 @@ async def fetch_release_status(
 
     Movies: consults ``/movie/{id}/release_dates`` to determine whether the
     film is on physical media (Physical), digital/streaming (Streaming), still
-    theatrical-only (Cinema), or not yet released (Production).  The dates are
+    theatrical-only (Cinema), or not yet released (Production).  A film
+    theatrical-only for longer than its cinema window (cinema_window_days,
+    picked by *vote_count*) with no digital date published reads Streaming.  The dates are
     cached in ``movie_release_info_cache`` with a per-row deadline — the status
     tier, or the film's next published release date when TMDB has told us one —
     and ``release_status_cache`` mirrors the status derived from them.
@@ -3524,7 +3586,8 @@ async def fetch_release_status(
     # this, which meant a row written from incomplete dates could sit for its
     # whole tier — "Streaming" is thirty days — shadowing the corrected answer.
     cached = get_cached_release_status(cache_key)
-    info = await fetch_movie_release_info(client, tmdb_id, tmdb_key, tmdb_status)
+    info = await fetch_movie_release_info(client, tmdb_id, tmdb_key, tmdb_status,
+                                          vote_count=vote_count)
     result = (info or {}).get("status")
     if not result:
         return cached

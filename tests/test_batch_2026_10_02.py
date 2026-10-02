@@ -115,11 +115,23 @@ class FrostOpacityTests(unittest.TestCase):
 
 
 class HideUnreleasedTests(unittest.TestCase):
-    def run_filter(self, endpoint, ids, details, statuses=None):
-        async def info(_client, tmdb_id, _key, _status, primary_release_date=None):
+    def run_filter(self, endpoint, ids, details, statuses=None, votes_seen=None):
+        async def info(_client, tmdb_id, _key, _status, primary_release_date=None,
+                       vote_count=None):
+            if votes_seen is not None:
+                votes_seen[tmdb_id] = vote_count
             return {"status": (statuses or {}).get(tmdb_id, "Streaming")}
         with mock.patch.object(tmdb, "fetch_movie_release_info", info):
             return asyncio.run(tmdb._released_only(None, "key", endpoint, ids, details))
+
+    def test_films_are_judged_with_their_trending_vote_count(self):
+        # The row's vote count picks the cinema window; a row without one is
+        # trending, which counts as popular.
+        seen = {}
+        self.run_filter("movie", ["1", "2"], {"1": {"votes": 12}}, votes_seen=seen)
+        self.assertEqual(seen, {"1": 12, "2": tmdb.CINEMA_POPULAR_VOTES})
+        self.assertEqual(tmdb._trending_item_details({"title": "X", "vote_count": 4321})["votes"], 4321)
+        self.assertNotIn("votes", tmdb._trending_item_details({"title": "X"}))
 
     def test_films_need_to_be_out_at_home(self):
         kept = self.run_filter("movie", ["1", "2", "3", "4"], {},

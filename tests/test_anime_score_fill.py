@@ -57,6 +57,26 @@ class WantedTests(unittest.TestCase):
                 self.assertEqual(main._anime_sources_wanted(
                     self.cfg(rating_badges="anilist,kitsu", **params), ()), set())
 
+    def test_landscape_wants_what_its_badges_show(self):
+        # A landscape URL sends no rating_display_mode; its own toggle decides.
+        on = {"shape": "landscape", "landscape_rating_badges": "true",
+              "rating_badges": "myanimelist,anilist,kitsu"}
+        self.assertEqual(main._anime_sources_wanted(self.cfg(**on), ()), {"anilist", "kitsu"})
+        self.assertEqual(main._anime_sources_wanted(
+            self.cfg(**{**on, "landscape_rating_badges": "false"}), ()), set())
+        self.assertEqual(main._anime_sources_wanted(self.cfg(**{**on, "hide_rating": "true"}), ()), set())
+        # Portrait's mode no longer leaks into landscape, either way.
+        self.assertEqual(main._anime_sources_wanted(
+            self.cfg(**{**on, "landscape_rating_badges": "false", "rating_display_mode": "2"}), ()), set())
+
+    def test_landscape_composites_from_before_the_fix_re_render(self):
+        on = {"shape": "landscape", "landscape_rating_badges": "true", "rating_badges": "imdb,anilist"}
+        applies = [r for r in main._RENDER_REVISIONS if r.rev == 19][0].applies
+        self.assertTrue(applies(self.cfg(**on)))
+        self.assertFalse(applies(self.cfg(**{**on, "rating_badges": "imdb,myanimelist"})))
+        self.assertFalse(applies(self.cfg(**{**on, "landscape_rating_badges": "false"})))
+        self.assertFalse(applies(self.cfg(rating_display_mode="2", rating_badges="anilist")))
+
 
 def _meta(score):
     return ([], False, [], None, "t", None, None, {"anime_score": score})

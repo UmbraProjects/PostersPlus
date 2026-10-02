@@ -1219,11 +1219,23 @@ def _merge_imdb_dataset_rating(
 _ANIME_FILL_SOURCES = ("anilist", "kitsu")
 
 
+def _shows_rating_badges(rcfg: "RequestConfig") -> bool:
+    """Whether this render draws rating badges at all: portrait in the modes
+    that have room for them, landscape when it asks (landscape_rating_badges).
+    A landscape URL carries no rating_display_mode, so portrait's test would
+    read the default and say no."""
+    if not rcfg.rating_badges or rcfg.hide_rating:
+        return False
+    if rcfg.shape == "landscape":
+        return rcfg.landscape_rating_badges
+    return rcfg.rating_display_mode in (2, 3, 4)
+
+
 def _anime_sources_wanted(rcfg: "RequestConfig", weight_sets) -> set[str]:
     """The AniList / Kitsu scores this request has a use for: a badge that
     shows one, or a weight set that counts one.  Nothing else fetches them."""
     wanted: set[str] = set()
-    if rcfg.rating_badges and rcfg.rating_display_mode in (2, 3, 4) and not rcfg.hide_rating:
+    if _shows_rating_badges(rcfg):
         wanted |= set(rcfg.rating_badges.split(",")) & set(_ANIME_FILL_SOURCES)
     for weights in weight_sets:
         wanted |= {s for s in _ANIME_FILL_SOURCES if (weights or {}).get(s, 0) > 0}
@@ -7346,6 +7358,16 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
             or graphic_badges.wants_frost(cfg.badge_cinema_style)),
         stale=lambda cfg, facts: True,
     ),
+    # 19: Landscape fetches the AniList and Kitsu scores its rating badges
+    #     show (_fill_anime_scores).  It used to decide by portrait's rating
+    #     mode, which a landscape URL never sends, so those badges were left
+    #     off every anime landscape not requested by that site's own id.
+    _RenderRevision(
+        rev=19,
+        applies=lambda cfg: (cfg.shape == "landscape" and _shows_rating_badges(cfg)
+                             and bool(set(cfg.rating_badges.split(",")) & set(_ANIME_FILL_SOURCES))),
+        stale=lambda cfg, facts: True,
+    ),
 )
 _RENDER_REVISION = max((r.rev for r in _RENDER_REVISIONS), default=0)
 
@@ -10762,8 +10784,9 @@ async def get_poster(
             # age gate here that skipped the lookup for anything older than a
             # configurable limit, but it silently blanked the status on older
             # titles — which read as a bug rather than a setting.  Results are
-            # cached, and stale "Cinema" on an old film is handled properly by
-            # CINEMA_MAX_AGE_YEARS, which downgrades it to "Streaming".
+            # cached, and stale "Cinema" on an old film is handled by the
+            # cinema window (tmdb.cinema_window_days), which downgrades it to
+            # "Streaming".
             # For series this is a pure mapping of the status field already in
             # hand — no API call — so anime series get their lifecycle sashes
             # from the provider's status. The movie branch needs TMDB's
@@ -10774,6 +10797,7 @@ async def get_poster(
                 _release_status = await fetch_release_status(
                     client, tmdb_id, effective_tmdb_key, type,
                     tmdb_data.get("tmdb_status"),
+                    vote_count=tmdb_data.get("vote_count"),
                 )
                 # fetch_release_status maps the series status word alone, and
                 # "Returning Series" is not "on air" — see tv_release_facts.
@@ -10817,14 +10841,12 @@ async def get_poster(
                     _parse_tmdb_date(_tmdb_dates.get("physical_date")
                                      or tmdb_data.get("cinemeta_physical_date")),
                     None,
+                    # With no digital date from anywhere, "Cinema" is only a
+                    # statement about how long ago the film opened; past the
+                    # cinema window it reads Streaming.  Cinemeta carries no
+                    # vote count, so this is usually the short window.
+                    vote_count=tmdb_data.get("vote_count"),
                 )
-                # With no digital date from anywhere, "Cinema" is only a
-                # statement about how long ago the film opened.  Past the
-                # assumed window it is almost certainly streaming.
-                if (_release_status == "Cinema" and _cm_digital is None
-                        and _cfg.CINEMA_ASSUMED_DIGITAL_DAYS > 0 and _cm_theatrical is not None
-                        and (datetime.now().date() - _cm_theatrical).days > _cfg.CINEMA_ASSUMED_DIGITAL_DAYS):
-                    _release_status = "Streaming"
             # r/movieleaks confirmation overrides TMDB's theatrical/production
             # status — if the film is in the digital-release cache it's already
             # streaming regardless of what the official release dates say.
@@ -11206,9 +11228,8 @@ async def get_poster(
         # instance).  A mark that can't be had yet leaves its badge out, so a
         # render missing one isn't kept.
         _rating_badges_missing = False
-        if (_render_cfg.rating_badges
-                and (rcfg.landscape_rating_badges if _is_landscape else rcfg.rating_display_mode in (2, 3, 4))
-                and not _render_cfg.hide_rating and isinstance(ratings_dict, dict)):
+        if (_render_cfg.rating_badges and _shows_rating_badges(_render_cfg)
+                and isinstance(ratings_dict, dict)):
             _rb_shown = [p for p, _ in rating_badges.entries(ratings_dict, _render_cfg.rating_badges, score)]
             if rcfg.rating_badge_max:
                 _rb_shown = _rb_shown[:rcfg.rating_badge_max]
