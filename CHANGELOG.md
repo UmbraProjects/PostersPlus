@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Films stop reading "Cinema" when TMDB never adds a digital date
+
+- A movie whose only past release is theatrical, with no digital date
+  published, now reads **Streaming after 60 days** (`CINEMA_ASSUMED_DIGITAL_DAYS`)
+  with a TMDB key too, not only on the keyless Cinemeta path. Before, stale
+  TMDB data could keep a film at "Cinema" for three years.
+- **Popular films get a longer run**: with at least `CINEMA_POPULAR_VOTES`
+  (1000) TMDB votes, a film stays "Cinema" for up to
+  `CINEMA_POPULAR_DIGITAL_DAYS` (180), enough for a ~120-day blockbuster run.
+- A published digital date, even a future one, still wins over either window,
+  and a film assumed to be streaming keeps having its TMDB dates re-checked
+  daily. `CINEMA_MAX_AGE_YEARS` (3) stays as the outer backstop.
+- `TRENDING_HIDE_UNRELEASED` judges films the same way, using the vote count
+  on TMDB's trending rows.
+
 ### Anime trends on its own lists, and trending can skip what isn't out
 
 - With the trending catalogs addon on, **Japanese anime leaves Trending

@@ -10762,8 +10762,9 @@ async def get_poster(
             # age gate here that skipped the lookup for anything older than a
             # configurable limit, but it silently blanked the status on older
             # titles — which read as a bug rather than a setting.  Results are
-            # cached, and stale "Cinema" on an old film is handled properly by
-            # CINEMA_MAX_AGE_YEARS, which downgrades it to "Streaming".
+            # cached, and stale "Cinema" on an old film is handled by the
+            # cinema window (tmdb.cinema_window_days), which downgrades it to
+            # "Streaming".
             # For series this is a pure mapping of the status field already in
             # hand — no API call — so anime series get their lifecycle sashes
             # from the provider's status. The movie branch needs TMDB's
@@ -10774,6 +10775,7 @@ async def get_poster(
                 _release_status = await fetch_release_status(
                     client, tmdb_id, effective_tmdb_key, type,
                     tmdb_data.get("tmdb_status"),
+                    vote_count=tmdb_data.get("vote_count"),
                 )
                 # fetch_release_status maps the series status word alone, and
                 # "Returning Series" is not "on air" — see tv_release_facts.
@@ -10817,14 +10819,12 @@ async def get_poster(
                     _parse_tmdb_date(_tmdb_dates.get("physical_date")
                                      or tmdb_data.get("cinemeta_physical_date")),
                     None,
+                    # With no digital date from anywhere, "Cinema" is only a
+                    # statement about how long ago the film opened; past the
+                    # cinema window it reads Streaming.  Cinemeta carries no
+                    # vote count, so this is usually the short window.
+                    vote_count=tmdb_data.get("vote_count"),
                 )
-                # With no digital date from anywhere, "Cinema" is only a
-                # statement about how long ago the film opened.  Past the
-                # assumed window it is almost certainly streaming.
-                if (_release_status == "Cinema" and _cm_digital is None
-                        and _cfg.CINEMA_ASSUMED_DIGITAL_DAYS > 0 and _cm_theatrical is not None
-                        and (datetime.now().date() - _cm_theatrical).days > _cfg.CINEMA_ASSUMED_DIGITAL_DAYS):
-                    _release_status = "Streaming"
             # r/movieleaks confirmation overrides TMDB's theatrical/production
             # status — if the film is in the digital-release cache it's already
             # streaming regardless of what the official release dates say.

@@ -96,12 +96,6 @@ Days to cache a "no such id on Cinemeta" result. Throttles and network errors ar
 
 Default: `3`
 
-### `CINEMA_ASSUMED_DIGITAL_DAYS`
-
-Without a TMDB key, a movie's release status comes from Cinemeta's theatrical and disc dates and MDBList's digital date. When none of those says the film has left cinemas — no MDBList key, or MDBList has no digital date yet — a theatrical release older than this many days is treated as Streaming rather than Cinema. Studio windows have settled at 17–45 days for most films and about 60 for the largest releases. Never consulted when a digital, physical or TMDB date is known. Set to 0 to keep Cinema until a date is known.
-
-Default: `60`
-
 ### `CINEMETA_API_BASE`
 
 Override the Cinemeta endpoint (useful for a proxy or a mirror).
@@ -112,9 +106,27 @@ Default: `https://v3-cinemeta.strem.io`
 
 ## Caching and output
 
+### `CINEMA_ASSUMED_DIGITAL_DAYS`
+
+TMDB is often slow to add a film's digital date, and sometimes never does. A movie whose only known past release is theatrical, with no digital date published, is treated as Streaming rather than Cinema once its theatrical date is older than this many days. This applies with or without a TMDB key: without one, the dates come from Cinemeta (theatrical, disc) and MDBList (digital). Studio windows have settled at 17–45 days for most films and about 60 for the largest releases. Films with at least `CINEMA_POPULAR_VOTES` TMDB votes use `CINEMA_POPULAR_DIGITAL_DAYS` instead. A published digital date, even a future one, always wins over the assumption, and a film assumed to be streaming still has its TMDB dates re-checked daily. Set to 0 to keep Cinema until a date is known (up to `CINEMA_MAX_AGE_YEARS`).
+
+Default: `60`
+
+### `CINEMA_POPULAR_VOTES`
+
+TMDB vote count at which a movie counts as popular: big enough that TMDB will publish its digital date on time, and big enough for a long cinema run. Such films stay Cinema for up to `CINEMA_POPULAR_DIGITAL_DAYS` rather than `CINEMA_ASSUMED_DIGITAL_DAYS`. The vote count is TMDB's, refreshed with the title's metadata (weekly). A movie with no known vote count (a keyless Cinemeta render, for one) uses the shorter window; a film on a trending list without a vote count on its row counts as popular when `TRENDING_HIDE_UNRELEASED` judges it. Set to 0 to treat every movie alike (the shorter window).
+
+Default: `1000`
+
+### `CINEMA_POPULAR_DIGITAL_DAYS`
+
+Like `CINEMA_ASSUMED_DIGITAL_DAYS`, for movies with at least `CINEMA_POPULAR_VOTES` TMDB votes: past this many days in cinemas with no digital date published, they are treated as Streaming. Long enough for the longest modern runs (about 120 days). Set to 0 to keep popular films at Cinema until a date is known (up to `CINEMA_MAX_AGE_YEARS`).
+
+Default: `180`
+
 ### `CINEMA_MAX_AGE_YEARS`
 
-Movies whose only known release is a theatrical date older than this many years are treated as "Streaming" rather than "Cinema" — guards against stale TMDB data that never got a physical/digital release date added. Set to 0 to disable the gate entirely. Default: 3.
+Outer backstop: a movie whose only known past release is a theatrical date older than this many years is treated as "Streaming" rather than "Cinema", whatever `CINEMA_ASSUMED_DIGITAL_DAYS` and `CINEMA_POPULAR_DIGITAL_DAYS` say and even if TMDB lists a (stale) future digital date. Set to 0 to disable the gate entirely.
 
 Default: `3`
 

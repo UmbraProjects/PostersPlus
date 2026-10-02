@@ -344,13 +344,6 @@ ANIME_METADATA_CACHE_DURATION = int(_env('ANIME_METADATA_CACHE_DURATION', "7", g
 ANIME_NEG_CACHE_DURATION      = int(_env('ANIME_NEG_CACHE_DURATION', "3", group='Anime sources', kind='int', label='Anime negative cache (days)', help='Days to cache a no-such-id result from the provider.', min=1, max=365, advanced=True))       # days
 CINEMETA_METADATA_CACHE_DURATION = int(_env('CINEMETA_METADATA_CACHE_DURATION', "7", group='Cinemeta fallback', kind='int', label='Cinemeta metadata cache (days)', help="Days to cache a title's Cinemeta document, including the IMDb-to-TMDB id it carries.", min=1, max=365, advanced=True))  # days
 CINEMETA_NEG_CACHE_DURATION      = int(_env('CINEMETA_NEG_CACHE_DURATION', "3", group='Cinemeta fallback', kind='int', label='Cinemeta negative cache (days)', help='Days to cache a no-such-id result from Cinemeta.', min=1, max=365, advanced=True))       # days
-# Assumed theatrical-to-digital window, for the one case nothing knows a
-# movie's digital date: a Cinemeta-spined render (no TMDB key) with no
-# MDBList record to hand (no key, or MDBList has no date yet).  Studio windows
-# have settled at 17-45 days for most films and ~60 for the largest, so a
-# theatrical date older than this is far more likely to be streaming than in
-# cinemas.  Never consulted when a digital, physical or TMDB date is known.
-CINEMA_ASSUMED_DIGITAL_DAYS = max(0, int(_env('CINEMA_ASSUMED_DIGITAL_DAYS', "60", group='Cinemeta fallback', kind='int', label='Assumed digital window (days)', help="Without a TMDB key, and when MDBList has no digital date for a movie, treat a theatrical release older than this many days as Streaming rather than Cinema. Typical studio windows are 17-45 days, the largest releases about 60. 0 disables the assumption (Cinema until a date is known).", min=0, max=365, advanced=True)))
 DAYS_CONSIDERED_NEW          = 14
 NEW_CACHE_DURATION           = 1
 OLD_CACHE_DURATION           = 14
@@ -620,10 +613,23 @@ COMPOSITE_MEM_ENTRIES      = int(_env('COMPOSITE_MEM_ENTRIES', "0", group='Cachi
 # entirely. Every request re-renders from scratch. Useful during development when
 # iterating on rendering changes and you don't want stale renders served.
 DISABLE_COMPOSITE_CACHE    = _env('DISABLE_COMPOSITE_CACHE', "false", group='Caching', kind='bool', label='Disable composite cache', help='Skip composite cache reads and writes entirely; every request re-renders. For development only.', advanced=True).strip().lower() in ("1", "true", "yes")
-# Movies with only a theatrical release date older than this many years are treated
-# as "Streaming" rather than "Cinema" — guards against stale TMDB data where a
-# physical/digital date was never added.  Set to 0 to disable the gate entirely.
-CINEMA_MAX_AGE_YEARS       = max(0, int(_env('CINEMA_MAX_AGE_YEARS', "3", group='Rendering', kind='int', label='Cinema max age (years)', help='Movies whose only known release is a theatrical date older than this are treated as Streaming rather than Cinema, guarding against stale TMDB data missing a physical or digital date. 0 disables the gate.', min=0, max=50, advanced=True)))
+# How long a movie whose only past release is theatrical may stay "Cinema"
+# before it is assumed to be streaming.  TMDB is often slow to add a digital
+# date, or never does, and a film should not wear "Cinema" for years because of
+# it.  Studio windows have settled at 17-45 days for most films and ~60 for the
+# largest, so most films get CINEMA_ASSUMED_DIGITAL_DAYS.  A film with at least
+# CINEMA_POPULAR_VOTES TMDB votes is big enough that TMDB will be kept current,
+# and big enough for a long run (Oppenheimer played ~120 days), so it gets
+# CINEMA_POPULAR_DIGITAL_DAYS instead.  Neither is consulted while a future
+# digital date is published: that date is the answer.  CINEMA_MAX_AGE_YEARS is
+# the outer backstop for when the day windows are switched off.
+CINEMA_ASSUMED_DIGITAL_DAYS = max(0, int(_env('CINEMA_ASSUMED_DIGITAL_DAYS', "60", group='Rendering', kind='int', label='Assumed digital window (days)', help="A movie whose only known release is theatrical, with no digital date published, is treated as Streaming rather than Cinema once its theatrical date is older than this many days. Applies with or without a TMDB key; films with at least CINEMA_POPULAR_VOTES TMDB votes use CINEMA_POPULAR_DIGITAL_DAYS instead. Typical studio windows are 17-45 days, the largest releases about 60. 0 disables the assumption (Cinema until a date is known, up to CINEMA_MAX_AGE_YEARS).", min=0, max=365, advanced=True)))
+CINEMA_POPULAR_VOTES        = max(0, int(_env('CINEMA_POPULAR_VOTES', "1000", group='Rendering', kind='int', label='Popular film votes', help="TMDB vote count at which a movie counts as popular enough that TMDB will publish its digital date on time, so it may stay Cinema for CINEMA_POPULAR_DIGITAL_DAYS rather than CINEMA_ASSUMED_DIGITAL_DAYS. A movie with no known vote count uses the shorter window. 0 treats every movie alike (the shorter window).", min=0, max=1000000, advanced=True)))
+CINEMA_POPULAR_DIGITAL_DAYS = max(0, int(_env('CINEMA_POPULAR_DIGITAL_DAYS', "180", group='Rendering', kind='int', label='Popular film cinema window (days)', help="Like CINEMA_ASSUMED_DIGITAL_DAYS, for movies with at least CINEMA_POPULAR_VOTES TMDB votes: past this many days in cinemas with no digital date published, they are treated as Streaming. Long enough for the longest runs (about 120 days). 0 disables it (Cinema until a date is known, up to CINEMA_MAX_AGE_YEARS).", min=0, max=3650, advanced=True)))
+# Outer backstop: a theatrical-only movie older than this many years is
+# "Streaming" whatever the windows above say, even with a (stale) future
+# digital date published.  Set to 0 to disable the gate entirely.
+CINEMA_MAX_AGE_YEARS       = max(0, int(_env('CINEMA_MAX_AGE_YEARS', "3", group='Rendering', kind='int', label='Cinema max age (years)', help='Movies whose only known past release is a theatrical date older than this are treated as Streaming rather than Cinema, whatever CINEMA_ASSUMED_DIGITAL_DAYS and CINEMA_POPULAR_DIGITAL_DAYS say — a backstop against stale TMDB data. 0 disables the gate.', min=0, max=50, advanced=True)))
 
 def _parse_bool(val: str, default: bool = False) -> bool:
     val = val.strip().lower()

@@ -157,12 +157,10 @@ class AssumedDigitalWindowTests(unittest.TestCase):
         src = open("main.py", encoding="utf-8").read()
         block = src[src.index('elif use_cinemeta and tmdb_data.get("cinemeta_theatrical_date"):'):]
         block = block[:block.index("# r/movieleaks confirmation")]
-        # Only a "Cinema" verdict with no digital date is ever promoted, and
-        # only past the window; 0 disables it.
-        self.assertIn('_release_status == "Cinema" and _cm_digital is None', block)
-        self.assertIn("_cfg.CINEMA_ASSUMED_DIGITAL_DAYS > 0", block)
-        self.assertIn(".days > _cfg.CINEMA_ASSUMED_DIGITAL_DAYS", block)
-        self.assertIn('_release_status = "Streaming"', block)
+        # The keyless path goes through the same cinema window as TMDB's
+        # dates (tmdb.cinema_window_days), with whatever vote count it has.
+        self.assertIn("_compute_movie_status_from_dates(", block)
+        self.assertIn('vote_count=tmdb_data.get("vote_count")', block)
 
 
 class KeyChangeCompositeTests(unittest.TestCase):

@@ -235,6 +235,74 @@ class ReleasedFlagTests(unittest.TestCase):
         )
 
 
+class CinemaWindowTests(unittest.TestCase):
+    """A theatrical-only film with no digital date published reads Streaming
+    past its cinema window: CINEMA_ASSUMED_DIGITAL_DAYS for most films,
+    CINEMA_POPULAR_DIGITAL_DAYS once it has CINEMA_POPULAR_VOTES votes."""
+
+    def setUp(self):
+        for name, value in (("CINEMA_ASSUMED_DIGITAL_DAYS", 60),
+                            ("CINEMA_POPULAR_VOTES", 1000),
+                            ("CINEMA_POPULAR_DIGITAL_DAYS", 180),
+                            ("CINEMA_MAX_AGE_YEARS", 3)):
+            p = patch.object(tmdb, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def status(self, days_out, votes=None, digital=None):
+        today = date.today()
+        return tmdb._compute_movie_status_from_dates(
+            today - timedelta(days=days_out),
+            None if digital is None else today + timedelta(days=digital),
+            None, "Released", vote_count=votes)
+
+    def test_most_films_leave_cinemas_after_the_assumed_window(self):
+        self.assertEqual(self.status(60, votes=200), "Cinema")
+        self.assertEqual(self.status(61, votes=200), "Streaming")
+
+    def test_an_unknown_vote_count_gets_the_short_window(self):
+        self.assertEqual(self.status(60), "Cinema")
+        self.assertEqual(self.status(61), "Streaming")
+        self.assertEqual(self.status(61, votes="lots"), "Streaming")
+
+    def test_popular_films_get_the_long_window(self):
+        # A Nolan film can play ~120 days.
+        self.assertEqual(self.status(123, votes=1000), "Cinema")
+        self.assertEqual(self.status(180, votes=25000), "Cinema")
+        self.assertEqual(self.status(181, votes=25000), "Streaming")
+        self.assertEqual(self.status(999), "Streaming")
+
+    def test_a_published_digital_date_wins_over_the_window(self):
+        self.assertEqual(self.status(100, votes=10, digital=5), "Cinema")
+        self.assertEqual(self.status(100, votes=10, digital=-1), "Streaming")
+
+    def test_zero_switches_each_part_off(self):
+        with patch.object(tmdb, "CINEMA_ASSUMED_DIGITAL_DAYS", 0):
+            self.assertEqual(self.status(400, votes=10), "Cinema")
+            self.assertEqual(self.status(3 * 365 + 1, votes=10), "Streaming")
+        with patch.object(tmdb, "CINEMA_POPULAR_VOTES", 0):
+            self.assertEqual(self.status(61, votes=50000), "Streaming")
+        with patch.object(tmdb, "CINEMA_POPULAR_DIGITAL_DAYS", 0):
+            self.assertEqual(self.status(400, votes=50000), "Cinema")
+
+    def test_max_age_still_bounds_even_a_stale_future_digital_date(self):
+        self.assertEqual(self.status(3 * 365 + 1, votes=50000, digital=30), "Streaming")
+
+    def test_an_assumed_streaming_row_is_still_rechecked_daily(self):
+        # The window stands in for a digital date TMDB hasn't published yet,
+        # so the row keeps the Cinema tier until it does.
+        today = date.today()
+        assumed = {"status": "Streaming", "premiere_date": None,
+                   "theatrical_date": (today - timedelta(days=90)).isoformat()}
+        with patch.object(tmdb, "release_status_expiry",
+                          lambda status, upcoming_dates=None: status):
+            self.assertEqual(tmdb._release_info_expiry(assumed), "Cinema")
+            known = dict(assumed, digital_date=(today - timedelta(days=5)).isoformat())
+            self.assertEqual(tmdb._release_info_expiry(known), "Streaming")
+            ancient = dict(assumed, theatrical_date=(today - timedelta(days=4 * 365)).isoformat())
+            self.assertEqual(tmdb._release_info_expiry(ancient), "Streaming")
+
+
 class ReleaseDateTranslationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
