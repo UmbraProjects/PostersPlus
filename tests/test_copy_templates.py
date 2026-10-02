@@ -2,9 +2,9 @@
 
 Which placeholders a URL may use is a fact about the client that resolves them,
 not a preference, so the button asks which client the URL is for rather than
-asking the user to reason about placeholder syntax.  Left-click repeats the
-last choice (and opens the menu when there is no choice yet), right-click
-always opens the menu.
+asking the user to reason about placeholder syntax.  Every client but
+Discover+ takes the same URL, so left-click copies that one unless Discover+
+was the last pick, and right-click (or a long press) opens the menu.
 """
 
 from pathlib import Path
@@ -37,34 +37,35 @@ class CopyTemplateCatalogueTests(unittest.TestCase):
 
     def test_every_supported_client_has_an_entry(self):
         for template_id, name in (
-            ("aiometadata", "AIOMetadata"),
-            ("nuvio", "Nuvio"),
-            ("xperience", "Xperience"),
-            ("bingecat", "Bingecat"),
+            ("standard", "AIOMetadata, Nuvio, Bingecat, Xperience"),
             ("discoverplus", "Discover+"),
         ):
             with self.subTest(client=template_id):
                 self.assertIn(f"name: '{name}'", _template_literal(self.html, template_id))
 
     def test_there_are_only_two_shapes_behind_the_client_list(self):
-        # Nuvio's resolver takes AIOMetadata's placeholder set, optional
-        # "{name?}" form included, and Xperience builds Nuvio configurations,
-        # so all three carry the same ids. Bingecat and Discover+ are the
-        # holdouts that reject "{name?}" at config time.
-        for client in ("aiometadata", "nuvio", "xperience"):
-            with self.subTest(client=client):
-                self.assertEqual(_shape_of(self.html, client), "COPY_SHAPE_OPTIMAL")
-        for client in ("bingecat", "discoverplus"):
-            with self.subTest(client=client):
-                self.assertEqual(_shape_of(self.html, client), "COPY_SHAPE_REQUIRED")
+        # AIOMetadata, Nuvio, Bingecat and Xperience all resolve Nuvio's
+        # placeholder set, optional "{name?}" form included. Discover+ is the
+        # holdout.
+        self.assertEqual(_shape_of(self.html, "standard"), "COPY_SHAPE_OPTIMAL")
+        self.assertEqual(_shape_of(self.html, "discoverplus"), "COPY_SHAPE_REQUIRED")
+        menu = self.html[self.html.index("const COPY_TEMPLATES = ["):]
+        menu = menu[: menu.index("];")]
+        self.assertEqual(re.findall(r"\{ id: '(\w+)'", menu), ["standard", "discoverplus"])
+
+    def test_choices_from_before_the_merge_land_on_the_shared_url(self):
+        decl = re.search(r"const COPY_TEMPLATE_LEGACY = \{(.*?)\};", self.html, re.S).group(1)
+        for old in ("aiometadata", "nuvio", "xperience", "bingecat"):
+            with self.subTest(client=old):
+                self.assertIn(f"{old}: 'standard'", decl)
+        self.assertIn("id = COPY_TEMPLATE_LEGACY[id] || id;", self.html)
 
     def test_the_silent_failure_is_written_down(self):
-        # Tested against both: Bingecat rejects a "{name?}" URL at config time
-        # and says so, Discover+ accepts it and then serves nothing with no
-        # indication why. That second one is why the shape is decided from the
-        # client rather than left to the user, and it is not discoverable from
+        # Discover+ accepts a "{name?}" URL and then serves nothing with no
+        # indication why. That is why the shape is decided from the client
+        # rather than left to the user, and it is not discoverable from
         # anything else in this file.
-        self.assertIn("Discover+ accepts it, saves it, and then silently", self.html)
+        self.assertIn("Discover+ accepts a \"{name?}\" URL, saves it, and then silently", self.html)
 
     def test_the_two_shapes_are_all_on_and_all_off(self):
         # The flags describe one fact — whether the client implements "{name?}"
@@ -82,18 +83,17 @@ class CopyTemplateCatalogueTests(unittest.TestCase):
     def test_every_entry_names_where_the_url_goes(self):
         # Surfaced on the button's tooltip after a choice, and in the
         # manual-copy fallback on a non-secure origin.
-        for template_id in ("aiometadata", "nuvio", "bingecat"):
+        for template_id in ("standard", "discoverplus"):
             with self.subTest(client=template_id):
                 self.assertIn("where:", _template_literal(self.html, template_id))
 
-    def test_only_nuvio_gets_the_keys_as_literals(self):
+    def test_the_shared_url_gets_the_keys_as_literals(self):
         # Nuvio has no "{tmdb_key}" / "{mdblist_key}" to substitute, so it
         # would send the placeholder verbatim and the server would try it as a
-        # key. The clients that do fill them keep the placeholder.
-        self.assertIn("...COPY_KEYS_LITERAL", _template_literal(self.html, "nuvio"))
-        for client in ("aiometadata", "xperience", "bingecat", "discoverplus"):
-            with self.subTest(client=client):
-                self.assertNotIn("COPY_KEYS_LITERAL", _template_literal(self.html, client))
+        # key; the clients sharing its URL get the literals too. Discover+
+        # fills them, so it keeps the placeholder.
+        self.assertIn("...COPY_KEYS_LITERAL", _template_literal(self.html, "standard"))
+        self.assertNotIn("COPY_KEYS_LITERAL", _template_literal(self.html, "discoverplus"))
         self.assertIn("const COPY_KEYS_LITERAL = { literalKeys: true };", self.html)
         self.assertIn(
             "const keyHolders = usePlaceholders && !template.literalKeys;", self.html
@@ -135,13 +135,23 @@ class CopyButtonBehaviourTests(unittest.TestCase):
     def setUpClass(cls):
         cls.html = Path("configurator.html").read_text(encoding="utf-8")
 
-    def test_left_click_copies_the_remembered_client(self):
+    def test_left_click_copies_the_shared_url_unless_discover_was_picked(self):
+        # Defaulting rather than opening the menu first is what stops an
+        # AIOMetadata URL being pasted into Nuvio and the like.
         self.assertIn("async function copyUrl() {", self.html)
-        self.assertRegex(
+        self.assertIn("await copyTemplate(rememberedTemplate().id);", self.html)
+        self.assertIn(
+            "return COPY_TEMPLATES.find(t => t.id === id) || COPY_TEMPLATES[0];", self.html
+        )
+        self.assertIn("const COPY_TEMPLATES = [\n  { id: 'standard',", self.html)
+
+    def test_the_tooltip_names_both_routes(self):
+        self.assertIn(
+            "Left-click to copy the URL for AIOMetadata, Nuvio, Bingecat and Xperience", self.html
+        )
+        self.assertIn(
+            "Right-click or long press to copy the config for Discover+ or share your config securely.",
             self.html,
-            r"const current = rememberedTemplate\(\);\s*"
-            r"if \(!current\) \{ openCopyMenu\(\); return; \}\s*"
-            r"await copyTemplate\(current\.id\);",
         )
 
     def test_right_click_always_opens_the_menu(self):

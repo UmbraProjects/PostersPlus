@@ -166,7 +166,7 @@ class ShapeCacheKeyTests(unittest.TestCase):
 
 
 class ConfiguratorDualUrlTests(unittest.TestCase):
-    """Copy config's Nuvio entry, and what a dual URL may leave out."""
+    """Copy config's shared "{shape}" entry, and what a dual URL may leave out."""
 
     @classmethod
     def setUpClass(cls):
@@ -176,13 +176,12 @@ class ConfiguratorDualUrlTests(unittest.TestCase):
         start = self.html.index(f"{{ id: '{template_id}',")
         return self.html[start : self.html.index("}", self.html.index("where:", start)) + 1]
 
-    def test_only_nuvio_sends_the_shape_placeholder(self):
-        # AIOMetadata and Xperience share Nuvio's id placeholders but have no
-        # shape one, which is why it is a separate axis from COPY_SHAPE_OPTIMAL.
-        self.assertIn("COPY_SHAPE_DUAL", self._template_entry("nuvio"))
-        for client in ("aiometadata", "xperience", "bingecat", "discoverplus"):
-            with self.subTest(client=client):
-                self.assertNotIn("COPY_SHAPE_DUAL", self._template_entry(client))
+    def test_the_shared_url_sends_the_shape_placeholder(self):
+        # AIOMetadata, Nuvio, Bingecat and Xperience all fill "{shape}";
+        # Discover+ does not, which is why it is a separate axis from
+        # COPY_SHAPE_OPTIMAL.
+        self.assertIn("COPY_SHAPE_DUAL", self._template_entry("standard"))
+        self.assertNotIn("COPY_SHAPE_DUAL", self._template_entry("discoverplus"))
 
     def test_the_placeholder_is_only_ever_the_template_url(self):
         # The live preview renders one concrete title, so there is nothing to

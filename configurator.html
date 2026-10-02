@@ -4110,7 +4110,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
           <button class="btn btn-preview" id="copy-config-btn" onclick="copyUrl()"
             oncontextmenu="return openCopyMenu(event)"
             aria-haspopup="true" aria-expanded="false"
-            data-tip="Copies the poster URL for your client. Right-click to pick a different one. In landscape view it copies the landscape URL instead.">Copy config</button>
+            data-tip="Left-click to copy the URL for AIOMetadata, Nuvio, Bingecat and Xperience — one URL covers portrait and landscape. Right-click or long press to copy the config for Discover+ or share your config securely.">Copy config</button>
           <button class="btn btn-primary" onclick="openPresetModal()"
             data-tip="Replace the current settings with a saved preset.">Load preset</button>
           <button class="btn btn-reset" onclick="resetDefaults(); build(); queuePreviewReload(); saveApiKeys()"
@@ -6194,11 +6194,11 @@ const _ADDON_CFG_IDENTITY = ['tmdb_id', 'imdb_id', 'type', 'stremio_id', 'anilis
 function trendingAddonConfigSegment() {
   // Each catalog item gets a portrait poster and a landscape one, and the
   // client picks by the row's layout, so this needs both shapes' settings.
-  // Nuvio's "{shape}" URL is exactly that: it carries both from whichever view
+  // The shared "{shape}" URL is exactly that: it carries both from whichever view
   // is showing (the saved-settings build keeps the hidden shape's values out of
   // the URL), leaves out only what both layouts default the same way, and
   // puts the typed-in keys in literally.  Its id placeholders are dropped.
-  const url = buildBaseParams({ usePlaceholders: true, templateId: 'nuvio' });
+  const url = buildBaseParams({ usePlaceholders: true, templateId: 'standard' });
   const qIdx = url.indexOf('?');
   if (qIdx < 0) return '';
   const p = new URLSearchParams(url.slice(qIdx + 1));
@@ -7039,24 +7039,21 @@ function buildPreviewUrl() {
 // otherwise send. So the flags only ever travel together, as the two shapes
 // below.
 //
-// There are only two shapes of id placeholder behind the client list. Nuvio's
-// pattern resolver takes the same set as AIOMetadata, optional "{name?}" form
-// included, and Xperience builds Nuvio configurations, so its patterns end up
-// in front of that same resolver. Bingecat and Discover+ are the holdouts:
-// they reject "{name?}" at config time and will not save the URL at all. As
-// each one gains the form, move it onto OPTIMAL; once none are left the client
-// list collapses to a single URL.
+// There are only two shapes of id placeholder behind the client list.
+// AIOMetadata, Nuvio, Bingecat and Xperience all resolve Nuvio's placeholder
+// set, optional "{name?}" form included. Discover+ is the holdout: it rejects
+// nothing at config time but serves nothing for a "{name?}" URL (see below).
+// Once it gains the form the client list collapses to a single URL.
 const COPY_SHAPE_OPTIMAL  = { tmdbOptional: true,  imdbOptional: true,  animeIds: true  };
 const COPY_SHAPE_REQUIRED = { tmdbOptional: false, imdbOptional: false, animeIds: false };
 
-// "shape={shape}" is Nuvio's alone for now, and it is a different axis from the
-// id placeholders above rather than a third shape of the same one: AIOMetadata
-// and Xperience share Nuvio's id set but have no shape placeholder, so it is
-// set per client instead of riding on COPY_SHAPE_OPTIMAL.
+// "shape={shape}" is a different axis from the id placeholders above rather
+// than a third shape of the same one, so it is set per template instead of
+// riding on COPY_SHAPE_OPTIMAL.
 //
-// Nuvio fills it with "poster", "landscape" or "square" — the shape the
+// The client fills it with "poster", "landscape" or "square" — the shape the
 // catalogue asked for — so one URL covers the 2:3 slot, the 16:9 slot and the
-// Continue Watching backdrop, where every other client needs the landscape URL
+// Continue Watching backdrop, where a client without it needs the landscape URL
 // copied separately from the landscape view. The placeholder's presence is
 // itself the switch: without it Nuvio overrides only portrait items and leaves
 // landscape and square ones with their own art, so emitting it is what opts
@@ -7069,32 +7066,31 @@ const COPY_SHAPE_REQUIRED = { tmdbOptional: false, imdbOptional: false, animeIds
 const COPY_SHAPE_DUAL = { shapePlaceholder: true };
 
 // Nuvio has no "{tmdb_key}" or "{mdblist_key}" to fill in — it holds no keys of
-// ours — so its URL carries the configurator's keys as literals. A key left
-// blank is still left out, and the server's own key is used.
+// ours — so its URL carries the configurator's keys as literals, and the
+// clients that share its URL get them the same way. A key left blank is still
+// left out, and the server's own key is used.
 const COPY_KEYS_LITERAL = { literalKeys: true };
 
+// The first entry is the default: a plain left-click copies it until someone
+// picks Discover+ from the menu. Defaulting rather than asking is what stops a
+// URL copied for one client being pasted into another, now that every client
+// but Discover+ takes the same one.
 const COPY_TEMPLATES = [
-  { id: 'aiometadata', name: 'AIOMetadata', ...COPY_SHAPE_OPTIMAL,
-    where: 'AIOMetadata → Art Providers → Custom Art URLs → Poster URL Pattern' },
-  { id: 'nuvio', name: 'Nuvio', ...COPY_SHAPE_OPTIMAL, ...COPY_SHAPE_DUAL, ...COPY_KEYS_LITERAL,
-    where: "Nuvio's custom poster URL pattern" },
-  { id: 'xperience', name: 'Xperience', ...COPY_SHAPE_OPTIMAL,
-    where: "Xperience's poster provider URL" },
-  // Kept as their own entries rather than folded together: these are the
-  // clients whose URL differs, and the ones that have to change when that
-  // stops being so.
-  //
-  // Neither can be given the optional form, and Discover+ is the reason this
-  // has to be decided here rather than left to the user. Bingecat at least
-  // refuses a "{name?}" URL at config time and says the URL is invalid, so the
-  // mistake is visible. Discover+ accepts it, saves it, and then silently
+  { id: 'standard', name: 'AIOMetadata, Nuvio, Bingecat, Xperience',
+    ...COPY_SHAPE_OPTIMAL, ...COPY_SHAPE_DUAL, ...COPY_KEYS_LITERAL,
+    where: "the client's poster URL pattern" },
+  // Kept as its own entry: the one client whose URL differs, and the one that
+  // has to change when that stops being so. It cannot be given the optional
+  // form, and it is the reason this has to be decided here rather than left to
+  // the user: Discover+ accepts a "{name?}" URL, saves it, and then silently
   // serves nothing — no error, no posters, nothing pointing at the URL. A user
   // who picked the wrong entry there has no way to work out why.
-  { id: 'bingecat', name: 'Bingecat', ...COPY_SHAPE_REQUIRED,
-    where: "the addon's poster URL field" },
   { id: 'discoverplus', name: 'Discover+', ...COPY_SHAPE_REQUIRED,
     where: "the addon's poster URL field" },
 ];
+// Choices remembered before the clients shared one URL.
+const COPY_TEMPLATE_LEGACY = { aiometadata: 'standard', nuvio: 'standard',
+                               xperience: 'standard', bingecat: 'standard' };
 // tmdb_id and nothing else. The saved settings round-trip through this shape,
 // so a remembered client choice never lands in stored configuration, and it is
 // what an unknown template id falls back to.
@@ -7131,18 +7127,17 @@ function isShareUrl(raw) {
   try { return new URL(raw).origin === SHARE_ORIGIN; } catch { return false; }
 }
 
-/** The template a plain left-click copies, or null when none is remembered —
- *  the first click opens the menu rather than guessing a client. */
+/** The template a plain left-click copies: Discover+ if that was picked last,
+ *  the shared URL otherwise. */
 function rememberedTemplate() {
   let id = null;
   try { id = localStorage.getItem(COPY_TEMPLATE_KEY); } catch (e) {}
-  return COPY_TEMPLATES.find(t => t.id === id) || null;
+  id = COPY_TEMPLATE_LEGACY[id] || id;
+  return COPY_TEMPLATES.find(t => t.id === id) || COPY_TEMPLATES[0];
 }
 
-/** The shape the URL box shows. Before anything is remembered that is the
- *  first template rather than the neutral shape, so the box is never a URL no
- *  client would be given. */
-function displayedTemplate() { return rememberedTemplate() || COPY_TEMPLATES[0]; }
+/** The shape the URL box shows — whatever a left-click would copy. */
+function displayedTemplate() { return rememberedTemplate(); }
 
 function buildTemplateUrl(templateId = displayedTemplate().id) {
   return buildBaseParams({ usePlaceholders: true, templateId });
@@ -7216,22 +7211,23 @@ function renderCopyMenu() {
   const current = rememberedTemplate();
   for (const t of COPY_TEMPLATES) {
     document.getElementById(`copy-tpl-${t.id}`)
-      ?.classList.toggle('is-current', !!current && current.id === t.id);
+      ?.classList.toggle('is-current', current.id === t.id);
   }
-  if (btn) {
-    // A "{shape}" client resolves both layouts from one URL, so there is no
-    // separate landscape copy to describe — saying there is would send people
-    // back to the landscape view for a URL they already have.
-    const _shapeNote = current?.shapePlaceholder
-      ? `One URL covers both — ${current.name} asks for the portrait or landscape render per row.`
-      : 'In landscape view it copies the landscape URL instead.';
-    btn.setAttribute('data-tip', current
-      ? `Copies the ${current.name} poster URL — paste it into ${current.where}. `
-        + 'Right-click to copy it for a different client. ' + _shapeNote
-      : 'Copies the poster URL for your client. Click to pick one — after that, '
-        + 'a left-click copies it again and a right-click picks another. '
-        + 'In landscape view it copies the landscape URL instead.');
+  if (btn) btn.setAttribute('data-tip', copyButtonTip(current));
+}
+
+/** A "{shape}" URL resolves both layouts, so there is no separate landscape
+ *  copy to describe for it — saying there is would send people back to the
+ *  landscape view for a URL they already have. */
+function copyButtonTip(current) {
+  if (current.id === 'discoverplus') {
+    return 'Left-click to copy the URL for Discover+. Right-click or long press to copy '
+      + 'the URL for AIOMetadata, Nuvio, Bingecat and Xperience, or share your config '
+      + 'securely. In landscape view it copies the landscape URL instead.';
   }
+  return 'Left-click to copy the URL for AIOMetadata, Nuvio, Bingecat and Xperience — '
+    + 'one URL covers portrait and landscape. Right-click or long press to copy the '
+    + 'config for Discover+ or share your config securely.';
 }
 
 function closeCopyMenu() {
@@ -7241,7 +7237,7 @@ function closeCopyMenu() {
   if (btn)  btn.setAttribute('aria-expanded', 'false');
 }
 
-/** Right-click always lands here; left-click only when nothing is remembered.
+/** Right-click and long press land here.
  *  Returns false so the platform context menu stays out of the way. */
 function openCopyMenu(ev) {
   ev?.preventDefault();
@@ -7368,16 +7364,13 @@ async function copyText(text) {
   return false;
 }
 
-/** The button's own click. Copies for the remembered client; with nothing
- *  remembered there is no sensible guess, so it opens the menu instead — which
- *  is also how the choice is discovered in the first place. */
+/** The button's own click. Copies the shared URL, or Discover+'s if that was
+ *  the last pick. */
 async function copyUrl() {
   // The tap that ends a press-and-hold still arrives as a click; the menu it
   // just opened is the action, not a copy.
   if (_copyLongPressed) { _copyLongPressed = false; return; }
-  const current = rememberedTemplate();
-  if (!current) { openCopyMenu(); return; }
-  await copyTemplate(current.id);
+  await copyTemplate(rememberedTemplate().id);
 }
 
 /** Copies the URL in one client's shape and remembers that client, so the next
