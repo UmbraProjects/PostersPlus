@@ -179,6 +179,10 @@
   .nav a .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
   .nav-sep { height: 1px; background: var(--border); margin: 12px 0; }
 
+  .kv.licences img { height: 14px; width: auto; display: block; margin-top: 1px; }
+  .kv.licences td:first-child { width: 28%; }
+  .kv.licences td:last-child { color: var(--text-secondary); line-height: 1.6; }
+
   .panel {
     background: var(--black1);
     border: 1px solid var(--border);
@@ -967,7 +971,7 @@ async function boot() {
   // #artwork/<movie|tv>/<tmdb id> opens that title's editor (the configurator's
   // edit-artwork shortcut links here).
   const deep = hash.match(/^artwork\/(movie|tv)\/(\d+)$/);
-  setView(deep ? 'artwork' : hash && (hash === 'overview' || hash === 'artwork' || hash === 'reports' || hash === 'logs' || hash === 'sash-lists' || hash === 'presets' || hash === 'fonts' || model.groups.some(g => slug(g.name) === hash)) ? hash : 'overview');
+  setView(deep ? 'artwork' : hash && (hash === 'overview' || hash === 'artwork' || hash === 'reports' || hash === 'logs' || hash === 'sash-lists' || hash === 'presets' || hash === 'fonts' || hash === 'licences' || model.groups.some(g => slug(g.name) === hash)) ? hash : 'overview');
   if (deep) artOpen(deep[1], deep[2]);
   clearInterval(statusTimer);
   statusTimer = setInterval(loadStatus, 15000);
@@ -1006,6 +1010,8 @@ function renderNav() {
     const pend = g.settings.some(s => pending.has(s.key));
     html += `<a href="#${id}" data-view="${id}" class="${activeView === id ? 'active' : ''}"><span>${esc(g.name)}</span>${dirty ? `<span class="chip dirty">${dirty}</span>` : (pend ? '<span class="dot" title="Restart required"></span>' : `<span class="count">${g.settings.length}</span>`)}</a>`;
   }
+  html += `<div class="nav-sep"></div>`;
+  html += `<a href="#licences" data-view="licences" class="${activeView === 'licences' ? 'active' : ''}"><span>Licences &amp; attributions</span></a>`;
   nav.innerHTML = html;
   nav.querySelectorAll('a').forEach(a => a.addEventListener('click', e => { e.preventDefault(); setView(a.dataset.view); }));
 }
@@ -1340,6 +1346,7 @@ function renderView() {
   if (activeView === 'reports') { main.innerHTML = renderReports(); loadReports(); return; }
   if (activeView === 'logs') { main.innerHTML = renderLogs(); lgRenderModules(); if (lg.live && !lg.timer) lgSetLive(true); if (!lg.loaded) lgLoad(); else lgRenderList(); return; }
   if (activeView === 'presets') { main.innerHTML = renderPresets(); if (!pr.data) loadPresets(); return; }
+  if (activeView === 'licences') { main.innerHTML = renderLicences(); return; }
   if (activeView === 'fonts') { main.innerHTML = renderFonts(); if (!ft.data) loadFonts(); return; }
   if (activeView === 'sash-lists') { main.innerHTML = renderSashLists(); if (!sl.data) loadSashLists(); else slLookup(sl.section); return; }
   const g = model.groups.find(g => slug(g.name) === activeView);
@@ -2100,6 +2107,35 @@ function ftSample() {
   if (!/^\d{1,9}$/.test(id)) { toast('A TMDB id is a number'); return; }
   ft.sample = { id, type: document.getElementById('ft-sample-type').value === 'tv' ? 'tv' : 'movie' };
   renderView();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Licences & attributions.  Static: the services, data and assets PostersPlus
+// is built on, mirroring README.md#attribution.  TMDB's terms want its logo and
+// notice wherever users see the app, so it leads the page.
+const LICENCES = [
+  ['TheTVDB', 'https://thetvdb.com', 'Metadata and artwork provided by TheTVDB.'],
+  ['MDBList', 'https://mdblist.com', 'Ratings (including Letterboxd, Rotten Tomatoes, Metacritic and Trakt scores) and lists.'],
+  ['IMDb', 'https://developer.imdb.com/non-commercial-datasets/', 'Information courtesy of IMDb (https://www.imdb.com). Used with permission. Ratings come from the IMDb non-commercial datasets.'],
+  ['AniList', 'https://anilist.co', 'Anime art, titles, genres and scores.'],
+  ['Kitsu', 'https://kitsu.app', 'Anime art, titles, genres and scores.'],
+  ['Cinemeta and Metahub', 'https://www.stremio.com', 'Metadata and logo fallbacks, from Stremio.'],
+  ['fanart.tv', 'https://fanart.tv', 'Posters, logos and backgrounds.'],
+  ['Trakt, SIMKL, PublicMetaDB', 'https://trakt.tv', 'Watchlists for the watchlist marker.'],
+  ['Arctic Shift', 'https://arctic-shift.photon-reddit.com', 'Reddit archive used to detect digital releases.'],
+  ['Wikidata', 'https://www.wikidata.org', 'Festival award winners, under CC0.'],
+  ['Wikimedia Commons', 'https://commons.wikimedia.org', 'Graphic and rating badge marks, downloaded at runtime and pinned to the reviewed file. Mostly public domain; the DTS:X mark is by CinemaLover24680 under CC BY-SA 4.0. All marks are trademarks of their owners.'],
+  ['RapidOCR', 'https://github.com/RapidAI/RapidOCR', 'The PP-OCRv5 text detection model from PaddleOCR, under the Apache License 2.0.'],
+  ['Anime ID mapping', 'https://github.com/Fribb/anime-lists', 'Fribb/anime-lists, built from anime-offline-database (cedya77, continuing manami-project) and Anime-Lists/anime-lists. anime-offline-database is made available under the Open Database License 1.0, and its contents under the Database Contents License 1.0.'],
+  ['Fonts', 'https://openfontlicense.org', 'Barlow Condensed, Bebas Neue, Creepster, Exo 2, Fira Sans, Inter, Manrope, Montserrat, Noto Serif, Open Sans, Oswald, Pacifico, Playfair Display, Plus Jakarta Sans, Roboto Condensed, Rubik and Space Grotesk under the SIL Open Font License 1.1; Ubuntu under the Ubuntu Font Licence 1.0. Each licence ships in fonts/.'],
+  ['PostersPlus', 'https://github.com/UmbraProjects/PostersPlus', 'GNU Affero General Public License v3.0.'],
+];
+function renderLicences() {
+  let html = `<div class="panel"><div class="panel-header"><span class="panel-title">Licences &amp; attributions</span></div><div class="panel-body">`;
+  html += `<table class="kv licences"><tr><td><a href="https://www.themoviedb.org" target="_blank" rel="noopener"><img src="/static/tmdb-logo.svg" alt="TMDB"></a></td><td>This product uses the TMDB API but is not endorsed or certified by TMDB. Posters, backdrops, logos, metadata and trending lists.</td></tr>` + LICENCES.map(([name, url, text]) =>
+    `<tr><td><a href="${esc(url)}" target="_blank" rel="noopener">${esc(name)}</a></td><td>${esc(text)}</td></tr>`).join('') + `</table>`;
+  html += `<p style="font-size:10px;color:var(--text-muted);margin:var(--gap-field) 0">None of these services endorse or certify PostersPlus.</p>`;
+  return html + `</div></div>`;
 }
 
 function renderFonts() {

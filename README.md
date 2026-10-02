@@ -147,10 +147,33 @@ Chat, feature requests and bug reports are on [Discord](https://discord.com/invi
 
 If you'd like to support development: [Ko-fi](https://ko-fi.com/umbraprojects).
 
-## License
+## Attribution
 
-[GNU Affero General Public License v3.0](LICENSE). This project and any forks of it should remain open source.
+PostersPlus is built on data and images from these services. None of them endorse or certify it.
+
+<a href="https://www.themoviedb.org"><img src="static/tmdb-logo.svg" alt="TMDB" height="14"></a>
+
+- **[TMDB](https://www.themoviedb.org)**: this product uses the TMDB API but is not endorsed or certified by TMDB. Posters, backdrops, logos, metadata and trending lists.
+- **[TheTVDB](https://thetvdb.com)**: metadata and artwork provided by TheTVDB.
+- **[MDBList](https://mdblist.com)**: ratings (including Letterboxd, Rotten Tomatoes, Metacritic and Trakt scores) and lists.
+- **[IMDb](https://www.imdb.com)**: information courtesy of IMDb. Used with permission. IMDb ratings come from the [IMDb non-commercial datasets](https://developer.imdb.com/non-commercial-datasets/).
+- **[AniList](https://anilist.co)** and **[Kitsu](https://kitsu.app)**: anime art, titles, genres and scores.
+- **[Cinemeta and Metahub](https://www.stremio.com)** (Stremio): metadata and logo fallbacks.
+- **[fanart.tv](https://fanart.tv)**: posters, logos and backgrounds.
+- **[Trakt](https://trakt.tv)**, **[SIMKL](https://simkl.com)** and **[PublicMetaDB](https://publicmetadb.com)**: watchlists for the watchlist marker.
+- **[Arctic Shift](https://arctic-shift.photon-reddit.com)**: Reddit archive used to detect digital releases.
+- **[Wikidata](https://www.wikidata.org)**: festival award winners, under [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
+- **[RapidOCR](https://github.com/RapidAI/RapidOCR)**: the PP-OCRv5 text detection model from [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR), under the Apache License 2.0.
+- **Anime ID mapping**: from [Fribb/anime-lists](https://github.com/Fribb/anime-lists), which is built from [anime-offline-database](https://github.com/cedya77/anime-offline-database) (a continuation of [manami-project](https://github.com/manami-project)'s original) and [Anime-Lists/anime-lists](https://github.com/Anime-Lists/anime-lists). anime-offline-database is made available under the [Open Database License v1.0](https://opendatacommons.org/licenses/odbl/1-0/), and its contents under the [Database Contents License v1.0](https://opendatacommons.org/licenses/dbcl/1-0/).
+
+The bundled fonts are Barlow Condensed, Bebas Neue, Creepster, Exo 2, Fira Sans, Inter, Manrope, Montserrat, Noto Serif, Open Sans, Oswald, Pacifico, Playfair Display, Plus Jakarta Sans, Roboto Condensed, Rubik and Space Grotesk under the [SIL Open Font License 1.1](https://openfontlicense.org), and Ubuntu under the [Ubuntu Font Licence 1.0](https://ubuntu.com/legal/font-licence). Each licence, with its copyright notice, is in [fonts/](fonts).
+
+### Badge artwork
 
 The Graphic Badges mode downloads its marks from Wikimedia Commons at runtime; none ship with PostersPlus. Dolby Vision, Dolby Atmos and the combined Vision • Atmos mark are built from [Dolby Vision 2021 logo.svg](https://commons.wikimedia.org/wiki/File:Dolby_Vision_2021_logo.svg) and [Dolby Cinema 2021 logo.svg](https://commons.wikimedia.org/wiki/File:Dolby_Cinema_2021_logo.svg) (public domain). The DTS:X mark is [DTS X B&W.png](https://commons.wikimedia.org/wiki/File:DTS_X_B%26W.png) by CinemaLover24680, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), cut to its "dts" letters and recoloured white. Dolby, Dolby Vision, Dolby Atmos and DTS:X are trademarks of their owners.
 
 Rating badges are downloaded the same way, each pinned to the exact file reviewed. The IMDb, Rotten Tomatoes (tomato, lettered tomato, splat and both Popcornmeter buckets), Metacritic, Letterboxd, Trakt, MyAnimeList and AniList logos come from Wikimedia Commons, all public domain; the TMDB logo from [TMDB's logos page](https://www.themoviedb.org/about/logos-attribution); the Kitsu mark from [Simple Icons](https://simpleicons.org/) (CC0); and Roger Ebert's thumbs-up is [Material Symbols](https://github.com/google/material-design-icons)' `thumb_up` (Apache 2.0). Most are set on round plates in their brand colours. All are trademarks of their owners.
+
+## License
+
+[GNU Affero General Public License v3.0](LICENSE). This project and any forks of it should remain open source.
