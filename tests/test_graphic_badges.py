@@ -537,6 +537,13 @@ class NetworkStudioTests(unittest.TestCase):
         self.assertGreater(int(a[2, 2]), 240)
         self.assertLess(int(a[15, 40]), 20)
 
+    def test_a_part_reaching_the_edge_is_not_lettering(self):
+        # Fox Kids' yellow X: a different colour, but part of the outline, not
+        # held inside the block, so it stays.
+        im = self.plate((220, 30, 30), (0, 0, 0), text=(70, 10, 90, 40), text_rgb=(255, 220, 0))
+        a = gb.logo_alpha(im)
+        self.assertGreater(int(a[15, 75]), 240)
+
     def test_shading_is_not_lettering(self):
         im = Image.new("RGBA", (100, 50), (0, 0, 0, 0))
         for x in range(10, 90):                       # a soft gradient across the block

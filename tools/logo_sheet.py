@@ -10,8 +10,8 @@ height a 22-size group has on a 750-tall poster unless one is given, with
 the downloaded original beside it (on grey, so white and black logos both
 show).  It is labelled with its kind and TMDB id, its drawn size, its ink
 share and the ink it lays down: the numbers graphic_badges.logo_size is
-tuned on.  Sorted by
-aspect, so the shapes that come out small or large sit together.
+tuned on.  Sorted by aspect, so the shapes that come out small or large sit
+together.
 """
 from __future__ import annotations
 

@@ -833,11 +833,22 @@ async def ensure_logo(client, logo: Logo | None) -> None:
 # block, not lettering.  Only where those parts are a minority of the block
 # (_KNOCKOUT_SHARE) and differ by more than shading does (_KNOCKOUT_GAP): a
 # logo that is all lettering (Marvel's wordmark, STARZ) has nothing to cut.
-# Warner Bros.' shield is just over half gold (rim, letters, banner), so its
-# blue field is what goes.
+# Only parts the block holds inside it are lettering: one that reaches the
+# logo's outside edge (Fox Kids' yellow X, HBO Max's "max") is part of the
+# mark's own shape, and stays.  Warner Bros.' shield is just over half gold
+# (rim, letters, banner), so its blue field, inside the rim, is what goes.
 _KNOCKOUT_FILL = 0.55
 _KNOCKOUT_SHARE = (0.03, 0.65)
 _KNOCKOUT_GAP = 60
+
+
+def _enclosed(marks: np.ndarray, block: np.ndarray) -> np.ndarray:
+    """The parts of ``marks`` the block surrounds: not joined to the logo's
+    outside (what isn't block) except through other marks."""
+    import cv2
+    passable = np.pad(marks | ~block, 1, constant_values=True).astype(np.uint8)
+    _, labels = cv2.connectedComponents(passable, connectivity=4)
+    return marks & (labels[1:-1, 1:-1] != labels[0, 0])
 
 
 def logo_alpha(im: Image.Image) -> np.ndarray:
@@ -858,12 +869,14 @@ def logo_alpha(im: Image.Image) -> np.ndarray:
     alpha, lum, block = alpha[y0:y1, x0:x1], lum[y0:y1, x0:x1], solid[y0:y1, x0:x1]
     if block.mean() > _KNOCKOUT_FILL:
         diff = np.abs(lum - np.median(lum[block]))
-        marks = (diff > _KNOCKOUT_GAP) & block
+        marks = _enclosed((diff > _KNOCKOUT_GAP) & block, block)
         if _KNOCKOUT_SHARE[0] < marks.sum() / block.sum() < _KNOCKOUT_SHARE[1]:
             # Faded across the edge between block and lettering, so
-            # anti-aliased letters keep a clean outline.
+            # anti-aliased letters keep a clean outline; nothing further off.
+            import cv2
+            near = cv2.dilate(marks.astype(np.uint8), np.ones((5, 5), np.uint8)).astype(bool)
             t = diff / max(1.0, float(np.percentile(diff[marks], 90)))
-            alpha = alpha * np.clip((0.75 - t) / 0.5, 0, 1)
+            alpha = np.where(near, alpha * np.clip((0.75 - t) / 0.5, 0, 1), alpha)
     return alpha.astype(np.uint8)
 
 
