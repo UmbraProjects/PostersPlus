@@ -31,9 +31,13 @@
   its dark purples as black patches and kept half of its white "sbt". Each
   separate shape is judged on its own, so an emblem over a wordmark (Toei's
   cat over "TOEI ANIMATION") keeps its face instead of becoming a blob.
+- Fox Kids is drawn with FOX's logo, its own (red letters in a thick comic
+  outline) not surviving as a white mark, and HBO always with its black
+  logo: TMDB has given it two, and titles cached at different times showed
+  either.
 - New **Network / Studio Logo Size** (`badge_logo_scale=0.5–2.0`, default
   `1.0`) multiplies that standard size, on both shapes. Posters with a
-  network or studio badge re-render once (render revision 25).
+  network or studio badge re-render once (render revision 27).
 - A logo that doesn't fit beside what shares its line (Minimalist's genre
   and year) is drawn smaller, down to 60%, instead of the group jumping
   above the text. A long wordmark such as TOKYO MX now stays down by the

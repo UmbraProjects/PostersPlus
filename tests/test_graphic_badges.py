@@ -510,6 +510,20 @@ class NetworkStudioTests(unittest.TestCase):
         self.assertEqual(gb.pick_logos(film, "movie"), (None, None, 213))
         self.assertEqual(gb.pick_logos(None, "movie"), (None, None, None))
 
+    def test_a_stand_in_network_is_looked_up(self):
+        # Fox Kids is drawn with FOX's logo, whose path the caller fetches.
+        tv = {"networks": [{"id": 2686, "logo_path": "/foxkids.png"}], "companies": []}
+        self.assertEqual(gb.pick_logos(tv, "tv"), (None, None, 19))
+
+    def test_a_pinned_logo_keeps_its_path(self):
+        # HBO keeps its black logo whatever path the title's facts carry, on
+        # TV and for a film by HBO's own studio.
+        tv = {"networks": [{"id": 49, "logo_path": "/purple.png"}], "companies": []}
+        net, _, _ = gb.pick_logos(tv, "tv")
+        self.assertEqual(net.path, gb.PINNED_LOGOS[("network", 49)])
+        self.assertEqual(gb.make_logo("network", 49, "/other.png").path, gb.PINNED_LOGOS[("network", 49)])
+        self.assertEqual(gb.make_logo("network", 213, "/n.png").path, "/n.png")
+
     def plate(self, fg, bg, box=(10, 10, 90, 40), text=(30, 18, 70, 32), text_rgb=(255, 255, 255)):
         im = Image.new("RGBA", (100, 50), (*bg, 0))
         im.paste((*fg, 255), box)

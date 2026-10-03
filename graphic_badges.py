@@ -765,6 +765,20 @@ STREAMER_NETWORKS = {
 }
 
 
+# Networks drawn with another network's logo, where their own doesn't
+# survive the white-mark conversion: Fox Kids' letters sit in a thick comic
+# outline that joins them into one blob.  Network id -> network id.
+NETWORK_STAND_INS = {
+    2686: 19,                                # Fox Kids -> FOX
+}
+# A network or studio held to one of its TMDB logos, by path.  TMDB has given
+# HBO two over the years (purple, and the sharper black one), and titles whose
+# facts were cached at different times would otherwise show either.
+PINNED_LOGOS = {
+    ("network", 49): "/tuomPhY2UtuPTqqFnKMVHvSb724.png",   # HBO, the black one
+}
+
+
 @dataclass(frozen=True)
 class Logo:
     kind: str        # "network" | "company"
@@ -772,24 +786,34 @@ class Logo:
     path: str        # TMDB logo path
 
 
+def make_logo(kind: str, ident: int, path: str) -> Logo:
+    """A Logo, held to its PINNED_LOGOS path where it has one."""
+    return Logo(kind, ident, PINNED_LOGOS.get((kind, ident), path))
+
+
 def pick_logos(facts: dict | None, media_type: str) -> tuple[Logo | None, Logo | None, int | None]:
-    """(network, studio, streamer network id) for a title's badge facts.  TV
-    takes its first network with a logo; a film, the network of the first
-    streamer studio that made it — whose logo path the caller looks up, as it
-    isn't in the film's own data (the third value).  The studio is the first
-    of the title's production companies on the curated list."""
+    """(network, studio, network id to look up) for a title's badge facts.
+    TV takes its first network with a logo; a film, the network of the first
+    streamer studio that made it.  Where the network's logo path isn't in the
+    title's own data — a film's streamer, or a network drawn with a stand-in's
+    logo (NETWORK_STAND_INS) — the caller looks it up by the third value.  The
+    studio is the first of the title's production companies on the curated
+    list."""
     if not facts:
         return None, None, None
-    network, streamer = None, None
+    network, lookup = None, None
     if media_type in ("tv", "series"):
-        network = next((Logo("network", n["id"], n["logo_path"])
-                        for n in facts.get("networks", []) if n.get("logo_path")), None)
+        first = next((n for n in facts.get("networks", []) if n.get("logo_path")), None)
+        if first and first["id"] in NETWORK_STAND_INS:
+            lookup = NETWORK_STAND_INS[first["id"]]
+        elif first:
+            network = make_logo("network", first["id"], first["logo_path"])
     else:
-        streamer = next((STREAMER_NETWORKS[c["id"]] for c in facts.get("companies", [])
-                         if c["id"] in STREAMER_NETWORKS), None)
-    studio = next((Logo("company", c["id"], c["logo_path"]) for c in facts.get("companies", [])
+        lookup = next((STREAMER_NETWORKS[c["id"]] for c in facts.get("companies", [])
+                       if c["id"] in STREAMER_NETWORKS), None)
+    studio = next((make_logo("company", c["id"], c["logo_path"]) for c in facts.get("companies", [])
                    if c["id"] in STUDIOS and c.get("logo_path")), None)
-    return network, studio, streamer
+    return network, studio, lookup
 
 
 def _logo_file(logo: Logo) -> str:

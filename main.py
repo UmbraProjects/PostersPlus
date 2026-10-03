@@ -7397,11 +7397,12 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
     #     lettering; a part reaching the logo's edge, Fox Kids' X, was cut as
     #     if it were; a multicolour block, SBT's wheel, lost its dark hues and
     #     kept half its lettering; an emblem over a wordmark, Toei's cat, was
-    #     never cut at all), so every poster with a network or studio slot
-    #     re-renders.  (20 to 24 were this change's earlier tunings; skipped
-    #     so composites stamped with them re-render.)
+    #     never cut at all; Fox Kids takes FOX's logo and HBO its black one),
+    #     so every poster with a network or studio slot re-renders.  (20 to 26
+    #     were this change's earlier tunings; skipped so composites stamped
+    #     with them re-render.)
     _RenderRevision(
-        rev=25,
+        rev=27,
         applies=lambda cfg: ((cfg.badge_display_mode == 7 if cfg.shape != "landscape"
                               else cfg.landscape_graphic_badges)
                              and any(slot in ("network", "studio")
@@ -11332,7 +11333,7 @@ async def get_poster(
                 _network, _studio, _streamer = graphic_badges.pick_logos(_facts, type)
                 if _streamer is not None:
                     _path = await fetch_network_logo_path(client, _streamer, effective_tmdb_key)
-                    _network = graphic_badges.Logo("network", _streamer, _path) if _path else None
+                    _network = graphic_badges.make_logo("network", _streamer, _path) if _path else None
                 await asyncio.gather(graphic_badges.ensure_logo(client, _network),
                                      graphic_badges.ensure_logo(client, _studio))
                 _bp_args["badge_logos"] = (_network, _studio)
