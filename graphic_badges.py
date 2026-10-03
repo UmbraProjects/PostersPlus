@@ -842,21 +842,13 @@ async def ensure_logo(client, logo: Logo | None) -> None:
 # that reaches the logo's outside edge (Fox Kids' yellow X, HBO Max's "max")
 # is part of the mark's own shape, and stays.  Warner Bros.' shield is just
 # over half gold (rim, letters, banner), so its blue field, inside the rim,
-# is what goes.  A shape wrapped in a thin neutral outline instead (Fox
-# Kids' red letters in black) loses the outline; see _outline.
+# is what goes.
 _KNOCKOUT_FILL = 0.55
 _KNOCKOUT_SHARE = (0.03, 0.65)
 _KNOCKOUT_GAP = 60
 _KNOCKOUT_NEUTRAL = 40      # chroma (max - min channel) under which a colour is white, grey or black
 _KNOCKOUT_NEAR = 60         # RGB distance within which a pixel is the lettering's colour
 _KNOCKOUT_MIN_PART = 0.05   # share of the logo's ink a shape needs to be judged on its own
-# A shape whose rim is mostly one neutral colour, a thin stroke of it
-# (under _OUTLINE_THIN of the shape's size through) wrapped round coloured
-# parts, is outlined, like Fox Kids' letters in black: the outline is cut and
-# the parts inside are the mark.
-_OUTLINE_RIM = 0.7
-_OUTLINE_SHARE = (0.1, 0.7)
-_OUTLINE_THIN = 0.1
 
 
 def _enclosed(marks: np.ndarray, block: np.ndarray) -> np.ndarray:
@@ -884,30 +876,6 @@ def _lettering(rgb: np.ndarray, lum: np.ndarray, block: np.ndarray):
     return _enclosed(near, block), colour
 
 
-def _outline(rgb: np.ndarray, part: np.ndarray):
-    """(mask, colour) of a thin neutral outline wrapped round a shape's
-    coloured parts (Fox Kids' black comic outline), or (None, None)."""
-    import cv2
-    rim = part & ~cv2.erode(part.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
-    if not rim.any():
-        return None, None
-    colour = np.median(rgb[rim], axis=0)
-    if colour.max() - colour.min() >= _KNOCKOUT_NEUTRAL:
-        return None, None
-    close = np.linalg.norm(rgb - colour, axis=2) < _KNOCKOUT_NEAR
-    if (close & rim).sum() < _OUTLINE_RIM * rim.sum():
-        return None, None
-    mask = close & part
-    if not _OUTLINE_SHARE[0] < mask.sum() / part.sum() < _OUTLINE_SHARE[1]:
-        return None, None
-    # Thin: a stroke, not a disc or a plate (abc's black disc has its rim in
-    # black too, but is thick through).
-    depth = cv2.distanceTransform(mask.astype(np.uint8), cv2.DIST_L2, 3)
-    if 2 * np.percentile(depth[mask], 75) > _OUTLINE_THIN * min(part.shape):
-        return None, None
-    return mask, colour
-
-
 def logo_alpha(im: Image.Image) -> np.ndarray:
     """A TMDB logo as the alpha of a white mark, cropped to its ink."""
     a = np.asarray(im.convert("RGBA")).astype(np.float32)
@@ -932,19 +900,12 @@ def logo_alpha(im: Image.Image) -> np.ndarray:
     rgb = a[y0:y1, x0:x1, :3]
     for i in range(1, n):
         x, y, w, h, area = stats[i]
-        if area < _KNOCKOUT_MIN_PART * block.sum():
+        if area < _KNOCKOUT_MIN_PART * block.sum() or area <= _KNOCKOUT_FILL * w * h:
             continue
         box = (slice(y, y + h), slice(x, x + w))
         part = labels[box] == i
-        # An outline first: its strict test (a neutral rim, a thin stroke)
-        # would otherwise lose to the lettering one, which finds the bits of
-        # outline inside an O or a D as lettering and cuts only those.
-        marks, colour = _outline(rgb[box], part)
-        if marks is None and area > _KNOCKOUT_FILL * w * h:
-            marks, colour = _lettering(rgb[box], lum[box], part)
-            if marks is not None and not _KNOCKOUT_SHARE[0] < marks.sum() / part.sum() < _KNOCKOUT_SHARE[1]:
-                marks = None
-        if marks is None:
+        marks, colour = _lettering(rgb[box], lum[box], part)
+        if marks is None or not _KNOCKOUT_SHARE[0] < marks.sum() / part.sum() < _KNOCKOUT_SHARE[1]:
             continue
         # Faded across the edge between block and lettering, by distance from
         # the lettering's colour, so anti-aliased letters keep a clean

@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 
 import graphic_badges as gb
 from discovery import DiscoveryMeta
@@ -569,28 +569,6 @@ class NetworkStudioTests(unittest.TestCase):
         self.assertLess(int(a[50, 100]), 20)                   # the face cut out
         self.assertGreater(int(a[10, 100]), 240)               # the head kept
         self.assertGreater(int(a[130, 3]), 240)                # the wordmark kept
-
-    def test_a_thin_neutral_outline_is_cut_and_its_letters_kept(self):
-        # Fox Kids: red letters in a black comic outline, joined into one
-        # shape.  The outline goes; the letters are the mark.
-        im = Image.new("RGBA", (240, 120), (0, 0, 0, 0))
-        for x0 in (6, 86, 166):
-            im.paste((10, 10, 10, 255), (x0, 6, x0 + 60, 114))       # outline
-            im.paste((220, 30, 30, 255), (x0 + 4, 10, x0 + 56, 110))  # letter
-        im.paste((10, 10, 10, 255), (60, 56, 172, 62))                # joined
-        a = gb.logo_alpha(im)
-        self.assertGreater(int(a[30, 30]), 240)                    # a letter kept (crop starts at 6,6)
-        self.assertLess(int(a[1, 30]), 20)                         # its outline cut
-
-    def test_a_thick_dark_disc_is_not_an_outline(self):
-        # abc: a black disc, its rim black too, but thick through: its white
-        # lettering is cut, the disc kept.
-        im = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
-        ImageDraw.Draw(im).ellipse((5, 5, 95, 95), fill=(10, 10, 10, 255))
-        im.paste((255, 255, 255, 255), (35, 40, 65, 60))
-        a = gb.logo_alpha(im)
-        self.assertGreater(int(a[20, 45]), 240)
-        self.assertLess(int(a[45, 45]), 20)
 
     def test_shading_is_not_lettering(self):
         im = Image.new("RGBA", (100, 50), (0, 0, 0, 0))
