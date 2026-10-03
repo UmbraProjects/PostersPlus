@@ -621,7 +621,7 @@ class DiscoveryMeta:
 
     # Structural facts (computed from TMDB metadata)
     is_short_film:  bool = False   # movie, runtime < 40 min
-    is_mini_series: bool = False   # TV, 1 season, ≤ 8 episodes
+    is_mini_series: bool = False   # TV: TMDB's type is Miniseries, or 1 season of ≤ 8 episodes
     is_binge_ready: bool = False   # TV, ≥ 3 seasons, prestige episode count
 
     # Language (from TMDB metadata)
@@ -790,9 +790,12 @@ def extract_discovery_meta(
         num_seasons  = tmdb_data.get("number_of_seasons")  or 0
         num_episodes = tmdb_data.get("number_of_episodes") or 0
 
+        # TMDB's own type first: a Miniseries is one whatever its length
+        # (regional limited series run 10-15 episodes, past the count
+        # below).  Without it, 1 season of at most 8 episodes.
         meta.is_mini_series = (
-            num_seasons == 1
-            and 0 < num_episodes <= 8
+            tmdb_data.get("tmdb_type") == "Miniseries"
+            or (num_seasons == 1 and 0 < num_episodes <= 8)
         )
 
         if num_seasons >= 3 and num_episodes > 0:
