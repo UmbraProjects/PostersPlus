@@ -2445,6 +2445,11 @@ const ART_LANGS = [['en','English'],['es','Spanish'],['es-es','Spanish (Spain)']
 const ART_PROVIDERS = { tmdb: 'TMDB', fanart: 'Fanart', tvdb: 'TVDB' };
 // Where a chosen image came from, including one the operator supplied.
 const ART_ORIGIN = Object.assign({ custom: 'your image' }, ART_PROVIDERS);
+// Poster sources an override can stand in for.  Cinemeta has no candidates of
+// its own to browse, and its posters are always served as-is, so it is only
+// offered on the OA Poster slot.
+const ART_SOURCES = Object.assign({}, ART_PROVIDERS, { cinemeta: 'Cinemeta' });
+const artSlotSources = slot => Object.keys(ART_SOURCES).filter(s => s !== 'cinemeta' || slot === 'original');
 const ART_SLOTS = {
   textless:           { label: 'Textless Poster', kind: 'posters' },
   original:           { label: 'OA Poster', kind: 'posters' },
@@ -2526,10 +2531,9 @@ async function artOpen(mediaType, tmdbId) {
   art.title = r.body;
   art.previewTs = Date.now();
   // Default ticks: every source this instance offers users.
-  const offered = Object.keys(ART_PROVIDERS).filter(s => r.body.offered_sources[s]);
   for (const slot of ['textless', 'original']) {
     const o = artOverride(slot, art.lang);
-    art.sources[slot] = new Set(o ? o.sources : offered);
+    art.sources[slot] = new Set(o ? o.sources : artSlotSources(slot).filter(s => r.body.offered_sources[s]));
   }
   if (art.lang === 'null' && art.slot !== 'logo') art.slot = 'logo';
   renderView();
@@ -2996,11 +3000,11 @@ function renderArtTitle() {
       <div><div class="art-current-who">${esc(who)}</div><div class="art-current-when">${when}</div>${revert}</div></div>`;
   if (artSourced(slot)) {
     const set = art.sources[slot] || new Set();
-    side += `<div class="art-side-sub">Apply when a user's poster source is</div><div class="art-pills">${Object.entries(ART_PROVIDERS).map(([s, n]) => {
+    side += `<div class="art-side-sub">Apply when a user's poster source is</div><div class="art-pills">${artSlotSources(slot).map(s => [s, ART_SOURCES[s]]).map(([s, n]) => {
       const offered = t.offered_sources[s];
       return `<button type="button" class="${set.has(s) ? 'on' : ''} ${offered ? '' : 'off'}" aria-pressed="${set.has(s)}" title="${offered ? '' : 'Not offered to users on this instance'}" onclick="artToggleSource('${slot}','${s}')">${esc(n)}</button>`;
     }).join('')}</div>
-      <div class="art-side-hint">${slot === 'textless' ? 'Our logo is drawn on top and the burned-in-text scan is skipped, so pick art with no title.' : 'Served as-is, title and all, to users with Original Art on.'}</div>`;
+      <div class="art-side-hint">${slot === 'textless' ? 'Our logo is drawn on top and the burned-in-text scan is skipped, so pick art with no title.' : 'Served as-is, title and all, to users with Original Art on, and to every Cinemeta user when Cinemeta is ticked.'}</div>`;
   } else if (kind === 'backdrops') {
     side += `<div class="art-side-hint">${slot === 'landscape' ? 'The landscape layout\'s art. Our logo is drawn on top, so pick art with no title.' : 'Served as-is, title and all, to landscape users with Original Art on.'} Landscape art always comes from TMDB, so this applies to every user.</div>`;
   } else {

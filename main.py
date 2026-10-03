@@ -1976,6 +1976,9 @@ class RequestConfig:
     # (Japanese animation, or a request by anime id) and TMDB for the rest.
     # "tvdb" is TVDB's no-language (textless) poster, or under original art
     # one in the request's language; needs TVDB_POSTER_SOURCE + the TVDB key.
+    # "cinemeta" is the Metahub poster Stremio itself shows (the official
+    # one-sheet, title baked in), served as-is like original art; key-less,
+    # needs CINEMETA_ENABLED and an IMDb id for the title.
     poster_source: str = "tmdb"
     # "top" (default) or "random": one of the source's top five candidates,
     # re-rolled each time the poster renders.  Needs RANDOM_POSTERS.
@@ -2909,6 +2912,8 @@ def build_request_config(params: dict) -> RequestConfig:
     if _pss in ("fanart", "fanart_anime") and _cfg.FANART_POSTERS and _cfg.FANART_API_KEY:
         cfg.poster_source = _pss
     elif _pss == "tvdb" and tvdb.poster_source_enabled():
+        cfg.poster_source = _pss
+    elif _pss == "cinemeta" and _cfg.CINEMETA_ENABLED:
         cfg.poster_source = _pss
     # Likewise "top" while the operator hasn't allowed random picks.  Landscape
     # draws from backdrops, which neither setting touches.
@@ -7209,6 +7214,7 @@ async def server_caps(request: Request, access_key: str = ""):
         "preview_at_resolution": bool(_cfg.PREVIEW_AT_RESOLUTION),
         "fanart_posters":        bool(_cfg.FANART_POSTERS and _cfg.FANART_API_KEY),
         "tvdb_posters":          tvdb.poster_source_enabled(),
+        "cinemeta_posters":      bool(_cfg.CINEMETA_ENABLED),
         "random_posters":        bool(_cfg.RANDOM_POSTERS),
         # The preview's "edit this title's artwork" shortcut into the dashboard.
         # Off unless the operator turns it on: on a public instance it would
@@ -8039,6 +8045,7 @@ async def admin_art_title(request: Request, media_type: str, tmdb_id: str,
             "tmdb": True,
             "fanart": fanart.fanart_enabled(),
             "tvdb": tvdb.poster_source_enabled(),
+            "cinemeta": bool(_cfg.CINEMETA_ENABLED),
         },
         "overrides": art_overrides.title_overrides(media_type, tmdb_id),
         "remote_overrides": art_overrides.remote_title_overrides(media_type, tmdb_id),
@@ -10056,6 +10063,24 @@ async def get_poster(
                 logger.info(f"TVDB poster for {tmdb_id}: {_tv_url}"
                             f"{' (original art)' if _use_original_art else ''}")
 
+        # Cinemeta poster source: the Metahub poster Stremio shows for the
+        # IMDb id.  It is the official one-sheet with the title baked in, so
+        # it is always served as-is (original-art rules: no logo on top, no
+        # text scan, no backdrop rescue) whatever the Original Art toggle says.
+        # TMDB's pick stands when there's no IMDb id or Metahub has no poster.
+        _cinemeta_poster_used = False
+        if (rcfg.poster_source == "cinemeta" and not using_anime_art
+                and not use_cinemeta and effective_imdb_id
+                and str(effective_imdb_id).startswith("tt")):
+            _cm_has_poster, _ = await cinemeta.probe_art(client, effective_imdb_id)
+            if _cm_has_poster:
+                poster_path           = cinemeta.poster_url(effective_imdb_id)
+                _use_backdrop         = False
+                _use_original_art     = True
+                is_textless           = False
+                _cinemeta_poster_used = True
+                logger.info(f"Cinemeta poster for {tmdb_id}: {poster_path}")
+
         # The operator's chosen art for this title (dashboard → Artwork) beats
         # every pick above — default, random, backdrop fallback, fanart.tv,
         # TVDB — for the poster sources the operator ticked.  A textless pick
@@ -10063,23 +10088,42 @@ async def get_poster(
         # pick is served as-is.  Landscape draws from backdrops and anime
         # provider covers aren't from any of the three sources, so neither is
         # touched.  See art_overrides for the language rules.
+        #
+        # Cinemeta users: a Cinemeta poster is always served as-is, so it is
+        # the original override (one ticked for Cinemeta) that replaces it,
+        # whatever the Original Art toggle says, and the result is served
+        # as-is too.  That override also beats a TMDB fallback (no IMDb id,
+        # or Metahub has no poster); failing that, a fallback title takes the
+        # TMDB overrides like any TMDB user.
         _title_art = art_overrides.for_title(type, tmdb_id) if has_tmdb_id else None
         _art_override = None
+        _cinemeta_override = False
         if _title_art and not _is_landscape:
-            _art_override = art_overrides.pick_poster(
-                _title_art,
-                original=rcfg.use_original_art,
-                source=(None if (using_anime_art or use_cinemeta)
-                        else "tvdb" if rcfg.poster_source == "tvdb"
-                        else "fanart" if _fanart_wanted
-                        else "tmdb"),
-                language_order=_poster_language_order,
-                has_language=lambda language: bool(_plangs.get(language)),
-            )
+            if (rcfg.poster_source == "cinemeta" and not using_anime_art
+                    and not use_cinemeta):
+                _art_override = art_overrides.pick_poster(
+                    _title_art,
+                    original=True,
+                    source="cinemeta",
+                    language_order=_poster_language_order,
+                    has_language=lambda language: bool(_plangs.get(language)),
+                )
+                _cinemeta_override = _art_override is not None
+            if _art_override is None and not _cinemeta_poster_used:
+                _art_override = art_overrides.pick_poster(
+                    _title_art,
+                    original=rcfg.use_original_art,
+                    source=(None if (using_anime_art or use_cinemeta)
+                            else "tvdb" if rcfg.poster_source == "tvdb"
+                            else "fanart" if _fanart_wanted
+                            else "tmdb"),
+                    language_order=_poster_language_order,
+                    has_language=lambda language: bool(_plangs.get(language)),
+                )
         if _art_override is not None:
             poster_path       = _art_override.path
             _use_backdrop     = False
-            _use_original_art = rcfg.use_original_art
+            _use_original_art = rcfg.use_original_art or _cinemeta_override
             is_textless       = not _use_original_art
             logger.info(f"Operator art for {tmdb_id}: {poster_path}"
                         f"{' (original art)' if _use_original_art else ''}")

@@ -146,3 +146,27 @@ class FakeTextlessReportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CinemetaPosterSourceParsingTests(unittest.TestCase):
+    """poster_source=cinemeta is offered whenever Cinemeta is enabled."""
+
+    def _source(self, enabled, **params):
+        with mock.patch.object(main._cfg, "CINEMETA_ENABLED", enabled):
+            return main.build_request_config(
+                {"poster_source": "cinemeta", **params}).poster_source
+
+    def test_gated_on_cinemeta_enabled(self):
+        self.assertEqual(self._source(True), "cinemeta")
+        self.assertEqual(self._source(False), "tmdb")
+
+    def test_landscape_ignores_it(self):
+        self.assertEqual(self._source(True, shape="landscape"), "tmdb")
+
+    def test_gets_its_own_composite(self):
+        with mock.patch.object(main._cfg, "CINEMETA_ENABLED", True):
+            self.assertNotEqual(
+                main._render_config_signature(
+                    main.build_request_config({"poster_source": "cinemeta"})),
+                main._render_config_signature(main.build_request_config({})),
+            )

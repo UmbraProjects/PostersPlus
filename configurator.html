@@ -3220,12 +3220,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             </div>
             <!-- Poster source and pick; each shown only when the operator allows it -->
             <div class="field portrait-only" id="poster-source-field" hidden>
-              <label class="field-label" data-tip="Where posters come from. Fanart art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. Titles without Fanart art keep their TMDB poster. The anime option uses Fanart only for anime (Japanese animation) and TMDB for everything else. TVDB posters with no language are textless; with Original Art on, TVDB gives a poster in your logo language. Titles TVDB has nothing for keep their TMDB poster.">Poster Source</label>
+              <label class="field-label" data-tip="Where posters come from. Fanart art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. Titles without Fanart art keep their TMDB poster. The anime option uses Fanart only for anime (Japanese animation) and TMDB for everything else. TVDB posters with no language are textless; with Original Art on, TVDB gives a poster in your logo language. Titles TVDB has nothing for keep their TMDB poster. Cinemeta is the poster Stremio shows by default: the official poster with the title on it, so it's shown as-is with no logo added, whatever Original Art is set to. Titles without an IMDb id or a Cinemeta poster keep their TMDB poster.">Poster Source</label>
               <select id="cfg-poster-source" onchange="build(); queuePreviewReload()">
                 <option value="tmdb" selected>TMDB</option>
                 <option value="fanart">Fanart</option>
                 <option value="fanart_anime">TMDB, with Fanart for anime</option>
                 <option value="tvdb">TVDB</option>
+                <option value="cinemeta">Cinemeta</option>
               </select>
             </div>
             <div class="field portrait-only" id="poster-pick-field" hidden>
@@ -4752,13 +4753,14 @@ async function fetchServerCaps() {
     updateImdbSourceAvailability();
     updateResolutionAvailability();
     syncCustomFonts(Array.isArray(serverCaps.custom_fonts) ? serverCaps.custom_fonts : []);
-    document.getElementById('poster-source-field').hidden = !(serverCaps.fanart_posters || serverCaps.tvdb_posters);
+    document.getElementById('poster-source-field').hidden = !(serverCaps.fanart_posters || serverCaps.tvdb_posters || serverCaps.cinemeta_posters);
     document.getElementById('landscape-art-source-field').hidden = !(serverCaps.fanart_posters || serverCaps.tvdb_posters);
     // Only the sources this instance offers; a restored choice it doesn't
     // offer falls back to TMDB.
     for (const id of ['cfg-poster-source', 'cfg-landscape-art-source']) {
       for (const opt of document.querySelectorAll(`#${id} option`)) {
         opt.hidden = opt.value === 'tvdb' ? !serverCaps.tvdb_posters
+          : opt.value === 'cinemeta' ? !serverCaps.cinemeta_posters
           : opt.value.startsWith('fanart') ? !serverCaps.fanart_posters : false;
       }
       const _srcSel = document.getElementById(id);
@@ -6816,7 +6818,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   if (emitAll) {
     params.set('use_original_art',    c('tog-original-art') ? 'true' : 'false');
     params.set('original_art_source', vEl('cfg-original-art-source') || 'primary');
-    if ((serverCaps.fanart_posters || serverCaps.tvdb_posters) && vEl('cfg-poster-source') !== 'tmdb') params.set('poster_source', vEl('cfg-poster-source'));
+    if ((serverCaps.fanart_posters || serverCaps.tvdb_posters || serverCaps.cinemeta_posters) && vEl('cfg-poster-source') !== 'tmdb') params.set('poster_source', vEl('cfg-poster-source'));
     if (serverCaps.random_posters && vEl('cfg-poster-pick') !== 'top') params.set('poster_pick', vEl('cfg-poster-pick'));
   }
   params.set('logo_language',         logoLanguage);
