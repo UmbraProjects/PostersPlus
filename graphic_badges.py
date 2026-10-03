@@ -734,7 +734,9 @@ LOGO_DIR = "/app/cache/company_logos"
 # Studio Ghibli, Syncopy and New Line were once left out as illegible, under
 # the conversion and sizing before the knockout and ink-weighted sizing, and
 # are back to be judged again.  TMDB often keeps a studio under several ids
-# (Lionsgate / Lions Gate Films), so each one it uses is listed.
+# (Lionsgate / Lions Gate Films), so each one it uses is listed.  The order
+# is the priority: a film by several listed studios shows the first here, not
+# the first TMDB credits.
 STUDIOS = {
     3: "Pixar", 1: "Lucasfilm", 420: "Marvel Studios", 7505: "Marvel",
     6125: "Walt Disney Animation Studios", 2: "Walt Disney Pictures", 6704: "Illumination",
@@ -755,6 +757,9 @@ STUDIOS = {
     97: "Castle Rock Entertainment", 275: "Carolco Pictures", 574: "Lightstorm Entertainment",
     7036: "CJ Entertainment", 10342: "Studio Ghibli", 11461: "Bad Robot", 9996: "Syncopy",
     882: "TOHO",
+    # Last, so a film's bigger studio wins (Die Hard credits Silver Pictures
+    # ahead of 20th Century Fox).
+    1885: "Silver Pictures", 443: "Big Talk Studios",
 }
 # A film has no network on TMDB; one made by a streamer's own studio arm gets
 # that streamer's network logo.  Company id -> network id.  Only as good as
@@ -802,8 +807,8 @@ def pick_logos(facts: dict | None, media_type: str) -> tuple[Logo | None, Logo |
     streamer studio that made it.  Where the network's logo path isn't in the
     title's own data — a film's streamer, or a network drawn with a stand-in's
     logo (NETWORK_STAND_INS) — the caller looks it up by the third value.  The
-    studio is the first of the title's production companies on the curated
-    list."""
+    studio is whichever of the title's production companies comes first on
+    the curated list."""
     if not facts:
         return None, None, None
     network, lookup = None, None
@@ -816,8 +821,9 @@ def pick_logos(facts: dict | None, media_type: str) -> tuple[Logo | None, Logo |
     else:
         lookup = next((STREAMER_NETWORKS[c["id"]] for c in facts.get("companies", [])
                        if c["id"] in STREAMER_NETWORKS), None)
-    studio = next((make_logo("company", c["id"], c["logo_path"]) for c in facts.get("companies", [])
-                   if c["id"] in STUDIOS and c.get("logo_path")), None)
+    listed = {c["id"]: c["logo_path"] for c in facts.get("companies", [])
+              if c["id"] in STUDIOS and c.get("logo_path")}
+    studio = next((make_logo("company", i, listed[i]) for i in STUDIOS if i in listed), None)
     return network, studio, lookup
 
 

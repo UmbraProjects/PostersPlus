@@ -4,14 +4,16 @@
 
 ### More network and studio logos, drawn at one standard size
 
-- The studio badge knows about 35 more studios: MGM, Miramax, Lions Gate
+- The studio badge knows about 37 more studios: MGM, Miramax, Lions Gate
   Films (as well as Lionsgate), Summit, Orion, TriStar, Touchstone, Village
   Roadshow, Working Title, Skydance and Skydance Animation, StudioCanal,
   Film4, MUBI, Cartoon Saloon, Studio Ponoc, Toei Animation, Kyoto
   Animation, ufotable and MAPPA; and 20th Century Fox and 20th Century
   Studios, DreamWorks Animation and DreamWorks Pictures, Paramount, New Line,
   Castle Rock, Carolco, Lightstorm, CJ Entertainment, Studio Ghibli, Bad
-  Robot, Syncopy and Toho.
+  Robot, Syncopy, Toho, Silver Pictures and Big Talk. A film by several of
+  them shows the one earliest on the list, the bigger name, rather than the
+  first TMDB credits: Die Hard shows 20th Century Fox, not Silver Pictures.
 - More films get a network badge from the streamer that made them: Netflix
   Animation Studios (Netflix), Apple (Apple TV), Amazon Studios (Prime
   Video), and HBO and HBO Documentary Films (HBO).
@@ -40,7 +42,7 @@
   either.
 - New **Network / Studio Logo Size** (`badge_logo_scale=0.5–2.0`, default
   `1.0`) multiplies that standard size, on both shapes. Posters with a
-  network or studio badge re-render once (render revision 28).
+  network or studio badge re-render once (render revision 29).
 - A logo that doesn't fit beside what shares its line (Minimalist's genre
   and year) is drawn smaller, down to 60%, instead of the group jumping
   above the text. A long wordmark such as TOKYO MX now stays down by the

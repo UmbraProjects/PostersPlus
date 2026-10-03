@@ -510,6 +510,14 @@ class NetworkStudioTests(unittest.TestCase):
         self.assertEqual(gb.pick_logos(film, "movie"), (None, None, 213))
         self.assertEqual(gb.pick_logos(None, "movie"), (None, None, None))
 
+    def test_the_lists_order_picks_the_studio(self):
+        # Die Hard credits Silver Pictures ahead of 20th Century Fox; the
+        # better-known studio, earlier on the list, is the one shown.
+        film = {"networks": [], "companies": [{"id": 1073, "logo_path": "/g.png"},
+                                               {"id": 1885, "logo_path": "/silver.png"},
+                                               {"id": 25, "logo_path": "/fox.png"}]}
+        self.assertEqual(gb.pick_logos(film, "movie")[1].id, 25)
+
     def test_a_stand_in_network_is_looked_up(self):
         # Fox Kids is drawn with FOX's logo, whose path the caller fetches.
         tv = {"networks": [{"id": 2686, "logo_path": "/foxkids.png"}], "companies": []}

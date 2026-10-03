@@ -7398,11 +7398,12 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
     #     if it were; a multicolour block, SBT's wheel, lost its dark hues and
     #     kept half its lettering; an emblem over a wordmark, Toei's cat, was
     #     never cut at all; Fox Kids takes FOX's logo and HBO its black one;
-    #     more studios on the list), so every poster with a network or studio
-    #     slot re-renders.  (20 to 27 were this change's earlier tunings;
-    #     skipped so composites stamped with them re-render.)
+    #     more studios on the list, picked in the list's order), so every
+    #     poster with a network or studio slot re-renders.  (20 to 28 were this
+    #     change's earlier tunings; skipped so composites stamped with them
+    #     re-render.)
     _RenderRevision(
-        rev=28,
+        rev=29,
         applies=lambda cfg: ((cfg.badge_display_mode == 7 if cfg.shape != "landscape"
                               else cfg.landscape_graphic_badges)
                              and any(slot in ("network", "studio")
