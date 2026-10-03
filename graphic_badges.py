@@ -865,13 +865,20 @@ def logo_alpha(im: Image.Image) -> np.ndarray:
 # box) holds far more than an outline or a thin wordmark in the same box, so
 # it is drawn smaller and the light one larger — half way to equal ink
 # (_LOGO_FILL_POWER), within _LOGO_FILL_LIMITS, since a hairline logo blown up
-# to a solid one's ink would tower over the row.  A compact emblem may stand
-# up to _LOGO_MAX_H rows tall, centred on the row, so it isn't held to a
-# fraction of a wordmark's weight; nothing runs wider than _LOGO_MAX_W.
+# to a solid one's ink would tower over the row.
+#
+# Every logo then fits a box _LOGO_MAX_W rows wide and _LOGO_MAX_H high, so
+# its footprint is predictable wherever a group puts it.  The caps are what
+# size the two ends: compact emblems (abc, Universal) meet the height, long
+# wordmarks (TV TOKYO, TOKYO MX) the width.  A heavy logo's box shrinks with
+# its ink too, or a solid disc (abc, TNT) would fill the same box as an
+# outline emblem (Warner Bros., Universal) and look far bigger.  Tuned on a
+# sheet of real TMDB logos (tools/logo_sheet.py): aspect 2-4 wordmarks
+# (NETFLIX, CBS, PIXAR) are the reference the ends were pulled towards.
 # ``scale`` (badge_logo_scale) multiplies the result.
 _LOGO_AREA_W = 2.6
-_LOGO_MAX_W  = 4.5
-_LOGO_MAX_H  = 1.35
+_LOGO_MAX_W  = 3.8
+_LOGO_MAX_H  = 1.15
 _LOGO_FILL   = 0.45            # the ink share of a typical logo's box
 _LOGO_FILL_POWER  = 0.5
 _LOGO_FILL_LIMITS = (0.75, 1.5)
@@ -886,8 +893,9 @@ def logo_size(shape: tuple[int, int], row_h: int, fill: float = _LOGO_FILL,
     unit = row_h * scale
     weight = (_LOGO_FILL / max(fill, 1e-3)) ** _LOGO_FILL_POWER
     weight = min(_LOGO_FILL_LIMITS[1], max(_LOGO_FILL_LIMITS[0], weight))
-    h = min(unit * _LOGO_MAX_H, (unit * unit * _LOGO_AREA_W * weight / aspect) ** 0.5)
-    w = min(h * aspect, unit * _LOGO_MAX_W)
+    box = unit * min(1.0, weight ** 0.5)    # a heavy logo's box shrinks with it
+    h = min(box * _LOGO_MAX_H, (unit * unit * _LOGO_AREA_W * weight / aspect) ** 0.5)
+    w = min(h * aspect, box * _LOGO_MAX_W)
     h = w / aspect
     return max(1, round(w)), max(2, round(h))
 

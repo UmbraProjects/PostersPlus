@@ -551,15 +551,15 @@ class NetworkStudioTests(unittest.TestCase):
 
     def test_logos_are_sized_by_area_around_the_row(self):
         row = 30
-        # A compact emblem stands taller than the row, up to the cap.
-        self.assertEqual(gb.logo_size((100, 100), row), (40, 40))
+        # A compact emblem stands a little taller than the row, up to the cap.
+        self.assertEqual(gb.logo_size((100, 100), row), (34, 34))
         self.assertLessEqual(gb.logo_size((100, 100), row, fill=0.05)[1], round(row * gb._LOGO_MAX_H))
         # A long wordmark comes out shorter and no wider than the cap.
         w, h = gb.logo_size((100, 800), row)
         self.assertLess(h, 20)
         self.assertLessEqual(w, round(row * gb._LOGO_MAX_W))
         # Similar area whatever the shape, until a limit applies.
-        areas = [w * h for w, h in (gb.logo_size((100, a), row) for a in (150, 250, 350))]
+        areas = [w * h for w, h in (gb.logo_size((100, a), row) for a in (220, 350, 500))]
         for a in areas[1:]:
             self.assertAlmostEqual(areas[0] / a, 1, delta=0.08)
 
@@ -575,6 +575,14 @@ class NetworkStudioTests(unittest.TestCase):
         # Within limits: a hairline logo isn't blown up without bound.
         self.assertEqual(gb.logo_size((100, 250), row, fill=0.01),
                          gb.logo_size((100, 250), row, fill=0.45 / gb._LOGO_FILL_LIMITS[1] ** 2))
+
+    def test_a_solid_disc_is_smaller_than_an_outline_emblem(self):
+        # abc's disc (ink share ~0.62) beside Universal's globe (~0.21): both
+        # meet the height cap, but the heavy one's box shrinks with its ink.
+        disc = gb.logo_size((100, 100), 30, fill=0.62)
+        outline = gb.logo_size((100, 100), 30, fill=0.21)
+        self.assertLess(disc[1], outline[1])
+        self.assertLessEqual(outline[1], round(30 * gb._LOGO_MAX_H))
 
     def test_logo_scale_multiplies_the_size(self):
         for shape in ((100, 100), (100, 250), (100, 800)):

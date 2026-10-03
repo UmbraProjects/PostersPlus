@@ -16,12 +16,14 @@
   were sized by area but held to the row's height, so square emblems (HBO,
   A24) and very long wordmarks came out at well under half the size of
   mid-width ones, and a solid logo looked much heavier than a thin one in
-  the same box. A compact emblem may now stand a little taller than the row,
-  a very long wordmark may run a little wider (4.5 rows, was 3.5), and each
-  logo is weighed by its ink as well as its shape.
+  the same box. Each logo is now weighed by its ink as well as its shape and
+  fits a box 3.8 rows wide by 1.15 high (was 3.5 by 1), which shrinks for a
+  heavy logo, so a solid disc (abc, TNT) no longer fills the same space as
+  an outline emblem (Universal, Warner Bros.). Tuned on a sheet of real
+  TMDB logos.
 - New **Network / Studio Logo Size** (`badge_logo_scale=0.5–2.0`, default
   `1.0`) multiplies that standard size, on both shapes. Posters with a
-  network or studio badge re-render once (render revision 20).
+  network or studio badge re-render once (render revision 21).
 - A logo that doesn't fit beside what shares its line (Minimalist's genre
   and year) is drawn smaller, down to 60%, instead of the group jumping
   above the text. A long wordmark such as TOKYO MX now stays down by the
