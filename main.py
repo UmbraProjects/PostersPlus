@@ -7397,11 +7397,12 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
     #     lettering; a part reaching the logo's edge, Fox Kids' X, was cut as
     #     if it were; a multicolour block, SBT's wheel, lost its dark hues and
     #     kept half its lettering; an emblem over a wordmark, Toei's cat, was
-    #     never cut at all), so every poster with a network or studio slot
-    #     re-renders.  (20 to 24 were this change's earlier tunings; skipped
-    #     so composites stamped with them re-render.)
+    #     never cut at all; letters in a thin outline, Fox Kids', became a
+    #     blob), so every poster with a network or studio slot re-renders.
+    #     (20 to 25 were this change's earlier tunings; skipped so composites
+    #     stamped with them re-render.)
     _RenderRevision(
-        rev=25,
+        rev=26,
         applies=lambda cfg: ((cfg.badge_display_mode == 7 if cfg.shape != "landscape"
                               else cfg.landscape_graphic_badges)
                              and any(slot in ("network", "studio")
