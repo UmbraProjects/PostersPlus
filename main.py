@@ -2132,7 +2132,8 @@ class RequestConfig:
     # Drop the quality a film still in cinemas (or not out at all) turns up
     # with: before its digital release a "4K" is a cam or a mislabel.  Out
     # digitally is TMDB's digital or disc date passing, or a movieleaks post
-    # (the release status's own rule).  Movies only; series have no date.
+    # (the release status's own rule).  A series is out once it has premiered:
+    # before that, whatever turns up is a fake or a mislabel too.
     quality_after_digital: bool = False
     rating_text_color: tuple[int, int, int] | None = None
     sash_text_color:   tuple[int, int, int] | None = None
@@ -10846,10 +10847,9 @@ async def get_poster(
             (rcfg.landscape_graphic_badges if _is_landscape else rcfg.badge_display_mode == 7)
             and any("cinema" in g.slots for g in graphic_badges.cfg_groups(rcfg))
         )
-        # Quality found before a film is out digitally is set aside below
+        # Quality found before a title is out is set aside below
         # (quality_after_digital), which needs the status to say whether it is.
-        _quality_gate = (rcfg.quality_after_digital and bool(quality_tokens)
-                         and type not in ("tv", "series"))
+        _quality_gate = rcfg.quality_after_digital and bool(quality_tokens)
         if _status_sash or _status_grey or _cinema_badge or rcfg.hide_unreleased_rating or _quality_gate:
             # Resolved for every title regardless of age.  There used to be an
             # age gate here that skipped the lookup for anything older than a
@@ -10960,12 +10960,14 @@ async def get_poster(
         # the title is out.
         _status_for_ttl = _release_status
         # "Cinema" and "Production" are the statuses of a film not yet out at
-        # home — a leak has already moved it on to "Streaming" above.  Cleared
+        # home — a leak has already moved it on to "Streaming" above — and
+        # "Production" that of a series yet to premiere (see tv_release_facts;
+        # a renewed or returning one has seasons out already).  Cleared
         # before the render, so every quality-driven thing (badges, the
         # no-quality greyscale, "Consider Available") reads it as unfound.
         if _quality_gate and _release_status in ("Cinema", "Production"):
             logger.info(f"Quality for {canonical_id} set aside: {quality_tokens} "
-                        f"before digital release ({_release_status})")
+                        f"before release ({_release_status})")
             quality_tokens = []
         if _status_grey and not _status_sash:
             # Kept for the greyscale alone.  No status slot is listed, so it is

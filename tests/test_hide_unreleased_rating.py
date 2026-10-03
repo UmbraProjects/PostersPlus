@@ -100,3 +100,15 @@ class HideUnreleasedRatingConfiguratorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QualityAfterDigitalPipelineTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.src = Path("main.py").read_text(encoding="utf-8")
+
+    def test_the_gate_covers_series_too(self):
+        # A series yet to premiere reads "Production", the status the gate
+        # already clears quality on; renewed or returning ones keep theirs.
+        self.assertIn("_quality_gate = rcfg.quality_after_digital and bool(quality_tokens)\n", self.src)
+        self.assertIn('if _quality_gate and _release_status in ("Cinema", "Production"):', self.src)

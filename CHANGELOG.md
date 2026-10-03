@@ -107,7 +107,8 @@
 - **Ignore Quality Before Digital Release** (Quality tab): a film still in
   cinemas has no real digital copy, so its "4K" is a cam. Until TMDB's
   digital or disc date passes, or r/movieleaks confirms it, its quality is
-  treated as not found. `quality_after_digital=true`.
+  treated as not found. A series that hasn't premiered yet is treated the
+  same way. `quality_after_digital=true`.
 - Shows TMDB calls **Ended** but TVDB has carried on with (Cyberpunk:
   Edgerunners, still a one-season miniseries on TMDB) read Renewed, dated
   from TVDB ("Oct 20 Season 2"). Needs a TVDB key.
