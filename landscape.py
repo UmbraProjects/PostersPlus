@@ -967,10 +967,12 @@ def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: li
         # Spacing is a fraction of a portrait width; keyed to height here, as
         # every size on this canvas is.  At the default it is the portrait gap.
         gap = int(height * group.spacing * 0.9)
-        items = graphic_badges.row_items(tokens, certification, age_rating, unit,
-                                         group.slots, show_quality, *logos,
-                                         quality_look=quality_look,
-                                         logo_scale=cfg.badge_logo_scale)[:group.max_items]
+        def build(logo_scale: float, _g=group, _unit=unit) -> list:
+            return graphic_badges.row_items(tokens, certification, age_rating, _unit,
+                                            _g.slots, show_quality, *logos,
+                                            quality_look=quality_look,
+                                            logo_scale=logo_scale)[:_g.max_items]
+        items = build(cfg.badge_logo_scale)
         if not items:
             continue
         if group.xy is not None:
@@ -990,6 +992,16 @@ def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: li
         # A logo standing taller than the row keeps inside the bottom margin.
         tallest = max(unit, max(im.height for _, im in items))
         start = top_line if top else height - (height - int(height * _BASELINE)) - tallest / 2
+        if graphic_badges.has_logo(items):
+            # On its own line with the logo shrunk a little, rather than moved.
+            cols = _occupied_cols(now, before, max(0, int(start - half)), min(height, int(start + half) + 1))
+            shrunk = graphic_badges.fit_shrinking(
+                build, graphic_badges.free_run(cols, right, margin) - clear, gap, cfg.badge_logo_scale)
+            if shrunk:
+                row_w = graphic_badges.row_width(shrunk, gap)
+                graphic_badges.draw_row(image, shrunk, center_y=start, gap=gap,
+                                        left_x=width - margin - row_w if right else margin)
+                continue
         step, offset = max(2, unit // 3), 0.0
         while offset <= height * _GB_SEARCH:
             cy = start + offset if top else start - offset

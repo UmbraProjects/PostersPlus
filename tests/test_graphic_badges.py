@@ -634,6 +634,40 @@ class QualityNeedTests(unittest.TestCase):
         self.assertGreater(r - g, 50)                                         # still in colour
 
 
+class LogoShrinkTests(unittest.TestCase):
+    """A long logo that doesn't fit beside what shares its line (Minimalist's
+    genre and year) is shrunk to stay on that line, not moved off it."""
+
+    def draw(self, text_left):
+        img = Image.new("RGBA", (500, 750), (0, 0, 0, 255))
+        before = np.array(img)
+        img.paste((200, 50, 50, 255), (text_left, 700, 480, 730))   # the "genre | year"
+        cfg = main.build_request_config({"badge_display_mode": "7", "sash_mode": "hidden",
+                                         "badge_group1": "bl:1:network"})
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(gb, "LOGO_DIR", d):
+            gb._logo_mark.cache_clear()
+            net = gb.Logo("network", 1, "/mx.png")
+            logo = Image.new("RGBA", (820, 120), (0, 0, 0, 0))
+            logo.paste((255, 255, 255, 255), (10, 10, 810, 110))  # TOKYO MX: 8:1
+            logo.save(os.path.join(d, "network_1_mx.png"))
+            full = gb.row_items([], None, None, 33, ("network",), True, network=net)[0][1].width
+            main._draw_graphic_badges(img, cfg, [], None, None, before, logos=(net, None))
+            gb._logo_mark.cache_clear()
+        white = (np.asarray(img)[..., :3] > 200).all(axis=2)
+        rows, cols = np.flatnonzero(white.any(axis=1)), np.flatnonzero(white.any(axis=0))
+        return full, rows, cols
+
+    def test_shrinks_to_stay_on_its_line(self):
+        full, rows, cols = self.draw(text_left=140)
+        self.assertGreater(rows.min(), 650)                 # still down by the text
+        self.assertLess(cols.max(), 140)                    # clear of it
+        self.assertLess(cols.max() - cols.min() + 1, full)  # by being drawn smaller
+
+    def test_full_size_where_there_is_room(self):
+        full, rows, cols = self.draw(text_left=400)
+        self.assertAlmostEqual(cols.max() - cols.min() + 1, full, delta=2)
+
+
 class HugChipTests(unittest.TestCase):
     def test_starts_against_the_chip_and_leaves_the_corner(self):
         img = Image.new("RGBA", (500, 750), (0, 0, 0, 255))

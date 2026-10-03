@@ -1155,6 +1155,28 @@ def fit(items: list[tuple[str, Image.Image]], budget: int, gap: int) -> list[tup
     return items
 
 
+# A row whose network or studio logo doesn't fit on its own line, beside what
+# is already there (Minimalist's genre and year, say), has the logo shrunk in
+# these steps before the group is moved off that line — so a long wordmark
+# (TOKYO MX) gives a little size rather than its place.
+LOGO_SHRINK_STEPS = (0.9, 0.8, 0.7, 0.6)
+
+
+def has_logo(items: list[tuple[str, Image.Image]]) -> bool:
+    return any(slot in ("network", "studio") for slot, _ in items)
+
+
+def fit_shrinking(build, budget: int, gap: int, scale: float) -> list[tuple[str, Image.Image]] | None:
+    """``build(logo_scale)``'s items, all of them no wider than ``budget``,
+    their logos at ``scale`` or shrunk as far as LOGO_SHRINK_STEPS goes; None
+    when even that doesn't fit them all."""
+    for step in (1.0, *LOGO_SHRINK_STEPS):
+        items = build(scale * step)
+        if items and row_width(items, gap) <= budget:
+            return items
+    return None
+
+
 def free_run(occupied_cols: np.ndarray, right: bool, margin: int) -> int:
     """How far a row can run in from the ``right`` (or left) margin before it
     meets an occupied column."""

@@ -5358,10 +5358,12 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
     for group in groups:
         g_unit = max(8, round(group.size * 1.5 * height / 750))
         g_gap = px(width * group.spacing)
-        items = graphic_badges.row_items(tokens, certification, age_rating, g_unit,
-                                         group.slots, show_quality, *logos,
-                                         quality_look=quality_look,
-                                         logo_scale=cfg.badge_logo_scale)[:group.max_items]
+        def build(logo_scale: float, _g=group, _unit=g_unit) -> list:
+            return graphic_badges.row_items(tokens, certification, age_rating, _unit,
+                                            _g.slots, show_quality, *logos,
+                                            quality_look=quality_look,
+                                            logo_scale=logo_scale)[:_g.max_items]
+        items = build(cfg.badge_logo_scale)
         if not items:
             continue
         if group.xy is not None:
@@ -5395,6 +5397,16 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
             continue
         # A logo standing taller than the row keeps inside the bottom margin.
         start = top_line if top else height - margin - max(g_unit, max(im.height for _, im in items)) / 2
+        if graphic_badges.has_logo(items):
+            # On its own line with the logo shrunk a little, rather than moved.
+            shrunk = graphic_badges.fit_shrinking(
+                build, graphic_badges.free_run(band_cols(start), right, margin) - clear,
+                g_gap, cfg.badge_logo_scale)
+            if shrunk:
+                row_w = graphic_badges.row_width(shrunk, g_gap)
+                graphic_badges.draw_row(image, shrunk, center_y=start, gap=g_gap,
+                                        left_x=width - margin - row_w if right else margin)
+                continue
         limit = height * _GROUP_SEARCH["top" if top else "bottom"]
         step = max(2, g_unit // 3)
         offset = 0.0
