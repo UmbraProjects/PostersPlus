@@ -17,7 +17,9 @@ Five slots:
                       per request language.
 
 A poster override names the poster sources it stands in for (tmdb, fanart,
-tvdb): a user whose source is not in the list gets that source's own pick.
+tvdb, cinemeta): a user whose source is not in the list gets that source's own
+pick.  Cinemeta posters are always served as-is, so only an original override
+can stand in for one; cinemeta is dropped from a textless override's list.
 Logos and landscape art are not tied to a poster source (landscape always
 draws from TMDB) and apply to every request.
 
@@ -77,7 +79,7 @@ SLOTS = ("textless", "original", "logo", "landscape", "landscape_original")
 _NO_LANGUAGE = ("textless", "landscape")
 # Slots that apply whatever the user's poster source.
 _SOURCELESS = ("logo", "landscape", "landscape_original")
-SOURCES = ("tmdb", "fanart", "tvdb")
+SOURCES = ("tmdb", "fanart", "tvdb", "cinemeta")
 _REV_KEY = "art_overrides_rev"
 # How stale a worker's snapshot may get before it rechecks the revision.
 _CHECK_INTERVAL = 5.0
@@ -216,6 +218,8 @@ def normalise_sources(slot: str, sources: Iterable[str] | None) -> frozenset:
     if slot in _SOURCELESS:
         return frozenset()
     chosen = frozenset(s for s in (sources or ()) if s in SOURCES)
+    if slot == "textless":
+        chosen -= {"cinemeta"}
     if not chosen:
         raise ValueError("a poster override needs at least one source")
     return chosen
