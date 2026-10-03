@@ -727,14 +727,14 @@ def _cinema_mark(key: str, h: int) -> Image.Image | None:
 
 LOGO_DIR = "/app/cache/company_logos"
 
-# Studios shown on the studio badge, by TMDB company id: ones people know and
-# whose TMDB logo still reads as a white mark at badge height.  The first set
-# was picked by rendering each one; DreamWorks, Paramount, 20th Century, Toho,
-# DC Studios, Bad Robot, Studio Ghibli, Syncopy and New Line (too long to stay
-# legible at its fitted size) were left out as illegible there.  The second
-# set's ids were checked against TMDB's company pages but not yet rendered at
-# badge size; drop any that turn out not to read.  TMDB often keeps a studio
-# under several ids (Lionsgate / Lions Gate Films), so each one it uses is listed.
+# Studios shown on the studio badge, by TMDB company id: ones people know.
+# The first set was picked by rendering each one.  The rest have ids checked
+# against TMDB's company pages and are judged on tools/logo_sheet.py; drop
+# any that don't read.  DreamWorks, Paramount, 20th Century, Toho, Bad Robot,
+# Studio Ghibli, Syncopy and New Line were once left out as illegible, under
+# the conversion and sizing before the knockout and ink-weighted sizing, and
+# are back to be judged again.  TMDB often keeps a studio under several ids
+# (Lionsgate / Lions Gate Films), so each one it uses is listed.
 STUDIOS = {
     3: "Pixar", 1: "Lucasfilm", 420: "Marvel Studios", 7505: "Marvel",
     6125: "Walt Disney Animation Studios", 2: "Walt Disney Pictures", 6704: "Illumination",
@@ -743,13 +743,18 @@ STUDIOS = {
     43: "Fox Searchlight", 10146: "Focus Features", 90733: "NEON", 13184: "Annapurna",
     81: "Plan B", 5: "Columbia", 1632: "Lionsgate", 9383: "Blue Sky",
     128064: "DC Films", 923: "Legendary",
-    # Checked ids, not yet rendered.
+    # Checked ids, judged on the logo sheet.
     35: "Lions Gate Films", 21: "Metro-Goldwyn-Mayer", 14: "Miramax", 491: "Summit Entertainment",
     41: "Orion Pictures", 559: "TriStar Pictures", 9195: "Touchstone Pictures",
     79: "Village Roadshow Pictures", 10163: "Working Title", 82819: "Skydance",
     179999: "Skydance Animation", 694: "StudioCanal", 6705: "Film4", 204957: "MUBI",
     23948: "Cartoon Saloon", 84493: "Studio Ponoc", 5542: "Toei Animation",
     5438: "Kyoto Animation", 5887: "ufotable", 21444: "MAPPA",
+    25: "20th Century Fox", 127928: "20th Century Studios", 521: "DreamWorks Animation",
+    7: "DreamWorks Pictures", 4: "Paramount Pictures", 12: "New Line Cinema",
+    97: "Castle Rock Entertainment", 275: "Carolco Pictures", 574: "Lightstorm Entertainment",
+    7036: "CJ Entertainment", 10342: "Studio Ghibli", 11461: "Bad Robot", 9996: "Syncopy",
+    882: "TOHO",
 }
 # A film has no network on TMDB; one made by a streamer's own studio arm gets
 # that streamer's network logo.  Company id -> network id.  Only as good as
