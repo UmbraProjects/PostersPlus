@@ -7395,11 +7395,12 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
     #     logo, and a solid logo's lettering is cut out by contrast with its
     #     own colour (an orange or yellow block was faded or lost its
     #     lettering; a part reaching the logo's edge, Fox Kids' X, was cut as
-    #     if it were), so every poster with a network or studio slot
-    #     re-renders.  (20 to 22 were this change's earlier tunings; skipped so
-    #     composites stamped with them re-render.)
+    #     if it were; a multicolour block, SBT's wheel, lost its dark hues and
+    #     kept half its lettering), so every poster with a network or studio
+    #     slot re-renders.  (20 to 23 were this change's earlier tunings;
+    #     skipped so composites stamped with them re-render.)
     _RenderRevision(
-        rev=23,
+        rev=24,
         applies=lambda cfg: ((cfg.badge_display_mode == 7 if cfg.shape != "landscape"
                               else cfg.landscape_graphic_badges)
                              and any(slot in ("network", "studio")

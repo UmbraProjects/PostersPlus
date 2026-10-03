@@ -825,21 +825,29 @@ async def ensure_logo(client, logo: Logo | None) -> None:
 
 
 # A logo that is mostly one solid block (a badge, a shield: Marvel Studios'
-# red box, ABC's disc, Nickelodeon's splat) carries its lettering as another
-# colour inside it, which a plain white mark would lose.  Those have the parts
-# that stand out from the block's own colour cut out — lighter (white on red)
-# or darker (black on a white disc) alike, judged against the block's median
-# colour, never a fixed brightness: a bright orange or yellow block is the
-# block, not lettering.  Only where those parts are a minority of the block
-# (_KNOCKOUT_SHARE) and differ by more than shading does (_KNOCKOUT_GAP): a
-# logo that is all lettering (Marvel's wordmark, STARZ) has nothing to cut.
-# Only parts the block holds inside it are lettering: one that reaches the
-# logo's outside edge (Fox Kids' yellow X, HBO Max's "max") is part of the
-# mark's own shape, and stays.  Warner Bros.' shield is just over half gold
-# (rim, letters, banner), so its blue field, inside the rim, is what goes.
+# red box, ABC's disc, SBT's colour wheel) carries its lettering as another
+# colour inside it, which a plain white mark would lose.  Those have the
+# lettering cut out, found against the block's own median brightness, never
+# a fixed one: a bright orange or yellow block is the block, not lettering.
+#
+# Lettering is one even colour on one side of the block, lighter (white on
+# red) or darker (black on a white disc).  So only one side is cut — the more
+# neutral one when both stand out, as white letters do on SBT's wheel, whose
+# dark purples stand out too — and of that side only what is near its colour:
+# its white or black when it has one (_KNOCKOUT_NEUTRAL), else its median
+# colour.  The wheel's yellows and purples are block.  Only where that is a
+# minority of the block (_KNOCKOUT_SHARE) and differs by more than shading
+# does (_KNOCKOUT_GAP): a logo that is all lettering (Marvel's wordmark,
+# STARZ) has nothing to cut.  And only parts the block holds inside it: one
+# that reaches the logo's outside edge (Fox Kids' yellow X, HBO Max's "max")
+# is part of the mark's own shape, and stays.  Warner Bros.' shield is just
+# over half gold (rim, letters, banner), so its blue field, inside the rim,
+# is what goes.
 _KNOCKOUT_FILL = 0.55
 _KNOCKOUT_SHARE = (0.03, 0.65)
 _KNOCKOUT_GAP = 60
+_KNOCKOUT_NEUTRAL = 40      # chroma (max - min channel) under which a colour is white, grey or black
+_KNOCKOUT_NEAR = 60         # RGB distance within which a pixel is the lettering's colour
 
 
 def _enclosed(marks: np.ndarray, block: np.ndarray) -> np.ndarray:
@@ -849,6 +857,22 @@ def _enclosed(marks: np.ndarray, block: np.ndarray) -> np.ndarray:
     passable = np.pad(marks | ~block, 1, constant_values=True).astype(np.uint8)
     _, labels = cv2.connectedComponents(passable, connectivity=4)
     return marks & (labels[1:-1, 1:-1] != labels[0, 0])
+
+
+def _lettering(rgb: np.ndarray, lum: np.ndarray, block: np.ndarray):
+    """(mask, colour) of the lettering a solid block holds, or (None, None)."""
+    differs = (np.abs(lum - np.median(lum[block])) > _KNOCKOUT_GAP) & block
+    chroma = rgb.max(axis=2) - rgb.min(axis=2)
+    sides = [m for m in (differs & (lum > np.median(lum[block])),
+                         differs & (lum < np.median(lum[block]))) if m.any()]
+    if not sides:
+        return None, None
+    side = min(sides, key=lambda m: float(chroma[m].mean()))
+    neutral = side & (chroma < _KNOCKOUT_NEUTRAL)
+    pick = neutral if neutral.sum() >= 0.3 * side.sum() else side
+    colour = np.median(rgb[pick], axis=0)
+    near = (np.linalg.norm(rgb - colour, axis=2) < _KNOCKOUT_NEAR) & side
+    return _enclosed(near, block), colour
 
 
 def logo_alpha(im: Image.Image) -> np.ndarray:
@@ -868,15 +892,16 @@ def logo_alpha(im: Image.Image) -> np.ndarray:
     y0, y1, x0, x1 = rows[0], rows[-1] + 1, cols[0], cols[-1] + 1
     alpha, lum, block = alpha[y0:y1, x0:x1], lum[y0:y1, x0:x1], solid[y0:y1, x0:x1]
     if block.mean() > _KNOCKOUT_FILL:
-        diff = np.abs(lum - np.median(lum[block]))
-        marks = _enclosed((diff > _KNOCKOUT_GAP) & block, block)
-        if _KNOCKOUT_SHARE[0] < marks.sum() / block.sum() < _KNOCKOUT_SHARE[1]:
-            # Faded across the edge between block and lettering, so
-            # anti-aliased letters keep a clean outline; nothing further off.
+        marks, colour = _lettering(a[y0:y1, x0:x1, :3], lum, block)
+        if marks is not None and _KNOCKOUT_SHARE[0] < marks.sum() / block.sum() < _KNOCKOUT_SHARE[1]:
+            # Faded across the edge between block and lettering, by distance
+            # from the lettering's colour, so anti-aliased letters keep a clean
+            # outline; nothing further off is touched.
             import cv2
             near = cv2.dilate(marks.astype(np.uint8), np.ones((5, 5), np.uint8)).astype(bool)
-            t = diff / max(1.0, float(np.percentile(diff[marks], 90)))
-            alpha = np.where(near, alpha * np.clip((0.75 - t) / 0.5, 0, 1), alpha)
+            dist = np.linalg.norm(a[y0:y1, x0:x1, :3] - colour, axis=2)
+            ref = max(1.0, float(np.median(dist[near & block & ~marks])) if (near & block & ~marks).any() else 255.0)
+            alpha = np.where(near, alpha * np.clip((dist / ref - 0.25) / 0.5, 0, 1), alpha)
     return alpha.astype(np.uint8)
 
 

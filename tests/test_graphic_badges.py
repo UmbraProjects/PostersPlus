@@ -544,6 +544,19 @@ class NetworkStudioTests(unittest.TestCase):
         a = gb.logo_alpha(im)
         self.assertGreater(int(a[15, 75]), 240)
 
+    def test_a_colour_wheel_loses_only_its_lettering(self):
+        # SBT: a disc of every hue, the dark ones and the bright ones both far
+        # from its median, with white lettering.  Only the lettering is cut;
+        # the purples and yellows are block, even where letters touch them.
+        im = Image.new("RGBA", (120, 60), (0, 0, 0, 0))
+        for x0, rgb in ((10, (60, 20, 140)), (35, (255, 220, 0)), (60, (220, 30, 30)), (85, (40, 60, 200))):
+            im.paste((*rgb, 255), (x0, 10, x0 + 25, 50))
+        im.paste((255, 255, 255, 255), (25, 22, 95, 38))        # the lettering, across them all
+        a = gb.logo_alpha(im)
+        self.assertLess(int(a[20, 40]), 20)                    # lettering cut (crop starts at 10,10)
+        for x in (5, 30, 55, 80):
+            self.assertGreater(int(a[3, x]), 240, x)          # every colour of the block kept
+
     def test_shading_is_not_lettering(self):
         im = Image.new("RGBA", (100, 50), (0, 0, 0, 0))
         for x in range(10, 90):                       # a soft gradient across the block
