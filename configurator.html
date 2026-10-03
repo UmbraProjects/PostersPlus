@@ -3848,6 +3848,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <option value="frosted">Frosted</option>
                 </select>
               </div>
+              <div class="field" id="gb-logo-scale-field" style="display:none">
+                <label class="field-label" data-tip="Network and studio logos are sized to carry about the same weight whatever their shape: a long wordmark is drawn shorter, a compact emblem taller (up to a little over the row), and a solid logo smaller than a thin one. This multiplies that size, on both shapes; 1.00 is the standard size.">Network / Studio Logo Size</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-badge-logo-scale" min="0.50" max="2.00" step="0.05" value="1.00" oninput="updateRange(this,'rng-gbls'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-gbls">1.00</span>
+                </div>
+              </div>
               <div class="field" id="gb-quality-style-field" style="display:none">
                 <label class="field-label" data-tip="How the quality badges (Video, Audio and Resolution) are drawn. Solid: filled boxes for 4K, HD and HDR, and the bare Dolby and DTS marks. Frosted: each on a chip of the frosted notch's glass, the poster blurred under its tint at the notch's frost opacity, with the mark or label in the tint's ink.">Quality Badge Style</label>
                 <select id="cfg-badge-quality-style" onchange="build(); queuePreviewReload()">
@@ -5070,6 +5077,8 @@ function gbRender() {
   document.getElementById('gb-cinema-style-field').style.display = st.assign.cinema ? '' : 'none';
   document.getElementById('gb-quality-style-field').style.display =
     (st.assign.video || st.assign.audio || st.assign.res) ? '' : 'none';
+  document.getElementById('gb-logo-scale-field').style.display =
+    (st.assign.network || st.assign.studio) ? '' : 'none';
   list.innerHTML = '';
   st.order.forEach((id, idx) => {
     const slot = GB_SLOTS.find(s => s.id === id);
@@ -6906,6 +6915,11 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   const _gbQualityShown = (emitAll && badgeMode === 7 && badgeUsesQuality(7, pGroups))
     || (emitLandscape && lBadgeMode === 7 && badgeUsesQuality(7, lGroups));
   if (_gbQualityShown && vEl('cfg-badge-quality-style') === 'frosted') params.set('badge_quality_style', 'frosted');
+  // And the network and studio logos' size.
+  const _gbLogoShown = (emitAll && badgeMode === 7 && pGroups.some(g => gbHasSlot(g, 'network') || gbHasSlot(g, 'studio')))
+    || (emitLandscape && lBadgeMode === 7 && lGroups.some(g => gbHasSlot(g, 'network') || gbHasSlot(g, 'studio')));
+  const _gbls = n('cfg-badge-logo-scale');
+  if (_gbLogoShown && Math.abs(_gbls - 1) > 1e-6) params.set('badge_logo_scale', _gbls.toFixed(2));
   if (_qualityShown && c('tog-wait-quality')) {
     params.set('wait_for_quality', 'true');
     if (c('tog-greyscale-noquality')) params.set('greyscale_no_quality', 'true');
@@ -9657,6 +9671,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   // The old popcorn colours (timing, red, black, white) all read as Auto.
   _setEl('cfg-badge-cinema-style', p.get('badge_cinema_style') === 'frosted' ? 'frosted' : 'auto');
   _setEl('cfg-badge-quality-style', p.get('badge_quality_style') === 'frosted' ? 'frosted' : 'solid');
+  _setEl('cfg-badge-logo-scale', p.get('badge_logo_scale') || '1.00');
   gbRender();
   // Seed the mode's defaults BEFORE applying the saved values, so a URL that
   // omits badge_height (/server-caps not answered yet) still gets a size that

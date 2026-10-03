@@ -1898,6 +1898,10 @@ class RequestConfig:
     # The quality marks' look — graphic_badges.QUALITY_STYLES: "solid" (the
     # filled boxes and bare Dolby marks) or "frosted" (each on a glass chip).
     badge_quality_style:      str  = graphic_badges.DEFAULT_QUALITY_STYLE
+    # A multiplier on the network and studio logos' size, which is otherwise
+    # set by the group's row height and each logo's shape and ink — see
+    # graphic_badges.logo_size.  One setting for both shapes.
+    badge_logo_scale:         float = graphic_badges.LOGO_SCALE_DEFAULT
 
     movie_weights: dict | None = None
     tv_weights:    dict | None = None
@@ -2492,7 +2496,8 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "landscape_greyscale": False, "landscape_badge_style": "glass",
                               "landscape_badge_text_color": None, "landscape_winner_star": False,
                               "landscape_logo_scale": 1.0, "landscape_rating_badges": False,
-                              "badge_quality_style": graphic_badges.DEFAULT_QUALITY_STYLE}
+                              "badge_quality_style": graphic_badges.DEFAULT_QUALITY_STYLE,
+                              "badge_logo_scale": graphic_badges.LOGO_SCALE_DEFAULT}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -2825,6 +2830,7 @@ def build_request_config(params: dict) -> RequestConfig:
     _quality_style = graphic_badges.quality_style(params.get("badge_quality_style"))
     if _quality_style:
         cfg.badge_quality_style = _quality_style
+    cfg.badge_logo_scale = _f("badge_logo_scale", cfg.badge_logo_scale, *graphic_badges.LOGO_SCALE_RANGE)
 
     all_sources = list(_cfg.MOVIE_WEIGHTS.keys())
     cfg.movie_weights = _parse_weights(params.get("movie_weights"), all_sources)
@@ -5354,7 +5360,8 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
         g_gap = px(width * group.spacing)
         items = graphic_badges.row_items(tokens, certification, age_rating, g_unit,
                                          group.slots, show_quality, *logos,
-                                         quality_look=quality_look)[:group.max_items]
+                                         quality_look=quality_look,
+                                         logo_scale=cfg.badge_logo_scale)[:group.max_items]
         if not items:
             continue
         if group.xy is not None:
@@ -5381,11 +5388,13 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
                     image,
                     lambda unit, _g=group: graphic_badges.row_items(
                         tokens, certification, age_rating, unit, _g.slots, show_quality,
-                        *logos, quality_look=quality_look)[:_g.max_items],
+                        *logos, quality_look=quality_look,
+                        logo_scale=cfg.badge_logo_scale)[:_g.max_items],
                     band_cols(top_line), right, top_line, margin, g_gap,
                     unit=g_unit, max_unit=band_h)):
             continue
-        start = top_line if top else height - margin - g_unit / 2
+        # A logo standing taller than the row keeps inside the bottom margin.
+        start = top_line if top else height - margin - max(g_unit, max(im.height for _, im in items)) / 2
         limit = height * _GROUP_SEARCH["top" if top else "bottom"]
         step = max(2, g_unit // 3)
         offset = 0.0
@@ -7367,6 +7376,17 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
         rev=19,
         applies=lambda cfg: (cfg.shape == "landscape" and _shows_rating_badges(cfg)
                              and bool(set(cfg.rating_badges.split(",")) & set(_ANIME_FILL_SOURCES))),
+        stale=lambda cfg, facts: True,
+    ),
+    # 20: Network and studio logos are sized by their ink as well as their
+    #     shape, and a compact emblem may stand taller than the row, so every
+    #     poster with a network or studio slot re-renders.
+    _RenderRevision(
+        rev=20,
+        applies=lambda cfg: ((cfg.badge_display_mode == 7 if cfg.shape != "landscape"
+                              else cfg.landscape_graphic_badges)
+                             and any(slot in ("network", "studio")
+                                     for g in graphic_badges.cfg_groups(cfg) for slot in g.slots)),
         stale=lambda cfg, facts: True,
     ),
 )

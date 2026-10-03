@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### More network and studio logos, drawn at one standard size
+
+- The studio badge knows about 20 more studios: MGM, Miramax, Lions Gate
+  Films (as well as Lionsgate), Summit, Orion, TriStar, Touchstone, Village
+  Roadshow, Working Title, Skydance and Skydance Animation, StudioCanal,
+  Film4, MUBI, Cartoon Saloon, Studio Ponoc, Toei Animation, Kyoto
+  Animation, ufotable and MAPPA.
+- More films get a network badge from the streamer that made them: Netflix
+  Animation Studios (Netflix), Apple (Apple TV), Amazon Studios (Prime
+  Video), and HBO and HBO Documentary Films (HBO).
+- Network and studio logos come out at about the same visual size. They
+  were sized by area but held to the row's height, so square emblems (HBO,
+  A24) and very long wordmarks came out at well under half the size of
+  mid-width ones, and a solid logo looked much heavier than a thin one in
+  the same box. A compact emblem may now stand a little taller than the row,
+  a very long wordmark may run a little wider (4.5 rows, was 3.5), and each
+  logo is weighed by its ink as well as its shape.
+- New **Network / Studio Logo Size** (`badge_logo_scale=0.5–2.0`, default
+  `1.0`) multiplies that standard size, on both shapes. Posters with a
+  network or studio badge re-render once (render revision 20).
+
 ### Original art in the Logo Priority list
 
 - Logo Priority has a new **Original Art** entry (`art` in `logo_priority`,

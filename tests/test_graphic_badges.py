@@ -549,17 +549,59 @@ class NetworkStudioTests(unittest.TestCase):
         self.assertEqual([s for s, _ in items], ["network", "cert"])   # studio file absent: left out
         self.assertLessEqual(items[0][1].height, 30)
 
-    def test_logos_are_sized_by_area_within_the_row(self):
+    def test_logos_are_sized_by_area_around_the_row(self):
         row = 30
-        # A compact emblem fills the row height.
-        self.assertEqual(gb.logo_size((100, 100), row), (30, 30))
+        # A compact emblem stands taller than the row, up to the cap.
+        self.assertEqual(gb.logo_size((100, 100), row), (40, 40))
+        self.assertLessEqual(gb.logo_size((100, 100), row, fill=0.05)[1], round(row * gb._LOGO_MAX_H))
         # A long wordmark comes out shorter and no wider than the cap.
         w, h = gb.logo_size((100, 800), row)
         self.assertLess(h, 20)
         self.assertLessEqual(w, round(row * gb._LOGO_MAX_W))
         # Similar area whatever the shape, until a limit applies.
-        areas = [w * h for w, h in (gb.logo_size((100, a), row) for a in (250, 350))]
-        self.assertAlmostEqual(areas[0] / areas[1], 1, delta=0.08)
+        areas = [w * h for w, h in (gb.logo_size((100, a), row) for a in (150, 250, 350))]
+        for a in areas[1:]:
+            self.assertAlmostEqual(areas[0] / a, 1, delta=0.08)
+
+    def test_logos_are_weighed_by_their_ink(self):
+        row = 30
+        typical = gb.logo_size((100, 250), row)
+        solid = gb.logo_size((100, 250), row, fill=0.9)
+        thin = gb.logo_size((100, 250), row, fill=0.2)
+        self.assertLess(solid[0], typical[0])
+        self.assertGreater(thin[0], typical[0])
+        # Half way to equal ink, so a solid block still carries more ink.
+        self.assertGreater(solid[0] * solid[1] * 0.9, thin[0] * thin[1] * 0.2)
+        # Within limits: a hairline logo isn't blown up without bound.
+        self.assertEqual(gb.logo_size((100, 250), row, fill=0.01),
+                         gb.logo_size((100, 250), row, fill=0.45 / gb._LOGO_FILL_LIMITS[1] ** 2))
+
+    def test_logo_scale_multiplies_the_size(self):
+        for shape in ((100, 100), (100, 250), (100, 800)):
+            w, h = gb.logo_size(shape, 30)
+            w2, h2 = gb.logo_size(shape, 30, scale=1.5)
+            self.assertAlmostEqual(w2 / w, 1.5, delta=0.06)
+            self.assertAlmostEqual(h2 / h, 1.5, delta=0.1)
+
+    def test_logo_scale_reaches_the_row(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(gb, "LOGO_DIR", d):
+            gb._logo_mark.cache_clear()
+            net = gb.Logo("network", 213, "/n.png")
+            logo = Image.new("RGBA", (140, 60), (0, 0, 0, 0))
+            logo.paste((255, 255, 255, 255), (10, 10, 130, 50))
+            logo.save(os.path.join(d, "network_213_n.png"))
+            base = gb.row_items([], None, None, 30, ("network",), True, network=net)[0][1]
+            big = gb.row_items([], None, None, 30, ("network",), True, network=net,
+                               logo_scale=2.0)[0][1]
+            gb._logo_mark.cache_clear()
+        self.assertAlmostEqual(big.width / base.width, 2.0, delta=0.05)
+
+    def test_logo_scale_param_is_clamped(self):
+        self.assertEqual(main.build_request_config({}).badge_logo_scale, 1.0)
+        self.assertEqual(main.build_request_config({"badge_logo_scale": "1.3"}).badge_logo_scale, 1.3)
+        self.assertEqual(main.build_request_config({"badge_logo_scale": "9"}).badge_logo_scale,
+                         gb.LOGO_SCALE_RANGE[1])
+        self.assertEqual(main.build_request_config({"badge_logo_scale": "x"}).badge_logo_scale, 1.0)
 
 
 class QualityNeedTests(unittest.TestCase):

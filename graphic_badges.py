@@ -728,10 +728,13 @@ def _cinema_mark(key: str, h: int) -> Image.Image | None:
 LOGO_DIR = "/app/cache/company_logos"
 
 # Studios shown on the studio badge, by TMDB company id: ones people know and
-# whose TMDB logo still reads as a white mark at badge height.  Picked by
-# rendering each one; DreamWorks, Paramount, 20th Century, Toho, DC Studios,
-# Bad Robot, Studio Ghibli, Syncopy and New Line (too long to stay legible
-# at its fitted size) were left out as illegible there.
+# whose TMDB logo still reads as a white mark at badge height.  The first set
+# was picked by rendering each one; DreamWorks, Paramount, 20th Century, Toho,
+# DC Studios, Bad Robot, Studio Ghibli, Syncopy and New Line (too long to stay
+# legible at its fitted size) were left out as illegible there.  The second
+# set's ids were checked against TMDB's company pages but not yet rendered at
+# badge size; drop any that turn out not to read.  TMDB often keeps a studio
+# under several ids (Lionsgate / Lions Gate Films), so each one it uses is listed.
 STUDIOS = {
     3: "Pixar", 1: "Lucasfilm", 420: "Marvel Studios", 7505: "Marvel",
     6125: "Walt Disney Animation Studios", 2: "Walt Disney Pictures", 6704: "Illumination",
@@ -740,6 +743,13 @@ STUDIOS = {
     43: "Fox Searchlight", 10146: "Focus Features", 90733: "NEON", 13184: "Annapurna",
     81: "Plan B", 5: "Columbia", 1632: "Lionsgate", 9383: "Blue Sky",
     128064: "DC Films", 923: "Legendary",
+    # Checked ids, not yet rendered.
+    35: "Lions Gate Films", 21: "Metro-Goldwyn-Mayer", 14: "Miramax", 491: "Summit Entertainment",
+    41: "Orion Pictures", 559: "TriStar Pictures", 9195: "Touchstone Pictures",
+    79: "Village Roadshow Pictures", 10163: "Working Title", 82819: "Skydance",
+    179999: "Skydance Animation", 694: "StudioCanal", 6705: "Film4", 204957: "MUBI",
+    23948: "Cartoon Saloon", 84493: "Studio Ponoc", 5542: "Toei Animation",
+    5438: "Kyoto Animation", 5887: "ufotable", 21444: "MAPPA",
 }
 # A film has no network on TMDB; one made by a streamer's own studio arm gets
 # that streamer's network logo.  Company id -> network id.  Only as good as
@@ -748,9 +758,10 @@ STUDIOS = {
 STREAMER_NETWORKS = {
     178464: 213, 198834: 213, 185004: 213,   # Netflix (US, GB, JP) -> Netflix
     145174: 213,                             # Netflix International Pictures -> Netflix
-    194232: 2552,                            # Apple Studios -> Apple TV
-    210099: 1024,                            # Amazon MGM Studios -> Prime Video
-    7429: 49,                                # HBO Films -> HBO
+    171251: 213,                             # Netflix Animation Studios -> Netflix
+    194232: 2552, 14801: 2552,               # Apple Studios, Apple -> Apple TV
+    210099: 1024, 20580: 1024,               # Amazon MGM Studios, Amazon Studios -> Prime Video
+    7429: 49, 3268: 49, 14914: 49,           # HBO Films, HBO, HBO Documentary Films -> HBO
 }
 
 
@@ -846,26 +857,43 @@ def logo_alpha(im: Image.Image) -> np.ndarray:
     return alpha[y0:y1, x0:x1].astype(np.uint8)
 
 
-# Logos come in every shape, so they're sized by area rather than height:
-# each is scaled to cover about the area of a box _LOGO_AREA_W row heights
-# wide and one high, which shrinks a long wordmark (Lionsgate, Netflix) and
-# lets a compact emblem (HBO, A24) fill the row — no taller than the row, so
-# the shared top and bottom line holds, and no wider than _LOGO_MAX_W.
+# Logos come in every shape and weight, so they're sized by how much they
+# weigh on the row rather than by height: each is scaled to cover about the
+# area of a box _LOGO_AREA_W row heights wide and one high, which shrinks a
+# long wordmark (Lionsgate, Netflix) and grows a compact emblem (HBO, A24).
+# That area is then weighed by the logo's ink: a solid block (Marvel Studios'
+# box) holds far more than an outline or a thin wordmark in the same box, so
+# it is drawn smaller and the light one larger — half way to equal ink
+# (_LOGO_FILL_POWER), within _LOGO_FILL_LIMITS, since a hairline logo blown up
+# to a solid one's ink would tower over the row.  A compact emblem may stand
+# up to _LOGO_MAX_H rows tall, centred on the row, so it isn't held to a
+# fraction of a wordmark's weight; nothing runs wider than _LOGO_MAX_W.
+# ``scale`` (badge_logo_scale) multiplies the result.
 _LOGO_AREA_W = 2.6
-_LOGO_MAX_W  = 3.5
+_LOGO_MAX_W  = 4.5
+_LOGO_MAX_H  = 1.35
+_LOGO_FILL   = 0.45            # the ink share of a typical logo's box
+_LOGO_FILL_POWER  = 0.5
+_LOGO_FILL_LIMITS = (0.75, 1.5)
+LOGO_SCALE_DEFAULT, LOGO_SCALE_RANGE = 1.0, (0.5, 2.0)
 
 
-def logo_size(shape: tuple[int, int], row_h: int) -> tuple[int, int]:
-    """(width, height) for a logo of ``shape`` (h, w) in a row ``row_h`` tall."""
+def logo_size(shape: tuple[int, int], row_h: int, fill: float = _LOGO_FILL,
+              scale: float = 1.0) -> tuple[int, int]:
+    """(width, height) for a logo of ``shape`` (h, w) whose ink covers
+    ``fill`` of its box, in a row ``row_h`` tall."""
     aspect = shape[1] / shape[0]
-    h = min(row_h, (row_h * row_h * _LOGO_AREA_W / aspect) ** 0.5)
-    w = min(h * aspect, row_h * _LOGO_MAX_W)
+    unit = row_h * scale
+    weight = (_LOGO_FILL / max(fill, 1e-3)) ** _LOGO_FILL_POWER
+    weight = min(_LOGO_FILL_LIMITS[1], max(_LOGO_FILL_LIMITS[0], weight))
+    h = min(unit * _LOGO_MAX_H, (unit * unit * _LOGO_AREA_W * weight / aspect) ** 0.5)
+    w = min(h * aspect, unit * _LOGO_MAX_W)
     h = w / aspect
     return max(1, round(w)), max(2, round(h))
 
 
 @lru_cache(maxsize=128)
-def _logo_mark(logo: Logo, h: int) -> Image.Image | None:
+def _logo_mark(logo: Logo, h: int, scale: float = 1.0) -> Image.Image | None:
     path = _logo_file(logo)
     if not os.path.exists(path):
         return None
@@ -876,7 +904,8 @@ def _logo_mark(logo: Logo, h: int) -> Image.Image | None:
         return None
     if a.shape[0] < 2:
         return None
-    m = Image.fromarray(a).resize(logo_size(a.shape, h), Image.Resampling.LANCZOS)
+    fill = float(a.mean()) / 255
+    m = Image.fromarray(a).resize(logo_size(a.shape, h, fill, scale), Image.Resampling.LANCZOS)
     out = Image.new("RGBA", m.size, (255, 255, 255, 0))
     out.putalpha(m)
     return out
@@ -1027,7 +1056,8 @@ def resolve_groups(*raw: str | None) -> list[Group]:
 # Every badge is exactly the row's unit height, ink top to ink bottom — marks
 # cropped to their ink, boxes drawn edge to edge — so the row shares one top
 # and one bottom line.  Network and studio logos are the exception: sized by
-# area within that height (see logo_size), since their shapes vary so much.
+# area and ink around that height (see logo_size), since their shapes vary so
+# much, and centred on the row.
 
 _US_CERTS = {"G", "PG", "PG-13", "R", "NC-17",
              "TV-Y", "TV-Y7", "TV-G", "TV-PG", "TV-14", "TV-MA"}
@@ -1038,12 +1068,14 @@ def row_items(tokens: list[str], certification: str | None, age_rating: int | No
               show_quality: bool = True,
               network: Logo | None = None, studio: Logo | None = None,
               cinema: str | None = None,
-              quality_look: str | None = None) -> list[tuple[str, Image.Image]]:
+              quality_look: str | None = None,
+              logo_scale: float = LOGO_SCALE_DEFAULT) -> list[tuple[str, Image.Image]]:
     """(slot, image) for each of ``slots`` this title has, in that order.
     Quality marks only when ``show_quality`` (the minimum-quality gate); the
     certificate always.  ``cinema`` is the cinema badge's key (cinema_ink), None
     for a title that is out at home.  ``quality_look`` (quality_look) puts the
-    quality marks on frosted chips.  Dolby Vision and Atmos in the same group
+    quality marks on frosted chips, and ``logo_scale`` (badge_logo_scale)
+    multiplies the network and studio logos' size.  Dolby Vision and Atmos in the same group
     share the combined mark, in the video slot's place."""
     t = set(tokens) if show_quality else set()
     dolby_h = unit_h
@@ -1098,8 +1130,8 @@ def row_items(tokens: list[str], certification: str | None, age_rating: int | No
         return None
 
     build = {"video": video, "audio": audio, "res": res, "cert": cert,
-             "network": lambda: _logo_mark(network, unit_h) if network else None,
-             "studio": lambda: _logo_mark(studio, unit_h) if studio else None,
+             "network": lambda: _logo_mark(network, unit_h, logo_scale) if network else None,
+             "studio": lambda: _logo_mark(studio, unit_h, logo_scale) if studio else None,
              "cinema": lambda: _cinema_mark(cinema, unit_h) if cinema else None}
     items = [(slot, build[slot]()) for slot in slots]
     return [(slot, im) for slot, im in items if im is not None]

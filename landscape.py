@@ -969,7 +969,8 @@ def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: li
         gap = int(height * group.spacing * 0.9)
         items = graphic_badges.row_items(tokens, certification, age_rating, unit,
                                          group.slots, show_quality, *logos,
-                                         quality_look=quality_look)[:group.max_items]
+                                         quality_look=quality_look,
+                                         logo_scale=cfg.badge_logo_scale)[:group.max_items]
         if not items:
             continue
         if group.xy is not None:
@@ -986,7 +987,9 @@ def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: li
             top, right = group.anchor[0] == "t", group.anchor[1] == "r"
         margin = right_margin if right else left_margin
         half = max(im.height for _, im in items) / 2 + clear / 2
-        start = top_line if top else height - (height - int(height * _BASELINE)) - unit / 2
+        # A logo standing taller than the row keeps inside the bottom margin.
+        tallest = max(unit, max(im.height for _, im in items))
+        start = top_line if top else height - (height - int(height * _BASELINE)) - tallest / 2
         step, offset = max(2, unit // 3), 0.0
         while offset <= height * _GB_SEARCH:
             cy = start + offset if top else start - offset
