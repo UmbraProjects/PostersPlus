@@ -7390,13 +7390,15 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
                              and bool(set(cfg.rating_badges.split(",")) & set(_ANIME_FILL_SOURCES))),
         stale=lambda cfg, facts: True,
     ),
-    # 21: Network and studio logos are sized by their ink as well as their
+    # 22: Network and studio logos are sized by their ink as well as their
     #     shape, in a box a little taller than the row that shrinks for a heavy
-    #     logo, so every poster with a network or studio slot re-renders.  (20
-    #     was this change's first tuning, before it was checked against real
-    #     TMDB logos; skipped so composites stamped 20 re-render.)
+    #     logo, and a solid logo's lettering is cut out by contrast with its
+    #     own colour (an orange or yellow block was faded or lost its
+    #     lettering), so every poster with a network or studio slot re-renders.
+    #     (20 and 21 were this change's earlier tunings; skipped so composites
+    #     stamped with them re-render.)
     _RenderRevision(
-        rev=21,
+        rev=22,
         applies=lambda cfg: ((cfg.badge_display_mode == 7 if cfg.shape != "landscape"
                               else cfg.landscape_graphic_badges)
                              and any(slot in ("network", "studio")

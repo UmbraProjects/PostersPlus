@@ -6,9 +6,11 @@ drawn as the graphic badges draw them.
 
 Writes /app/cache/logo_sheet.png (the cache volume, so it is reachable from
 the host).  Each logo sits between two guide lines a row apart, at the row
-height a 22-size group has on a 750-tall poster unless one is given, and is
-labelled with its kind and TMDB id, its drawn size, its ink share and the ink
-it lays down: the numbers graphic_badges.logo_size is tuned on.  Sorted by
+height a 22-size group has on a 750-tall poster unless one is given, with
+the downloaded original beside it (on grey, so white and black logos both
+show).  It is labelled with its kind and TMDB id, its drawn size, its ink
+share and the ink it lays down: the numbers graphic_badges.logo_size is
+tuned on.  Sorted by
 aspect, so the shapes that come out small or large sit together.
 """
 from __future__ import annotations
@@ -38,18 +40,18 @@ def main() -> int:
         if a.shape[0] < 2:
             print(f"skipped {os.path.basename(path)}: no ink")
             continue
-        entries.append((a.shape[1] / a.shape[0], os.path.basename(path), a))
+        entries.append((a.shape[1] / a.shape[0], os.path.basename(path), a, path))
     if not entries:
         print(f"no logos in {gb.LOGO_DIR}")
         return 1
     entries.sort(key=lambda e: e[0])
 
-    line_h, col_w, cols = row * 2 + 24, 760, 2
+    line_h, col_w, cols = row * 2 + 24, 900, 2
     rows = (len(entries) + cols - 1) // cols
     sheet = Image.new("RGB", (col_w * cols, rows * line_h + 20), (40, 44, 52))
     draw = ImageDraw.Draw(sheet)
     font = ImageFont.load_default()
-    for i, (aspect, name, a) in enumerate(entries):
+    for i, (aspect, name, a, path) in enumerate(entries):
         x0, y0 = (i % cols) * col_w, 10 + (i // cols) * line_h
         cy = y0 + line_h / 2
         fill = float(a.mean()) / 255
@@ -58,6 +60,13 @@ def main() -> int:
         for gy in (cy - row / 2, cy + row / 2):
             draw.line((x0 + 10, gy, x0 + col_w - 10, gy), fill=(80, 84, 92))
         sheet.paste((255, 255, 255), (x0 + 220, int(round(cy - h / 2))), m)
+        # The original as downloaded, the same height, on a grey swatch.
+        orig = Image.open(path).convert("RGBA")
+        orig.thumbnail((round(row * 3), round(row * 1.6)), Image.Resampling.LANCZOS)
+        ox = x0 + col_w - orig.width - 20
+        sheet.paste((128, 128, 128), (ox - 4, int(cy - orig.height / 2) - 4,
+                                      ox + orig.width + 4, int(cy + orig.height / 2) + 4))
+        sheet.paste(orig, (ox, int(cy - orig.height / 2)), orig)
         kind, ident = name.split("_")[:2]
         draw.text((x0 + 10, cy - 14), f"{kind} {ident}", font=font, fill=(200, 200, 200))
         draw.text((x0 + 10, cy + 2), f"{w}x{h}  aspect {aspect:.1f}", font=font, fill=(150, 150, 150))

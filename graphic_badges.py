@@ -825,13 +825,19 @@ async def ensure_logo(client, logo: Logo | None) -> None:
 
 
 # A logo that is mostly one solid block (a badge, a shield: Marvel Studios'
-# red box, ABC's disc) carries its lettering as lighter colour inside it, which
-# a plain white mark would lose.  Those have their light parts cut out — but
-# only where the light parts don't swamp the block: a logo that is itself
-# light lettering (Marvel's wordmark, STARZ: all light) would otherwise
-# vanish.  Warner Bros.' shield is just over half gold (rim, letters, banner).
+# red box, ABC's disc, Nickelodeon's splat) carries its lettering as another
+# colour inside it, which a plain white mark would lose.  Those have the parts
+# that stand out from the block's own colour cut out — lighter (white on red)
+# or darker (black on a white disc) alike, judged against the block's median
+# colour, never a fixed brightness: a bright orange or yellow block is the
+# block, not lettering.  Only where those parts are a minority of the block
+# (_KNOCKOUT_SHARE) and differ by more than shading does (_KNOCKOUT_GAP): a
+# logo that is all lettering (Marvel's wordmark, STARZ) has nothing to cut.
+# Warner Bros.' shield is just over half gold (rim, letters, banner), so its
+# blue field is what goes.
 _KNOCKOUT_FILL = 0.55
-_KNOCKOUT_LIGHT = (0.03, 0.65)
+_KNOCKOUT_SHARE = (0.03, 0.65)
+_KNOCKOUT_GAP = 60
 
 
 def logo_alpha(im: Image.Image) -> np.ndarray:
@@ -849,12 +855,16 @@ def logo_alpha(im: Image.Image) -> np.ndarray:
         return np.zeros((1, 1), dtype=np.uint8)
     rows, cols = np.flatnonzero(solid.any(axis=1)), np.flatnonzero(solid.any(axis=0))
     y0, y1, x0, x1 = rows[0], rows[-1] + 1, cols[0], cols[-1] + 1
-    block = solid[y0:y1, x0:x1]
-    light = (lum[y0:y1, x0:x1] > 170) & block
-    light_share = light.sum() / max(1, block.sum())
-    if block.mean() > _KNOCKOUT_FILL and _KNOCKOUT_LIGHT[0] < light_share < _KNOCKOUT_LIGHT[1]:
-        alpha = alpha * np.clip((200 - lum) / 80, 0, 1)
-    return alpha[y0:y1, x0:x1].astype(np.uint8)
+    alpha, lum, block = alpha[y0:y1, x0:x1], lum[y0:y1, x0:x1], solid[y0:y1, x0:x1]
+    if block.mean() > _KNOCKOUT_FILL:
+        diff = np.abs(lum - np.median(lum[block]))
+        marks = (diff > _KNOCKOUT_GAP) & block
+        if _KNOCKOUT_SHARE[0] < marks.sum() / block.sum() < _KNOCKOUT_SHARE[1]:
+            # Faded across the edge between block and lettering, so
+            # anti-aliased letters keep a clean outline.
+            t = diff / max(1.0, float(np.percentile(diff[marks], 90)))
+            alpha = alpha * np.clip((0.75 - t) / 0.5, 0, 1)
+    return alpha.astype(np.uint8)
 
 
 # Logos come in every shape and weight, so they're sized by how much they

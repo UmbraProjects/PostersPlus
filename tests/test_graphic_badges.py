@@ -524,6 +524,25 @@ class NetworkStudioTests(unittest.TestCase):
         self.assertGreater(int(a[2, 2]), 200)          # the box
         self.assertLess(int(a[15, 40]), 20)            # the lettering, cut out
 
+    def test_a_bright_block_keeps_its_lettering_and_its_body(self):
+        # Orange (Nickelodeon's splat) and yellow blocks are the block, not
+        # lettering: drawn solid, with their white lettering cut out.
+        for fg in ((255, 120, 0), (255, 200, 0)):
+            a = gb.logo_alpha(self.plate(fg, (0, 0, 0)))
+            self.assertGreater(int(a[2, 2]), 240, fg)
+            self.assertLess(int(a[15, 40]), 20, fg)
+
+    def test_dark_lettering_on_a_light_block_is_cut_out(self):
+        a = gb.logo_alpha(self.plate((250, 250, 250), (0, 0, 0), text_rgb=(10, 10, 10)))
+        self.assertGreater(int(a[2, 2]), 240)
+        self.assertLess(int(a[15, 40]), 20)
+
+    def test_shading_is_not_lettering(self):
+        im = Image.new("RGBA", (100, 50), (0, 0, 0, 0))
+        for x in range(10, 90):                       # a soft gradient across the block
+            im.paste((120 + x // 2, 30, 30, 255), (x, 10, x + 1, 40))
+        self.assertGreater(int(gb.logo_alpha(im).min()), 240)
+
     def test_light_lettering_is_not_cut_out(self):
         # A logo that is itself light lettering stays whole.
         a = gb.logo_alpha(self.plate((240, 240, 240), (0, 0, 0), text=None))

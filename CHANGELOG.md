@@ -21,9 +21,14 @@
   heavy logo, so a solid disc (abc, TNT) no longer fills the same space as
   an outline emblem (Universal, Warner Bros.). Tuned on a sheet of real
   TMDB logos.
+- A solid logo's lettering is cut out by how much it stands out from the
+  logo's own colour, lighter or darker, instead of by a fixed brightness. An
+  orange block (Nickelodeon's splat) was drawn a third transparent, a yellow
+  one lost its white lettering, and dark lettering on a light disc was never
+  cut out.
 - New **Network / Studio Logo Size** (`badge_logo_scale=0.5–2.0`, default
   `1.0`) multiplies that standard size, on both shapes. Posters with a
-  network or studio badge re-render once (render revision 21).
+  network or studio badge re-render once (render revision 22).
 - A logo that doesn't fit beside what shares its line (Minimalist's genre
   and year) is drawn smaller, down to 60%, instead of the group jumping
   above the text. A long wordmark such as TOKYO MX now stays down by the
