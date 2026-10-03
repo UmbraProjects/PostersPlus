@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+### More network and studio logos, drawn at one standard size
+
+- The studio badge knows about 37 more studios: MGM, Miramax, Lions Gate
+  Films (as well as Lionsgate), Summit, Orion, TriStar, Touchstone, Village
+  Roadshow, Working Title, Skydance and Skydance Animation, StudioCanal,
+  Film4, MUBI, Cartoon Saloon, Studio Ponoc, Toei Animation, Kyoto
+  Animation, ufotable and MAPPA; and 20th Century Fox and 20th Century
+  Studios, DreamWorks Animation and DreamWorks Pictures, Paramount, New Line,
+  Castle Rock, Carolco, Lightstorm, CJ Entertainment, Studio Ghibli, Bad
+  Robot, Syncopy, Toho, Silver Pictures and Big Talk. A film by several of
+  them shows the one earliest on the list, the bigger name, rather than the
+  first TMDB credits: Die Hard shows 20th Century Fox, not Silver Pictures.
+- More films get a network badge from the streamer that made them: Netflix
+  Animation Studios (Netflix), Apple (Apple TV), Amazon Studios (Prime
+  Video), and HBO and HBO Documentary Films (HBO).
+- Network and studio logos come out at about the same visual size. They
+  were sized by area but held to the row's height, so square emblems (HBO,
+  A24) and very long wordmarks came out at well under half the size of
+  mid-width ones, and a solid logo looked much heavier than a thin one in
+  the same box. Each logo is now weighed by its ink as well as its shape and
+  fits a box 3.8 rows wide by 1.15 high (was 3.5 by 1), which shrinks for a
+  heavy logo, so a solid disc (abc, TNT) no longer fills the same space as
+  an outline emblem (Universal, Warner Bros.). Tuned on a sheet of real
+  TMDB logos.
+- A solid logo's lettering is cut out by how much it stands out from the
+  logo's own colour, lighter or darker, instead of by a fixed brightness. An
+  orange block (Nickelodeon's splat) was drawn a third transparent, a yellow
+  one lost its white lettering, and dark lettering on a light disc was never
+  cut out. Only parts the block holds inside it are cut: one that reaches
+  the logo's edge (Fox Kids' yellow X, HBO Max's "max") stays. And only the
+  lettering's own colour, on one side of the block: SBT's colour wheel lost
+  its dark purples as black patches and kept half of its white "sbt". Each
+  separate shape is judged on its own, so an emblem over a wordmark (Toei's
+  cat over "TOEI ANIMATION") keeps its face instead of becoming a blob.
+- Fox Kids is drawn with FOX's logo, its own (red letters in a thick comic
+  outline) not surviving as a white mark, and HBO always with its black
+  logo: TMDB has given it two, and titles cached at different times showed
+  either.
+- New **Network / Studio Logo Size** (`badge_logo_scale=0.5–2.0`, default
+  `1.0`) multiplies that standard size, on both shapes. Posters with a
+  network or studio badge re-render once (render revision 29).
+- A logo that doesn't fit beside what shares its line (Minimalist's genre
+  and year) is drawn smaller, down to 60%, instead of the group jumping
+  above the text. A long wordmark such as TOKYO MX now stays down by the
+  genre and year.
+- `tools/logo_sheet.py` draws every downloaded network and studio logo on
+  one sheet at badge size, with the numbers the sizing works from, for
+  tuning and for checking new studios read.
+
 ### Original art in the Logo Priority list
 
 - Logo Priority has a new **Original Art** entry (`art` in `logo_priority`,

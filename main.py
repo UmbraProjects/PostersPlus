@@ -1898,6 +1898,10 @@ class RequestConfig:
     # The quality marks' look — graphic_badges.QUALITY_STYLES: "solid" (the
     # filled boxes and bare Dolby marks) or "frosted" (each on a glass chip).
     badge_quality_style:      str  = graphic_badges.DEFAULT_QUALITY_STYLE
+    # A multiplier on the network and studio logos' size, which is otherwise
+    # set by the group's row height and each logo's shape and ink — see
+    # graphic_badges.logo_size.  One setting for both shapes.
+    badge_logo_scale:         float = graphic_badges.LOGO_SCALE_DEFAULT
 
     movie_weights: dict | None = None
     tv_weights:    dict | None = None
@@ -2492,7 +2496,8 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "landscape_greyscale": False, "landscape_badge_style": "glass",
                               "landscape_badge_text_color": None, "landscape_winner_star": False,
                               "landscape_logo_scale": 1.0, "landscape_rating_badges": False,
-                              "badge_quality_style": graphic_badges.DEFAULT_QUALITY_STYLE}
+                              "badge_quality_style": graphic_badges.DEFAULT_QUALITY_STYLE,
+                              "badge_logo_scale": graphic_badges.LOGO_SCALE_DEFAULT}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -2825,6 +2830,7 @@ def build_request_config(params: dict) -> RequestConfig:
     _quality_style = graphic_badges.quality_style(params.get("badge_quality_style"))
     if _quality_style:
         cfg.badge_quality_style = _quality_style
+    cfg.badge_logo_scale = _f("badge_logo_scale", cfg.badge_logo_scale, *graphic_badges.LOGO_SCALE_RANGE)
 
     all_sources = list(_cfg.MOVIE_WEIGHTS.keys())
     cfg.movie_weights = _parse_weights(params.get("movie_weights"), all_sources)
@@ -5352,9 +5358,12 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
     for group in groups:
         g_unit = max(8, round(group.size * 1.5 * height / 750))
         g_gap = px(width * group.spacing)
-        items = graphic_badges.row_items(tokens, certification, age_rating, g_unit,
-                                         group.slots, show_quality, *logos,
-                                         quality_look=quality_look)[:group.max_items]
+        def build(logo_scale: float, _g=group, _unit=g_unit) -> list:
+            return graphic_badges.row_items(tokens, certification, age_rating, _unit,
+                                            _g.slots, show_quality, *logos,
+                                            quality_look=quality_look,
+                                            logo_scale=logo_scale)[:_g.max_items]
+        items = build(cfg.badge_logo_scale)
         if not items:
             continue
         if group.xy is not None:
@@ -5381,11 +5390,23 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
                     image,
                     lambda unit, _g=group: graphic_badges.row_items(
                         tokens, certification, age_rating, unit, _g.slots, show_quality,
-                        *logos, quality_look=quality_look)[:_g.max_items],
+                        *logos, quality_look=quality_look,
+                        logo_scale=cfg.badge_logo_scale)[:_g.max_items],
                     band_cols(top_line), right, top_line, margin, g_gap,
                     unit=g_unit, max_unit=band_h)):
             continue
-        start = top_line if top else height - margin - g_unit / 2
+        # A logo standing taller than the row keeps inside the bottom margin.
+        start = top_line if top else height - margin - max(g_unit, max(im.height for _, im in items)) / 2
+        if graphic_badges.has_logo(items):
+            # On its own line with the logo shrunk a little, rather than moved.
+            shrunk = graphic_badges.fit_shrinking(
+                build, graphic_badges.free_run(band_cols(start), right, margin) - clear,
+                g_gap, cfg.badge_logo_scale)
+            if shrunk:
+                row_w = graphic_badges.row_width(shrunk, g_gap)
+                graphic_badges.draw_row(image, shrunk, center_y=start, gap=g_gap,
+                                        left_x=width - margin - row_w if right else margin)
+                continue
         limit = height * _GROUP_SEARCH["top" if top else "bottom"]
         step = max(2, g_unit // 3)
         offset = 0.0
@@ -7367,6 +7388,26 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
         rev=19,
         applies=lambda cfg: (cfg.shape == "landscape" and _shows_rating_badges(cfg)
                              and bool(set(cfg.rating_badges.split(",")) & set(_ANIME_FILL_SOURCES))),
+        stale=lambda cfg, facts: True,
+    ),
+    # 22: Network and studio logos are sized by their ink as well as their
+    #     shape, in a box a little taller than the row that shrinks for a heavy
+    #     logo, and a solid logo's lettering is cut out by contrast with its
+    #     own colour (an orange or yellow block was faded or lost its
+    #     lettering; a part reaching the logo's edge, Fox Kids' X, was cut as
+    #     if it were; a multicolour block, SBT's wheel, lost its dark hues and
+    #     kept half its lettering; an emblem over a wordmark, Toei's cat, was
+    #     never cut at all; Fox Kids takes FOX's logo and HBO its black one;
+    #     more studios on the list, picked in the list's order), so every
+    #     poster with a network or studio slot re-renders.  (20 to 28 were this
+    #     change's earlier tunings; skipped so composites stamped with them
+    #     re-render.)
+    _RenderRevision(
+        rev=29,
+        applies=lambda cfg: ((cfg.badge_display_mode == 7 if cfg.shape != "landscape"
+                              else cfg.landscape_graphic_badges)
+                             and any(slot in ("network", "studio")
+                                     for g in graphic_badges.cfg_groups(cfg) for slot in g.slots)),
         stale=lambda cfg, facts: True,
     ),
 )
@@ -11293,7 +11334,7 @@ async def get_poster(
                 _network, _studio, _streamer = graphic_badges.pick_logos(_facts, type)
                 if _streamer is not None:
                     _path = await fetch_network_logo_path(client, _streamer, effective_tmdb_key)
-                    _network = graphic_badges.Logo("network", _streamer, _path) if _path else None
+                    _network = graphic_badges.make_logo("network", _streamer, _path) if _path else None
                 await asyncio.gather(graphic_badges.ensure_logo(client, _network),
                                      graphic_badges.ensure_logo(client, _studio))
                 _bp_args["badge_logos"] = (_network, _studio)

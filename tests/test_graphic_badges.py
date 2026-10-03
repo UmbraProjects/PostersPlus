@@ -510,6 +510,28 @@ class NetworkStudioTests(unittest.TestCase):
         self.assertEqual(gb.pick_logos(film, "movie"), (None, None, 213))
         self.assertEqual(gb.pick_logos(None, "movie"), (None, None, None))
 
+    def test_the_lists_order_picks_the_studio(self):
+        # Die Hard credits Silver Pictures ahead of 20th Century Fox; the
+        # better-known studio, earlier on the list, is the one shown.
+        film = {"networks": [], "companies": [{"id": 1073, "logo_path": "/g.png"},
+                                               {"id": 1885, "logo_path": "/silver.png"},
+                                               {"id": 25, "logo_path": "/fox.png"}]}
+        self.assertEqual(gb.pick_logos(film, "movie")[1].id, 25)
+
+    def test_a_stand_in_network_is_looked_up(self):
+        # Fox Kids is drawn with FOX's logo, whose path the caller fetches.
+        tv = {"networks": [{"id": 2686, "logo_path": "/foxkids.png"}], "companies": []}
+        self.assertEqual(gb.pick_logos(tv, "tv"), (None, None, 19))
+
+    def test_a_pinned_logo_keeps_its_path(self):
+        # HBO keeps its black logo whatever path the title's facts carry, on
+        # TV and for a film by HBO's own studio.
+        tv = {"networks": [{"id": 49, "logo_path": "/purple.png"}], "companies": []}
+        net, _, _ = gb.pick_logos(tv, "tv")
+        self.assertEqual(net.path, gb.PINNED_LOGOS[("network", 49)])
+        self.assertEqual(gb.make_logo("network", 49, "/other.png").path, gb.PINNED_LOGOS[("network", 49)])
+        self.assertEqual(gb.make_logo("network", 213, "/n.png").path, "/n.png")
+
     def plate(self, fg, bg, box=(10, 10, 90, 40), text=(30, 18, 70, 32), text_rgb=(255, 255, 255)):
         im = Image.new("RGBA", (100, 50), (*bg, 0))
         im.paste((*fg, 255), box)
@@ -523,6 +545,58 @@ class NetworkStudioTests(unittest.TestCase):
         self.assertEqual(a.shape, (30, 80))
         self.assertGreater(int(a[2, 2]), 200)          # the box
         self.assertLess(int(a[15, 40]), 20)            # the lettering, cut out
+
+    def test_a_bright_block_keeps_its_lettering_and_its_body(self):
+        # Orange (Nickelodeon's splat) and yellow blocks are the block, not
+        # lettering: drawn solid, with their white lettering cut out.
+        for fg in ((255, 120, 0), (255, 200, 0)):
+            a = gb.logo_alpha(self.plate(fg, (0, 0, 0)))
+            self.assertGreater(int(a[2, 2]), 240, fg)
+            self.assertLess(int(a[15, 40]), 20, fg)
+
+    def test_dark_lettering_on_a_light_block_is_cut_out(self):
+        a = gb.logo_alpha(self.plate((250, 250, 250), (0, 0, 0), text_rgb=(10, 10, 10)))
+        self.assertGreater(int(a[2, 2]), 240)
+        self.assertLess(int(a[15, 40]), 20)
+
+    def test_a_part_reaching_the_edge_is_not_lettering(self):
+        # Fox Kids' yellow X: a different colour, but part of the outline, not
+        # held inside the block, so it stays.
+        im = self.plate((220, 30, 30), (0, 0, 0), text=(70, 10, 90, 40), text_rgb=(255, 220, 0))
+        a = gb.logo_alpha(im)
+        self.assertGreater(int(a[15, 75]), 240)
+
+    def test_a_colour_wheel_loses_only_its_lettering(self):
+        # SBT: a disc of every hue, the dark ones and the bright ones both far
+        # from its median, with white lettering.  Only the lettering is cut;
+        # the purples and yellows are block, even where letters touch them.
+        im = Image.new("RGBA", (120, 60), (0, 0, 0, 0))
+        for x0, rgb in ((10, (60, 20, 140)), (35, (255, 220, 0)), (60, (220, 30, 30)), (85, (40, 60, 200))):
+            im.paste((*rgb, 255), (x0, 10, x0 + 25, 50))
+        im.paste((255, 255, 255, 255), (25, 22, 95, 38))        # the lettering, across them all
+        a = gb.logo_alpha(im)
+        self.assertLess(int(a[20, 40]), 20)                    # lettering cut (crop starts at 10,10)
+        for x in (5, 30, 55, 80):
+            self.assertGreater(int(a[3, x]), 240, x)          # every colour of the block kept
+
+    def test_an_emblem_over_a_wordmark_keeps_its_details(self):
+        # Toei: a solid red head with a white face, over a thin wordmark that
+        # leaves the logo as a whole mostly empty.  The head is judged alone.
+        im = Image.new("RGBA", (200, 140), (0, 0, 0, 0))
+        im.paste((230, 70, 60, 255), (60, 0, 140, 80))         # the head
+        im.paste((255, 255, 255, 255), (80, 30, 120, 70))       # its face
+        for x in range(0, 200, 12):
+            im.paste((255, 255, 255, 255), (x, 120, x + 6, 140))  # "TOEI ANIMATION"
+        a = gb.logo_alpha(im)
+        self.assertLess(int(a[50, 100]), 20)                   # the face cut out
+        self.assertGreater(int(a[10, 100]), 240)               # the head kept
+        self.assertGreater(int(a[130, 3]), 240)                # the wordmark kept
+
+    def test_shading_is_not_lettering(self):
+        im = Image.new("RGBA", (100, 50), (0, 0, 0, 0))
+        for x in range(10, 90):                       # a soft gradient across the block
+            im.paste((120 + x // 2, 30, 30, 255), (x, 10, x + 1, 40))
+        self.assertGreater(int(gb.logo_alpha(im).min()), 240)
 
     def test_light_lettering_is_not_cut_out(self):
         # A logo that is itself light lettering stays whole.
@@ -549,17 +623,67 @@ class NetworkStudioTests(unittest.TestCase):
         self.assertEqual([s for s, _ in items], ["network", "cert"])   # studio file absent: left out
         self.assertLessEqual(items[0][1].height, 30)
 
-    def test_logos_are_sized_by_area_within_the_row(self):
+    def test_logos_are_sized_by_area_around_the_row(self):
         row = 30
-        # A compact emblem fills the row height.
-        self.assertEqual(gb.logo_size((100, 100), row), (30, 30))
+        # A compact emblem stands a little taller than the row, up to the cap.
+        self.assertEqual(gb.logo_size((100, 100), row), (34, 34))
+        self.assertLessEqual(gb.logo_size((100, 100), row, fill=0.05)[1], round(row * gb._LOGO_MAX_H))
         # A long wordmark comes out shorter and no wider than the cap.
         w, h = gb.logo_size((100, 800), row)
         self.assertLess(h, 20)
         self.assertLessEqual(w, round(row * gb._LOGO_MAX_W))
         # Similar area whatever the shape, until a limit applies.
-        areas = [w * h for w, h in (gb.logo_size((100, a), row) for a in (250, 350))]
-        self.assertAlmostEqual(areas[0] / areas[1], 1, delta=0.08)
+        areas = [w * h for w, h in (gb.logo_size((100, a), row) for a in (220, 350, 500))]
+        for a in areas[1:]:
+            self.assertAlmostEqual(areas[0] / a, 1, delta=0.08)
+
+    def test_logos_are_weighed_by_their_ink(self):
+        row = 30
+        typical = gb.logo_size((100, 250), row)
+        solid = gb.logo_size((100, 250), row, fill=0.9)
+        thin = gb.logo_size((100, 250), row, fill=0.2)
+        self.assertLess(solid[0], typical[0])
+        self.assertGreater(thin[0], typical[0])
+        # Half way to equal ink, so a solid block still carries more ink.
+        self.assertGreater(solid[0] * solid[1] * 0.9, thin[0] * thin[1] * 0.2)
+        # Within limits: a hairline logo isn't blown up without bound.
+        self.assertEqual(gb.logo_size((100, 250), row, fill=0.01),
+                         gb.logo_size((100, 250), row, fill=0.45 / gb._LOGO_FILL_LIMITS[1] ** 2))
+
+    def test_a_solid_disc_is_smaller_than_an_outline_emblem(self):
+        # abc's disc (ink share ~0.62) beside Universal's globe (~0.21): both
+        # meet the height cap, but the heavy one's box shrinks with its ink.
+        disc = gb.logo_size((100, 100), 30, fill=0.62)
+        outline = gb.logo_size((100, 100), 30, fill=0.21)
+        self.assertLess(disc[1], outline[1])
+        self.assertLessEqual(outline[1], round(30 * gb._LOGO_MAX_H))
+
+    def test_logo_scale_multiplies_the_size(self):
+        for shape in ((100, 100), (100, 250), (100, 800)):
+            w, h = gb.logo_size(shape, 30)
+            w2, h2 = gb.logo_size(shape, 30, scale=1.5)
+            self.assertAlmostEqual(w2 / w, 1.5, delta=0.06)
+            self.assertAlmostEqual(h2 / h, 1.5, delta=0.1)
+
+    def test_logo_scale_reaches_the_row(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(gb, "LOGO_DIR", d):
+            gb._logo_mark.cache_clear()
+            net = gb.Logo("network", 213, "/n.png")
+            logo = Image.new("RGBA", (140, 60), (0, 0, 0, 0))
+            logo.paste((255, 255, 255, 255), (10, 10, 130, 50))
+            logo.save(os.path.join(d, "network_213_n.png"))
+            base = gb.row_items([], None, None, 30, ("network",), True, network=net)[0][1]
+            big = gb.row_items([], None, None, 30, ("network",), True, network=net,
+                               logo_scale=2.0)[0][1]
+            gb._logo_mark.cache_clear()
+        self.assertAlmostEqual(big.width / base.width, 2.0, delta=0.05)
+
+    def test_logo_scale_param_is_clamped(self):
+        self.assertEqual(main.build_request_config({}).badge_logo_scale, 1.0)
+        self.assertEqual(main.build_request_config({"badge_logo_scale": "1.3"}).badge_logo_scale, 1.3)
+        self.assertEqual(main.build_request_config({"badge_logo_scale": "9"}).badge_logo_scale,
+                         gb.LOGO_SCALE_RANGE[1])
+        self.assertEqual(main.build_request_config({"badge_logo_scale": "x"}).badge_logo_scale, 1.0)
 
 
 class QualityNeedTests(unittest.TestCase):
@@ -590,6 +714,40 @@ class QualityNeedTests(unittest.TestCase):
             out = main.build_poster(img, 80, "Drama", cfg, quality_tokens=[])
         r, g, b = out.convert("RGB").getpixel((250, 400))
         self.assertGreater(r - g, 50)                                         # still in colour
+
+
+class LogoShrinkTests(unittest.TestCase):
+    """A long logo that doesn't fit beside what shares its line (Minimalist's
+    genre and year) is shrunk to stay on that line, not moved off it."""
+
+    def draw(self, text_left):
+        img = Image.new("RGBA", (500, 750), (0, 0, 0, 255))
+        before = np.array(img)
+        img.paste((200, 50, 50, 255), (text_left, 700, 480, 730))   # the "genre | year"
+        cfg = main.build_request_config({"badge_display_mode": "7", "sash_mode": "hidden",
+                                         "badge_group1": "bl:1:network"})
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(gb, "LOGO_DIR", d):
+            gb._logo_mark.cache_clear()
+            net = gb.Logo("network", 1, "/mx.png")
+            logo = Image.new("RGBA", (820, 120), (0, 0, 0, 0))
+            logo.paste((255, 255, 255, 255), (10, 10, 810, 110))  # TOKYO MX: 8:1
+            logo.save(os.path.join(d, "network_1_mx.png"))
+            full = gb.row_items([], None, None, 33, ("network",), True, network=net)[0][1].width
+            main._draw_graphic_badges(img, cfg, [], None, None, before, logos=(net, None))
+            gb._logo_mark.cache_clear()
+        white = (np.asarray(img)[..., :3] > 200).all(axis=2)
+        rows, cols = np.flatnonzero(white.any(axis=1)), np.flatnonzero(white.any(axis=0))
+        return full, rows, cols
+
+    def test_shrinks_to_stay_on_its_line(self):
+        full, rows, cols = self.draw(text_left=140)
+        self.assertGreater(rows.min(), 650)                 # still down by the text
+        self.assertLess(cols.max(), 140)                    # clear of it
+        self.assertLess(cols.max() - cols.min() + 1, full)  # by being drawn smaller
+
+    def test_full_size_where_there_is_room(self):
+        full, rows, cols = self.draw(text_left=400)
+        self.assertAlmostEqual(cols.max() - cols.min() + 1, full, delta=2)
 
 
 class HugChipTests(unittest.TestCase):
