@@ -108,7 +108,15 @@ class QualityAfterDigitalPipelineTests(unittest.TestCase):
         cls.src = Path("main.py").read_text(encoding="utf-8")
 
     def test_the_gate_covers_series_too(self):
-        # A series yet to premiere reads "Production", the status the gate
-        # already clears quality on; renewed or returning ones keep theirs.
+        # A series is judged on whether an episode has aired, not on the status
+        # word alone: "In Production" between seasons is out already.
         self.assertIn("_quality_gate = rcfg.quality_after_digital and bool(quality_tokens)\n", self.src)
-        self.assertIn('if _quality_gate and _release_status in ("Cinema", "Production"):', self.src)
+        self.assertIn("if _quality_gate and (_unreleased_for_rating(_release_status, type, tmdb_data)\n"
+                      '                              if type in ("tv", "series")\n'
+                      '                              else _release_status in ("Cinema", "Production")):',
+                      self.src)
+
+    def test_series_between_seasons_keeps_its_quality(self):
+        aired = {"last_episode": {"air_date": _day(-200)}, "next_episode": None}
+        self.assertFalse(_unreleased_for_rating("Production", "series", aired))
+        self.assertTrue(_unreleased_for_rating("Production", "series", {}))

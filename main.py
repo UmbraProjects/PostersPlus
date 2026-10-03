@@ -10960,12 +10960,15 @@ async def get_poster(
         # the title is out.
         _status_for_ttl = _release_status
         # "Cinema" and "Production" are the statuses of a film not yet out at
-        # home — a leak has already moved it on to "Streaming" above — and
-        # "Production" that of a series yet to premiere (see tv_release_facts;
-        # a renewed or returning one has seasons out already).  Cleared
-        # before the render, so every quality-driven thing (badges, the
-        # no-quality greyscale, "Consider Available") reads it as unfound.
-        if _quality_gate and _release_status in ("Cinema", "Production"):
+        # home — a leak has already moved it on to "Streaming" above.  A
+        # series is out once an episode has aired, which is the rating's own
+        # test: TMDB leaves shows at "In Production" between seasons, and
+        # those have seasons out already.  Cleared before the render, so
+        # every quality-driven thing (badges, the no-quality greyscale,
+        # "Consider Available") reads it as unfound.
+        if _quality_gate and (_unreleased_for_rating(_release_status, type, tmdb_data)
+                              if type in ("tv", "series")
+                              else _release_status in ("Cinema", "Production")):
             logger.info(f"Quality for {canonical_id} set aside: {quality_tokens} "
                         f"before release ({_release_status})")
             quality_tokens = []
