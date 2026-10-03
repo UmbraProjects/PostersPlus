@@ -28,10 +28,12 @@
   cut out. Only parts the block holds inside it are cut: one that reaches
   the logo's edge (Fox Kids' yellow X, HBO Max's "max") stays. And only the
   lettering's own colour, on one side of the block: SBT's colour wheel lost
-  its dark purples as black patches and kept half of its white "sbt".
+  its dark purples as black patches and kept half of its white "sbt". Each
+  separate shape is judged on its own, so an emblem over a wordmark (Toei's
+  cat over "TOEI ANIMATION") keeps its face instead of becoming a blob.
 - New **Network / Studio Logo Size** (`badge_logo_scale=0.5–2.0`, default
   `1.0`) multiplies that standard size, on both shapes. Posters with a
-  network or studio badge re-render once (render revision 24).
+  network or studio badge re-render once (render revision 25).
 - A logo that doesn't fit beside what shares its line (Minimalist's genre
   and year) is drawn smaller, down to 60%, instead of the group jumping
   above the text. A long wordmark such as TOKYO MX now stays down by the

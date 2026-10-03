@@ -557,6 +557,19 @@ class NetworkStudioTests(unittest.TestCase):
         for x in (5, 30, 55, 80):
             self.assertGreater(int(a[3, x]), 240, x)          # every colour of the block kept
 
+    def test_an_emblem_over_a_wordmark_keeps_its_details(self):
+        # Toei: a solid red head with a white face, over a thin wordmark that
+        # leaves the logo as a whole mostly empty.  The head is judged alone.
+        im = Image.new("RGBA", (200, 140), (0, 0, 0, 0))
+        im.paste((230, 70, 60, 255), (60, 0, 140, 80))         # the head
+        im.paste((255, 255, 255, 255), (80, 30, 120, 70))       # its face
+        for x in range(0, 200, 12):
+            im.paste((255, 255, 255, 255), (x, 120, x + 6, 140))  # "TOEI ANIMATION"
+        a = gb.logo_alpha(im)
+        self.assertLess(int(a[50, 100]), 20)                   # the face cut out
+        self.assertGreater(int(a[10, 100]), 240)               # the head kept
+        self.assertGreater(int(a[130, 3]), 240)                # the wordmark kept
+
     def test_shading_is_not_lettering(self):
         im = Image.new("RGBA", (100, 50), (0, 0, 0, 0))
         for x in range(10, 90):                       # a soft gradient across the block

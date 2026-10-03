@@ -824,8 +824,8 @@ async def ensure_logo(client, logo: Logo | None) -> None:
     os.replace(tmp, _logo_file(logo))
 
 
-# A logo that is mostly one solid block (a badge, a shield: Marvel Studios'
-# red box, ABC's disc, SBT's colour wheel) carries its lettering as another
+# A shape that is mostly one solid block (a badge, a shield: Marvel Studios'
+# red box, ABC's disc, SBT's colour wheel, Toei's cat) carries its lettering as another
 # colour inside it, which a plain white mark would lose.  Those have the
 # lettering cut out, found against the block's own median brightness, never
 # a fixed one: a bright orange or yellow block is the block, not lettering.
@@ -848,6 +848,7 @@ _KNOCKOUT_SHARE = (0.03, 0.65)
 _KNOCKOUT_GAP = 60
 _KNOCKOUT_NEUTRAL = 40      # chroma (max - min channel) under which a colour is white, grey or black
 _KNOCKOUT_NEAR = 60         # RGB distance within which a pixel is the lettering's colour
+_KNOCKOUT_MIN_PART = 0.05   # share of the logo's ink a shape needs to be judged on its own
 
 
 def _enclosed(marks: np.ndarray, block: np.ndarray) -> np.ndarray:
@@ -891,17 +892,29 @@ def logo_alpha(im: Image.Image) -> np.ndarray:
     rows, cols = np.flatnonzero(solid.any(axis=1)), np.flatnonzero(solid.any(axis=0))
     y0, y1, x0, x1 = rows[0], rows[-1] + 1, cols[0], cols[-1] + 1
     alpha, lum, block = alpha[y0:y1, x0:x1], lum[y0:y1, x0:x1], solid[y0:y1, x0:x1]
-    if block.mean() > _KNOCKOUT_FILL:
-        marks, colour = _lettering(a[y0:y1, x0:x1, :3], lum, block)
-        if marks is not None and _KNOCKOUT_SHARE[0] < marks.sum() / block.sum() < _KNOCKOUT_SHARE[1]:
-            # Faded across the edge between block and lettering, by distance
-            # from the lettering's colour, so anti-aliased letters keep a clean
-            # outline; nothing further off is touched.
-            import cv2
-            near = cv2.dilate(marks.astype(np.uint8), np.ones((5, 5), np.uint8)).astype(bool)
-            dist = np.linalg.norm(a[y0:y1, x0:x1, :3] - colour, axis=2)
-            ref = max(1.0, float(np.median(dist[near & block & ~marks])) if (near & block & ~marks).any() else 255.0)
-            alpha = np.where(near, alpha * np.clip((dist / ref - 0.25) / 0.5, 0, 1), alpha)
+    # Each separate shape is judged on its own, so an emblem over a wordmark
+    # (Toei's cat over "TOEI ANIMATION") has the emblem's lettering and
+    # details cut even though the logo as a whole is mostly empty.
+    import cv2
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(block.astype(np.uint8), connectivity=8)
+    rgb = a[y0:y1, x0:x1, :3]
+    for i in range(1, n):
+        x, y, w, h, area = stats[i]
+        if area < _KNOCKOUT_MIN_PART * block.sum() or area <= _KNOCKOUT_FILL * w * h:
+            continue
+        box = (slice(y, y + h), slice(x, x + w))
+        part = labels[box] == i
+        marks, colour = _lettering(rgb[box], lum[box], part)
+        if marks is None or not _KNOCKOUT_SHARE[0] < marks.sum() / part.sum() < _KNOCKOUT_SHARE[1]:
+            continue
+        # Faded across the edge between block and lettering, by distance from
+        # the lettering's colour, so anti-aliased letters keep a clean
+        # outline; nothing further off is touched.
+        near = cv2.dilate(marks.astype(np.uint8), np.ones((5, 5), np.uint8)).astype(bool)
+        dist = np.linalg.norm(rgb[box] - colour, axis=2)
+        rest = near & part & ~marks
+        ref = max(1.0, float(np.median(dist[rest]))) if rest.any() else 255.0
+        alpha[box] = np.where(near, alpha[box] * np.clip((dist / ref - 0.25) / 0.5, 0, 1), alpha[box])
     return alpha.astype(np.uint8)
 
 
