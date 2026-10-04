@@ -34,6 +34,11 @@ SAMPLE = [
      "themoviedb_id": {"tv": 1}},                                     # anilist only
     {"type": "TV", "mal_id": 40, "themoviedb_id": {"tv": 2}},         # no provider id
     {"type": "TV", "kitsu_id": 12, "themoviedb_id": {"tv": 777}},     # duplicate id
+    {"type": "TV", "kitsu_id": 45619, "anilist_id": 142838, "mal_id": 50602,
+     "themoviedb_id": {"tv": 120089}, "season": {"tvdb": 1, "tmdb": 1},
+     "episode_offset": {"tvdb": 12, "tmdb": 12}},                     # a second cour
+    {"type": "OVA", "kitsu_id": 1102, "themoviedb_id": {"tv": 62913},
+     "season": {"tvdb": 0, "tmdb": 0}},                               # TMDB's specials
 ]
 
 
@@ -107,7 +112,7 @@ class MappingTests(_TempTable):
         self.assertIsNone(anime_ids.lookup("kitsu", 12, "series"))
 
     def test_an_empty_or_broken_download_keeps_the_previous_table(self):
-        self.assertEqual(self._load(), 8)   # one row per (namespace, id)
+        self.assertEqual(self._load(), 11)   # one row per (namespace, id)
         self.assertEqual(self._load([]), 0)
         self.assertIn("mapped nothing", anime_ids.status()["last_refresh_error"])
         self.assertEqual(anime_ids.lookup("kitsu", 12, "series").tmdb_id, "37854")
@@ -165,6 +170,40 @@ class RequestWiringTests(unittest.TestCase):
         # composite cache key read them, so a mapped request keys like the
         # AIOMetadata request it now matches.
         self.assertLess(block.index("anime_ids.lookup"), block.index("_check_imdb_id"))
+
+
+
+class SeasonPlaceTests(_TempTable):
+    def test_later_seasons_cours_and_specials_have_a_place(self):
+        self._load()
+        self.assertEqual(anime_ids.season_place("kitsu", 49847), anime_ids.SeasonPlace(6, 0))
+        self.assertEqual(anime_ids.season_place("anilist", 142838), anime_ids.SeasonPlace(1, 12))
+        self.assertEqual(anime_ids.season_place("kitsu", 1102), anime_ids.SeasonPlace(0, 0))
+
+    def test_a_shows_start_or_an_unplaced_entry_has_none(self):
+        self._load()
+        self.assertIsNone(anime_ids.season_place("kitsu", 12))       # no season given
+        self.assertIsNone(anime_ids.season_place("kitsu", 7442))     # no TMDB series
+        self.assertIsNone(anime_ids.season_place("kitsu", 424242))
+
+    def test_kitsu_for_anilist(self):
+        self._load()
+        self.assertEqual(anime_ids.kitsu_for_anilist(142838), 45619)
+        self.assertIsNone(anime_ids.kitsu_for_anilist(424242))
+
+    def test_a_table_from_before_the_season_columns_still_reads(self):
+        import sqlite3
+        conn = sqlite3.connect(anime_ids.ANIME_ID_MAP_PATH)
+        conn.execute("CREATE TABLE anime_id_map (namespace TEXT NOT NULL, anime_id INTEGER NOT NULL, "
+                     "tmdb_tv INTEGER, tmdb_movie INTEGER, imdb_id TEXT, PRIMARY KEY (namespace, anime_id))")
+        conn.execute("INSERT INTO anime_id_map VALUES ('kitsu', 12, 37854, NULL, 'tt0388629')")
+        conn.commit()
+        conn.close()
+        self.assertEqual(anime_ids.lookup("kitsu", 12, "series").tmdb_id, "37854")
+        self.assertIsNone(anime_ids.season_place("kitsu", 12))
+        # The next refresh fills them.
+        self._load()
+        self.assertEqual(anime_ids.season_place("kitsu", 49847), anime_ids.SeasonPlace(6, 0))
 
 
 if __name__ == "__main__":

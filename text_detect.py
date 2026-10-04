@@ -675,6 +675,63 @@ def _verdict(
     return detected, hits, recognised, centred_lines
 
 
+# Season cover gate (cover_has_text): a box this sure and this big whose text
+# the recogniser reads as this many letters.  Measured on 29 Kitsu covers of
+# later seasons (2026-10-04): catches 5 of the 8 with text on them, and none
+# of the 21 clean ones; a clean cover's confident boxes are scene texture the
+# recogniser reads as one stray glyph, or nothing.
+_COVER_MIN_SCORE = 0.50
+_COVER_MIN_AREA = 0.006
+_COVER_MIN_READ = 0.60
+_COVER_MIN_LATIN = 4
+_COVER_MIN_CJK = 2
+_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")
+
+
+def cover_has_text(image) -> bool | None:
+    """Whether a 16:9 cut of an anime season cover carries a title or other
+    lettering, or None when the scan is unavailable.
+
+    Not poster_has_burned_in_text's rules: those are tuned for posters and
+    pass a cover whose whole middle is a kanji logo.  Here the recogniser
+    decides, on every box worth reading, in any script."""
+    try:
+        boxes, scores, width, height = _detect(image)
+        if boxes is None:
+            return None
+        source = image.convert("RGB")
+        image_area = max(1, width * height)
+        try:
+            for box, score in zip(boxes, scores):
+                box = np.asarray(box, dtype=np.float32)
+                left, top = float(box[:, 0].min()), float(box[:, 1].min())
+                right, bottom = float(box[:, 0].max()), float(box[:, 1].max())
+                if (float(score) < _COVER_MIN_SCORE
+                        or (right - left) * (bottom - top) / image_area < _COVER_MIN_AREA):
+                    continue
+                pad = max(3, int((bottom - top) * 0.2))
+                crop = np.asarray(source.crop((
+                    max(0, int(left) - pad), max(0, int(top) - pad),
+                    min(width, int(right) + pad), min(height, int(bottom) + pad),
+                )))
+                with _borrow_ocr() as ocr:
+                    result = ocr(crop, use_det=False, use_cls=False, use_rec=True)
+                for text, read in zip(result.txts or (), result.scores or ()):
+                    if float(read) < _COVER_MIN_READ:
+                        continue
+                    if (len(re.sub(r"[^a-z]", "", str(text).lower())) >= _COVER_MIN_LATIN
+                            or len(_CJK_RE.findall(str(text))) >= _COVER_MIN_CJK):
+                        logger.info(f"text_detect: season cover carries text ({text!r}, "
+                                    f"box {float(score):.2f})")
+                        return True
+        finally:
+            source.close()
+        return False
+    except Exception as exc:
+        logger.warning(f"text_detect error; cover scan unavailable: {exc}")
+        return None
+
+
 def text_column_profile(image, conf: float = _BOX_THRESHOLD):
     """Return a normalised horizontal text-density profile, or None."""
     try:

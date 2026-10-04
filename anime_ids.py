@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 # worker per interval performs the download (see imdb_dataset_refresh_loop).
 # Renamed when the tables gain one, so the first worker after an upgrade
 # rebuilds at once instead of waiting out the previous day's claim.
-_REFRESH_CLAIM_KEY = "anime_id_map_refresh_claimed_at:mal+films"   # films' TMDB ids, read from lists
+_REFRESH_CLAIM_KEY = "anime_id_map_refresh_claimed_at:mal+films+season"   # TMDB season, read from lists
 _NOT_READY_RETRY_SECS = 60
 # The namespaces anime.py sources art from, and the list's field for each.
 _NAMESPACE_FIELDS = {"kitsu": "kitsu_id", "anilist": "anilist_id"}
@@ -63,9 +63,16 @@ _SCHEMA = """
         tmdb_tv     INTEGER,
         tmdb_movie  INTEGER,
         imdb_id     TEXT,
+        -- The TMDB season the entry is, and its first episode's place in
+        -- it, for a series' later seasons and cours (anime_season.py).
+        season      INTEGER,
+        episode_offset INTEGER,
         PRIMARY KEY (namespace, anime_id)
     )
 """
+# Columns added since the table first shipped: a table built by an older
+# version gets them empty until the next refresh rebuilds it.
+_ADDED_COLUMNS = (("season", "INTEGER"), ("episode_offset", "INTEGER"))
 
 # MAL id -> the provider ids of the same entry (see mal_to_provider).
 _MAL_SCHEMA = """
@@ -113,6 +120,12 @@ def _get_db() -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(_SCHEMA.format(table="anime_id_map"))
         conn.execute(_MAL_SCHEMA.format(table="anime_mal_map"))
+        have = {row[1] for row in conn.execute("PRAGMA table_info(anime_id_map)")}
+        for column, kind in _ADDED_COLUMNS:
+            if column not in have:
+                # Another worker may add it first.
+                with suppress(sqlite3.OperationalError):
+                    conn.execute(f"ALTER TABLE anime_id_map ADD COLUMN {column} {kind}")
         for ddl in _INDEXES:
             conn.execute(ddl)
         conn.commit()
@@ -179,6 +192,35 @@ def lookup(namespace: str, anime_id: int, media_type: str) -> MappedIds | None:
     if tmdb is None and not imdb_id:
         return None
     return MappedIds(str(tmdb) if tmdb is not None else None, imdb_id or None)
+
+
+class SeasonPlace(NamedTuple):
+    season: int | None        # TMDB season number; 0 is TMDB's specials
+    episode_offset: int       # episodes of that season before this entry's first
+
+
+def season_place(namespace: str, anime_id: int) -> SeasonPlace | None:
+    """Where *namespace*:*anime_id* sits in its TMDB series, or None when the
+    list doesn't say or it is the series' start (season 1 from episode 1).
+    A later season or cour maps to the whole show, so this is what tells it
+    apart (anime_season.py)."""
+    if not is_enabled() or namespace not in _NAMESPACE_FIELDS:
+        return None
+    try:
+        row = _get_db().execute(
+            "SELECT tmdb_tv, season, episode_offset FROM anime_id_map "
+            "WHERE namespace = ? AND anime_id = ?",
+            (namespace, int(anime_id)),
+        ).fetchone()
+    except Exception as exc:
+        logger.warning(f"Anime season lookup failed for {namespace}:{anime_id}: {exc}")
+        return None
+    if row is None or row[0] is None:
+        return None
+    season, offset = row[1], row[2] or 0
+    if season in (None, 1) and offset <= 0:
+        return None
+    return SeasonPlace(season, max(0, offset))
 
 
 def mal_to_provider(mal_id: int) -> "tuple[str, int] | None":
@@ -257,6 +299,14 @@ def anilist_for_kitsu(kitsu_id: int) -> list[int]:
         (int(kitsu_id),))]
 
 
+def kitsu_for_anilist(anilist_id: int) -> int | None:
+    """The Kitsu id of the same entry as AniList *anilist_id*, or None."""
+    rows = _query(
+        "SELECT kitsu_id FROM anime_mal_map WHERE anilist_id = ? AND kitsu_id IS NOT NULL LIMIT 1",
+        (int(anilist_id),))
+    return int(rows[0][0]) if rows else None
+
+
 def anilist_for_title(media_type: str, tmdb_id: str | None, imdb_id: str | None) -> list[int]:
     """Every AniList entry the list maps to a TMDB or IMDb title: a show's
     seasons all map to the show, and AniList ranks each season apart, so the
@@ -321,8 +371,9 @@ def _first_id(value) -> int | None:
 
 
 def _rows_from_list(entries: list) -> "list[tuple]":
-    """(namespace, anime_id, tmdb_tv, tmdb_movie, imdb_id) for every entry that
-    maps a namespace we source from to anything we can use."""
+    """(namespace, anime_id, tmdb_tv, tmdb_movie, imdb_id, season,
+    episode_offset) for every entry that maps a namespace we source from to
+    anything we can use.  The last two are TMDB's, for a series."""
     rows: dict[tuple[str, int], tuple] = {}
     for entry in entries:
         if not isinstance(entry, dict):
@@ -341,12 +392,16 @@ def _rows_from_list(entries: list) -> "list[tuple]":
         tmdb_movie = tmdb_movie if isinstance(tmdb_movie, int) else None
         if tmdb_tv is None and tmdb_movie is None and imdb is None:
             continue
+        season = (entry.get("season") or {}).get("tmdb") if isinstance(entry.get("season"), dict) else None
+        offset = (entry.get("episode_offset") or {}).get("tmdb") if isinstance(entry.get("episode_offset"), dict) else None
+        season = season if isinstance(season, int) and season >= 0 else None
+        offset = offset if isinstance(offset, int) and offset > 0 else None
         for namespace, field in _NAMESPACE_FIELDS.items():
             anime_id = entry.get(field)
             if isinstance(anime_id, int):
                 # First entry wins; the list has the odd duplicate id.
                 rows.setdefault((namespace, anime_id),
-                                (namespace, anime_id, tmdb_tv, tmdb_movie, imdb))
+                                (namespace, anime_id, tmdb_tv, tmdb_movie, imdb, season, offset))
     return list(rows.values())
 
 
@@ -401,7 +456,7 @@ async def refresh_mapping(client: httpx.AsyncClient) -> int:
             conn.execute("DROP TABLE IF EXISTS anime_id_map_new")
             conn.execute(_SCHEMA.format(table="anime_id_map_new"))
             conn.execute("BEGIN")
-            conn.executemany("INSERT INTO anime_id_map_new VALUES (?, ?, ?, ?, ?)", rows)
+            conn.executemany("INSERT INTO anime_id_map_new VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
             conn.execute("DROP TABLE anime_id_map")
             conn.execute("ALTER TABLE anime_id_map_new RENAME TO anime_id_map")
             conn.execute("DROP TABLE IF EXISTS anime_mal_map_new")

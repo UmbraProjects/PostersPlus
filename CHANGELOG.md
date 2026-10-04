@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Later anime seasons get their own landscape art
+
+- In landscape, an anime's later seasons and cours no longer all share the
+  show's one TMDB backdrop. A season the id mapping places after the show's
+  start (or one found through its prequel) takes Kitsu's cover image of that
+  season, cut to 16:9, when it is big enough and carries no title, else
+  TMDB's still of the season's first episode, else the show's backdrop as
+  before. Requests by AniList id borrow the Kitsu cover through the mapping.
+  An operator's Artwork pick for the show still wins. `ANIME_SEASON_ART`
+  (Anime sources, on by default) turns it off.
+- Covers with lettering are left out by a recogniser check of their own
+  (the poster text rules pass a cover whose middle is a kanji logo). It
+  catches most, not all: a heavily stylised title can still get through.
+
 ### New anime in landscape, shared artwork, and genres hidden from trending
 
 - Anime requested by an AniList or Kitsu id alone (as Nuvio's catalogs send

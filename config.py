@@ -220,6 +220,9 @@ ANIME_ID_MAP_ENABLED = _flag(_env("ANIME_ID_MAP_ENABLED", "true", group='Anime s
 ANIME_ID_MAP_URL     = _env('ANIME_ID_MAP_URL', "https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-full.json", group='Anime sources', show_if=('ANIME_ID_MAP_ENABLED', 'true'), kind='url', label='Anime id mapping source', help="Where the mapping list is downloaded from. Must be Fribb's anime-list-full.json format.", advanced=True).strip()
 ANIME_ID_MAP_PATH    = "/app/cache/anime_ids.db"
 ANIME_ID_MAP_REFRESH_HOURS = 24
+# A later season's own art in landscape, rather than the show's one backdrop
+# every season shares on TMDB (anime_season.py).
+ANIME_SEASON_ART     = _flag(_env("ANIME_SEASON_ART", "true", group='Anime sources', show_if=('ANIME_ID_MAP_ENABLED', 'true'), kind='bool', label='Season art for later seasons', help="In landscape, give an anime's later seasons and cours their own art instead of the show's single TMDB backdrop: Kitsu's cover image for that season when it is big enough and carries no title, else TMDB's still of the season's first episode. Requests by AniList id borrow Kitsu's cover through the id mapping. Season 1 and anything with an operator's Artwork pick are unchanged. On by default."), True)
 # Capped per provider, because their limits differ by an order of magnitude.
 # AniList advertises 90 req/min per IP but has served a degraded 30 for a long
 # while (check the x-ratelimit-limit header), so it stays tight. Kitsu publishes

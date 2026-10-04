@@ -909,6 +909,7 @@ from digital_release import digital_release_poll_loop
 import imdb_dataset
 import anime_ids
 import anime_resolve
+import anime_season
 import watchlist
 import admin as _admin
 from imdb_dataset import imdb_dataset_refresh_loop
@@ -10366,6 +10367,23 @@ async def get_poster(
                     _ls_path    = _fa_bg
                     is_textless = rcfg.landscape_art != "original"
                     logger.info(f"fanart.tv landscape art for {tmdb_id}: {_fa_bg}")
+            # A later season's own art (anime_season.py): every source above
+            # gives each season the show's art, as they go by its TMDB id.
+            # The operator's pick below still wins.
+            if (_cfg.ANIME_SEASON_ART and is_anime and type != "movie"
+                    and has_tmdb_id and not use_cinemeta):
+                _season_place = anime_ids.season_place(anime_namespace, anime_id)
+                if (_season_place is not None
+                        or anime_resolve.resolved_as_sequel(anime_namespace, anime_id, type)):
+                    _season_bg = await anime_season.season_art(
+                        client, namespace=anime_namespace, anime_id=anime_id, tmdb_id=tmdb_id,
+                        place=_season_place, tmdb_key=effective_tmdb_key)
+                    if _season_bg:
+                        _ls_path    = _season_bg
+                        # Vetted free of lettering (a cover) or a frame (a
+                        # still): our logo goes on, in either art mode.
+                        is_textless = True
+                        logger.info(f"Season landscape art for {anime_key}: {_season_bg}")
             # The operator's chosen landscape art (dashboard → Artwork), by the
             # same language walk as original-art posters.  Rows cached before
             # the text-backdrop languages were kept don't know them, so there
@@ -11676,6 +11694,11 @@ async def get_poster(
                 f"will self-heal on next request"
             )
             raise HTTPException(status_code=404, detail="Poster image not found on TMDB")
+        if (status == 401 and exc.request.url.host == "api.themoviedb.org"
+                and effective_tmdb_key != _cfg.SERVER_TMDB_KEY):
+            # The client's own tmdb_key= was rejected: theirs to fix, not ours.
+            logger.warning(f"TMDB rejected the request's own tmdb_key (401) for tmdb_id={tmdb_id}")
+            raise HTTPException(status_code=401, detail="TMDB rejected the tmdb_key in this request")
         logger.error(f"Upstream HTTP {status} for tmdb_id={tmdb_id}: {exc}")
         raise HTTPException(status_code=502, detail=f"Upstream error {status}")
     except Exception as exc:

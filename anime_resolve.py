@@ -194,11 +194,23 @@ async def _resolve(client: httpx.AsyncClient, namespace: str, anime_id: int,
     return {}
 
 
+def _key(namespace: str, anime_id: int, media_type: str) -> str:
+    kind = "movie" if media_type == "movie" else "tv"
+    return f"animeres:v1:{namespace}:{anime_id}:{kind}"
+
+
+def resolved_as_sequel(namespace: str, anime_id: int, media_type: str) -> bool:
+    """Whether resolve() found this title's ids through a prequel: a later
+    season the mapping hasn't caught up with (anime_season.py)."""
+    cached = get_cached_tvdb_json(_key(namespace, anime_id, media_type)) or {}
+    return str(cached.get("via") or "").startswith("prequel:")
+
+
 async def resolve(client: httpx.AsyncClient, namespace: str, anime_id: int,
                   media_type: str, tmdb_key: str | None) -> anime_ids.MappedIds | None:
     """The TMDB (and maybe IMDb) id for an anime id the mapping lacks, or None."""
     kind = "movie" if media_type == "movie" else "tv"
-    key = f"animeres:v1:{namespace}:{anime_id}:{kind}"
+    key = _key(namespace, anime_id, media_type)
     cached = get_cached_tvdb_json(key)
     if cached and cached.get("tmdb_id") and not _usable(anime_ids.MappedIds(cached["tmdb_id"], None), media_type):
         # Found before TMDB deleted it: look again.
