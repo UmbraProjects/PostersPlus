@@ -17,7 +17,7 @@ on:
       - 'discovery_overrides.example.json'
       - '.github/**'
       - 'Showcase/**'
-  # Manual trigger from the Actions tab — useful for re-publishing :latest
+  # Manual trigger from the Actions tab — useful for re-publishing :latest (built from dev)
   # after a registry-state hiccup, or when paths-ignore swallowed a push
   # that you actually want rebuilt.
   workflow_dispatch:
@@ -59,8 +59,8 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            # main branch → :latest and :main
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            # dev branch → :latest (and :dev below)
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/dev' }}
             # branch push → :<branch-name> (main, dev)
             type=raw,value=${{ github.ref_name }},enable=${{ startsWith(github.ref, 'refs/heads/') }}
             # version tag (v1.2.3) → :1.2.3, :1.2, :1
