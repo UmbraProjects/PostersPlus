@@ -10,6 +10,7 @@ was the last pick, and right-click (or a long press) opens the menu.
 from pathlib import Path
 import re
 import unittest
+from unittest import mock
 
 
 def _template_literal(html: str, template_id: str) -> str:
@@ -235,10 +236,44 @@ class ShareSettingsTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIn(f"'{key}'", drop)
 
-    def test_both_shapes_travel_with_every_parameter(self):
+    def test_both_shapes_travel_with_defaults_left_out(self):
+        # Short enough to paste in a chat message: what is at its default is
+        # left out, as on any copied URL, and filled back in on import.
         self.assertIn("COPY_TEMPLATE_SHARE = { id: 'share', name: 'Share settings', "
                       "...COPY_SHAPE_REQUIRED, ...COPY_SHAPE_DUAL };", self.html)
-        self.assertIn("buildBaseParams({ usePlaceholders: true, full: true, templateId: 'share',", self.html)
+        self.assertIn("buildBaseParams({ usePlaceholders: true, templateId: 'share',", self.html)
+
+    def test_only_dropped_defaults_depend_on_the_instance(self):
+        # A share leaves defaults out and the importer fills them from its own
+        # server, so a default an operator setting moves would import as the
+        # recipient's value, not the sender's.  The only one is the logo
+        # language, which a share drops anyway.  A setting that starts
+        # moving a render default must be added to _SHARE_DROP or kept in
+        # the share.
+        import main
+        import settings as _settings
+        base = (main._render_param_defaults(), main._render_param_defaults("landscape"))
+        moved = set()
+        for key, setting in _settings.REGISTRY.items():
+            current = getattr(main._cfg, key, None)
+            if isinstance(current, bool):
+                other = not current
+            elif isinstance(current, (int, float)):
+                other = current + 1
+            elif isinstance(current, str):
+                other = current + "x" if current else "x"
+            else:
+                continue
+            with mock.patch.object(main._cfg, key, other):
+                try:
+                    now = (main._render_param_defaults(), main._render_param_defaults("landscape"))
+                except Exception:
+                    continue
+            for b, n in zip(base, now):
+                moved |= {k for k in b.keys() | n.keys() if b.get(k) != n.get(k)}
+        start = self.html.index("const _SHARE_DROP")
+        drop = self.html[start:self.html.index("];", start)]
+        self.assertEqual({k for k in moved if f"'{k}'" not in drop}, set())
 
     def test_import_takes_settings_only(self):
         self.assertIn("isShareUrl(raw) ? { settingsOnly: true, share: true } : {}", self.html)

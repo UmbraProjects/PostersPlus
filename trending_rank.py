@@ -107,13 +107,27 @@ def _number_layout(w: int, text: str, max_w: float | None, scale: float) -> tupl
     return font, track, ink_w, ink_h, pad, glyphs, adv
 
 
+def _number_origin(w: int, iw: float, right: bool, top: int | None,
+                   center_x: float | None = None) -> tuple[float, int]:
+    """(x, y) of the numeral's ink box: in a top corner, or with *top* given,
+    its ink starting at *top*, centred on *center_x* (the poster's middle by
+    default) and kept inside the corner insets."""
+    inset = round(_NUM_INSET * w)
+    if top is not None:
+        cx = w / 2 if center_x is None else center_x
+        return min(max(cx - iw / 2, inset), w - inset - iw), top
+    return (w - inset - iw if right else inset), inset
+
+
 def draw_rank_number(image: Image.Image, rank: int, right: bool = False,
-                     max_w: float | None = None, scale: float = 1.0) -> Image.Image:
+                     max_w: float | None = None, scale: float = 1.0,
+                     top: int | None = None, center_x: float | None = None) -> Image.Image:
     """The rank as a large silver numeral in the top-left (or top-right) corner.
 
     *scale* sizes it against its default.  *max_w* caps its width in pixels,
     for when a notch sits beside it: the digits shrink to fit, down to 60 % of
-    their size and no further.
+    their size and no further.  *top* hangs it there instead, centred on
+    *center_x* (under the notch, wherever that is).
     """
     w = image.width
     text = str(rank)
@@ -139,10 +153,10 @@ def draw_rank_number(image: Image.Image, rank: int, right: bool = False,
     numeral = numeral.reduce(_SS)
 
     shadow = _shadow(numeral, 0.012 * w, 150)
-    inset = round(_NUM_INSET * w)
     pad1 = pad / _SS
-    nx = round(w - inset - numeral.width + pad1) if right else round(inset - pad1)
-    ny = round(inset - pad1)
+    ix, iy = _number_origin(w, numeral.width - 2 * pad1, right, top, center_x)
+    nx = round(ix - pad1)
+    ny = round(iy - pad1)
     off = max(1, round(0.004 * w))
 
     result = image.convert("RGBA") if image.mode != "RGBA" else image.copy()
@@ -228,17 +242,18 @@ def ribbon_footprint(w: int, rank: int, right: bool = False, label: bool = False
 
 
 def number_footprint(w: int, rank: int, right: bool = False, max_w: float | None = None,
-                     scale: float = 1.0) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
+                     scale: float = 1.0, top: int | None = None,
+                     center_x: float | None = None) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
     """(body, extent) of the numeral draw_rank_number draws with these
     arguments, as ribbon_footprint gives them for the ribbon."""
     _font, _track, ink_w, ink_h, pad, _glyphs, _adv = _number_layout(w, str(rank), max_w, scale)
-    inset = round(_NUM_INSET * w)
     iw, ih = round(ink_w / _SS), round(ink_h / _SS)
-    x0 = w - inset - iw if right else inset
+    x0, y0 = _number_origin(w, iw, right, top, center_x)
+    x0 = round(x0)
     shade = round(_SHADE * w)
-    body = (x0 - shade, inset - shade, x0 + iw + shade, inset + ih + shade)
+    body = (x0 - shade, y0 - shade, x0 + iw + shade, y0 + ih + shade)
     grow = round(pad / _SS) + max(1, round(0.004 * w))
-    return body, (max(0, x0 - grow), max(0, inset - grow), min(w, x0 + iw + grow), inset + ih + grow)
+    return body, (max(0, x0 - grow), max(0, y0 - grow), min(w, x0 + iw + grow), y0 + ih + grow)
 
 
 def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,

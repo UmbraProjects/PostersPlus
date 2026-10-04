@@ -2,6 +2,56 @@
 
 ## Unreleased
 
+### New anime in landscape, shared artwork, and genres hidden from trending
+
+- Anime requested by an AniList or Kitsu id alone (as Nuvio's catalogs send
+  them) no longer falls to the genre canvas in landscape when the community
+  id mapping hasn't caught up with it yet. A later season takes its first
+  season's TMDB and IMDb ids through AniList's prequel links (TOUGEN ANKI:
+  Nikko Kegon Falls Arc, A Wild Last Boss Appeared! Season 2), and a new show
+  is found on TMDB by an exact name match among animated shows that started
+  within a year of it (Overgeared). That brings back the logo and ratings
+  too. A title TMDB doesn't have at all (Detective Conan: The Gold-Star
+  Answer) uses AniList's banner or Kitsu's cover image.
+- An anime-id request now agrees with the TMDB-id request for the same
+  show. It carries TMDB's IMDb id, so with no TMDB backdrop it takes
+  Metahub's background like a TMDB request (not the AniList banner). When
+  the id mapping names a TMDB entry TMDB has since deleted, the next request
+  resolves past it by IMDb id. A TMDB-id request for anime finds its anime
+  rank by the IMDb id TMDB gives too (I'm Dating a Dark Summoner showed
+  "Japanese" by TMDB id and "#3 Today" by AniList id).
+- AniList's rate limit no longer leaves new anime on the genre canvas for
+  ten minutes after a catalog burst (GROTESQQQUE). The resolver reads the
+  titles and prequel from the metadata the render already fetches instead
+  of asking AniList again, every AniList call waits out its Retry-After
+  instead of collecting more 429s, and a throttled lookup is retried after
+  two minutes.
+- `landscape_poster_crop=true` (Logo → Crop Poster When No Backdrop) cuts
+  the poster to 16:9, centred on faces or else on its upper part, with the
+  logo on top, for titles with no backdrop anywhere.
+- Fanart works for landscape: `landscape_art_source=fanart` takes
+  fanart.tv's most-liked background (textless) or a thumb in your language
+  (original), and `fanart_anime` does that for anime only.
+- Operators can share their Artwork view picks (`ART_OVERRIDES_SHARE`), and
+  another instance can follow them (`ART_OVERRIDES_REMOTE_URL`). Its own
+  picks win; shared images are copied once and checked against their hash.
+- `TRENDING_HIDE_GENRES` (dashboard → Trending) leaves genres off the
+  instance's trending lists before ranks are numbered, so catalog rows and
+  poster ranks still match. `TRENDING_HIDE_MIXED_GENRES` decides whether a
+  title only partly of a hidden genre goes too.
+- `trending_side=center` (Under Notch) hangs the trending numeral under the
+  notch wherever it is drawn: centred, a left or right chip, or where an
+  Auto notch moved it on that poster. The ribbon hangs from the top edge, so
+  it isn't offered Under Notch (a URL asking for it gets the left corner).
+- Share settings leaves out what is at its default, like every other copied
+  URL. It spelled every parameter out, so even an untouched configuration
+  was about 2100 characters, too long for a Discord message; it is now
+  about 300. Imports fill the gaps from the code's defaults, which are the
+  same on every instance, so a share still imports exactly.
+- Auto, Beside Notch spreads a badge row that nearly fills the space beside
+  the chip out to the margin, its gaps growing up to 2.5 times the group's
+  spacing; a short row still sits against the chip.
+
 ### More network and studio logos, drawn at one standard size
 
 - The studio badge knows about 37 more studios: MGM, Miramax, Lions Gate

@@ -908,6 +908,7 @@ from cache import (
 from digital_release import digital_release_poll_loop
 import imdb_dataset
 import anime_ids
+import anime_resolve
 import watchlist
 import admin as _admin
 from imdb_dataset import imdb_dataset_refresh_loop
@@ -956,7 +957,7 @@ from ratings import (
     _score_color_alt,
     _score_color_metal,
 )
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_trending_rank_entry, fetch_anime_trending_rank_entry, _expire_overlapping_lists, trending_kind, anime_split, ANIME_ENDPOINTS, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, logo_priority_falls_back_to_art, split_logo_priority_at_art, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, resolve_tvdb_to_tmdb, IdResolveError, TmdbIdGone, mark_tmdb_id_gone, forget_imdb_mapping_to, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS, fetch_logo_image, logo_language_steps, logo_step_available, _image_matches_language, sanitise_source_url, fetch_cropped_art
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_landscape_crop, fetch_trending_rank_entry, fetch_anime_trending_rank_entry, _expire_overlapping_lists, trending_kind, anime_split, ANIME_ENDPOINTS, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, logo_priority_falls_back_to_art, split_logo_priority_at_art, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, resolve_tvdb_to_tmdb, IdResolveError, TmdbIdGone, mark_tmdb_id_gone, tmdb_id_gone, forget_imdb_mapping_to, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS, fetch_logo_image, logo_language_steps, logo_step_available, _image_matches_language, sanitise_source_url, fetch_cropped_art
 # How long a poster rendered while its trending list was unreadable is kept:
 # the same as that list's retry cooldown.
 from tmdb import _TRENDING_SOURCE_RETRY_SECS as _TRENDING_UNREAD_TTL
@@ -2034,8 +2035,14 @@ class RequestConfig:
     # Where landscape art comes from: "tmdb" (default) or "tvdb" — TVDB's
     # best no-language background for textless, or its best background in
     # the request's language for original.  TMDB's when TVDB has none.
-    # Offered with the TVDB poster source (TVDB_POSTER_SOURCE).
+    # Offered with the TVDB poster source (TVDB_POSTER_SOURCE).  "fanart" is
+    # fanart.tv's most-liked background (textless) or thumb in the request's
+    # language (original); "fanart_anime" only for anime, as poster_source.
+    # Offered with the fanart poster source (FANART_POSTERS).
     landscape_art_source: str = "tmdb"
+    # With no backdrop from any source (nor an anime provider's banner),
+    # crop the poster art to 16:9 rather than drawing the genre canvas.
+    landscape_poster_crop: bool = False
     # Where the info badge sits: a corner ("top_left" | "top_right" |
     # "bottom_left" | "bottom_right") or "logo", stacked on the logo; with no
     # logo of ours drawn it takes the logo's slot itself.  A badge that lands
@@ -2126,7 +2133,9 @@ class RequestConfig:
     trending_ribbon_style: str = "charcoal"  # ribbon: "charcoal" or a notch style (frosted/black/silver/gold)
     trending_frost_opacity:    float = 0.75  # frosted ribbon: frost layer opacity (0.0–1.0)
     trending_frost_saturation: float = 1.2   # frosted ribbon: colour-cast strength (0 = grey)
-    trending_side:     str   = "left"   # top corner the number / ribbon takes: "left" | "right"
+    trending_side:     str   = "left"   # top corner the number / ribbon takes: "left" | "right";
+                                        # "center" hangs the number under the notch, wherever drawn
+                                        # (number only: parsed as "left" for the ribbon)
     # What the sash or notch does on a poster showing a rank mark: "keep" (as
     # configured) | "hide" | "opposite" (the diagonal sash, or the notch as a
     # side chip, moves to the corner the mark leaves free).
@@ -2497,7 +2506,8 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "landscape_badge_text_color": None, "landscape_winner_star": False,
                               "landscape_logo_scale": 1.0, "landscape_rating_badges": False,
                               "badge_quality_style": graphic_badges.DEFAULT_QUALITY_STYLE,
-                              "badge_logo_scale": graphic_badges.LOGO_SCALE_DEFAULT}
+                              "badge_logo_scale": graphic_badges.LOGO_SCALE_DEFAULT,
+                              "landscape_poster_crop": False}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -2719,8 +2729,12 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.trending_frost_opacity    = _f("trending_frost_opacity",    cfg.trending_frost_opacity,    0.0, 1.0)
     cfg.trending_frost_saturation = _f("trending_frost_saturation", cfg.trending_frost_saturation, 0.0, 2.0)
     _tside_raw = (params.get("trending_side") or "").strip().lower()
-    if _tside_raw in ("left", "right"):
+    if _tside_raw in ("left", "right", "center"):
         cfg.trending_side = _tside_raw
+    if cfg.trending_side == "center" and cfg.trending_style != "number":
+        # Only the number hangs under the notch; the ribbon takes the left
+        # corner, so the request shares that composite.
+        cfg.trending_side = "left"
     _tsash_raw = (params.get("trending_sash") or "").strip().lower()
     if _tsash_raw in ("keep", "hide", "opposite"):
         cfg.trending_sash = _tsash_raw
@@ -2886,8 +2900,12 @@ def build_request_config(params: dict) -> RequestConfig:
         cfg.poster_pick = "random"
     if cfg.shape == "landscape":
         cfg.poster_source, cfg.poster_pick = "tmdb", "top"
-        if (params.get("landscape_art_source") or "").strip().lower() == "tvdb" and tvdb.poster_source_enabled():
+        _lss = (params.get("landscape_art_source") or "").strip().lower()
+        if _lss == "tvdb" and tvdb.poster_source_enabled():
             cfg.landscape_art_source = "tvdb"
+        elif _lss in ("fanart", "fanart_anime") and _cfg.FANART_POSTERS and _cfg.FANART_API_KEY:
+            cfg.landscape_art_source = _lss
+        cfg.landscape_poster_crop = _b("landscape_poster_crop", cfg.landscape_poster_crop)
     cfg.sash_priority        = _parse_sash_priority(params.get("sash_priority"))
     cfg.rating_text_color    = _parse_hex_color(params.get("rating_text_color"))
     cfg.sash_text_color      = _parse_hex_color(params.get("sash_text_color"))
@@ -5075,6 +5093,14 @@ def _build_poster(
             and cfg.sash_mode != "hidden" and sash_result is not None):
         _before_rank = np.asarray(image)[:trending_rank.number_box(image.width, cfg.trending_scale)[1]].copy()
 
+    # A numeral that hangs under the notch goes wherever the notch was drawn
+    # (centred, a fixed side chip, or one an auto notch moved), so what the
+    # notch drew is measured rather than worked out again.
+    _pre_notch = None
+    if (_rank is not None and _rank_centered(cfg) and cfg.sash_mode == "notch"
+            and not cfg.sash_badge_pos.startswith("edge_") and sash_result is not None):
+        _pre_notch = np.asarray(image.convert("RGB"))[:round(image.height * _NOTCH_SEARCH_H)].copy()
+
     # --- Discovery sash / badge ---
     if cfg.sash_mode != "hidden" and sash_result is not None:
         label, sash_type = sash_result
@@ -5115,8 +5141,12 @@ def _build_poster(
     # After the sash, so the numeral can shrink to clear a notch beside it.
     if _rank is not None:
         _pre_rank = np.asarray(image) if _before_overlays is not None else None
+        _notch_box = None
+        if _pre_notch is not None:
+            _notch_box = _changed_box(_pre_notch, np.asarray(image.convert("RGB"))[:_pre_notch.shape[0]])
         image, _rank_print = _draw_trending_rank(image, cfg, _rank, _before_rank, media_kind,
-                                                 frost=(_frost_tint, _frost_ref))
+                                                 frost=(_frost_tint, _frost_ref),
+                                                 notch_box=_notch_box)
         if _before_overlays is not None:
             _claim_footprint(_before_overlays, _pre_rank, np.asarray(image), *_rank_print)
 
@@ -5146,6 +5176,25 @@ def _rank_on_right(cfg: "RequestConfig") -> bool:
     return cfg.trending_side == "right"
 
 
+# How far down the poster to look for what the notch drew.
+_NOTCH_SEARCH_H = 0.3
+
+
+def _changed_box(before: np.ndarray, after: np.ndarray) -> "tuple[int, int, int, int] | None":
+    """(left, top, right, bottom) of the pixels that differ visibly between
+    two same-sized RGB arrays, or None when none do."""
+    diff = np.abs(after.astype(np.int16) - before.astype(np.int16)).max(axis=2) > 12
+    rows, cols = np.flatnonzero(diff.any(axis=1)), np.flatnonzero(diff.any(axis=0))
+    if rows.size == 0:
+        return None
+    return int(cols[0]), int(rows[0]), int(cols[-1]) + 1, int(rows[-1]) + 1
+
+
+def _rank_centered(cfg: "RequestConfig") -> bool:
+    """Whether the rank numeral hangs centred, under the notch."""
+    return cfg.trending_side == "center" and cfg.trending_style == "number"
+
+
 def _sash_beside_rank(cfg: "RequestConfig") -> "RequestConfig":
     """The config the sash draws with on a poster showing a rank mark, per
     cfg.trending_sash: unchanged, hidden, or moved to the corner the mark
@@ -5153,6 +5202,9 @@ def _sash_beside_rank(cfg: "RequestConfig") -> "RequestConfig":
     not) to a side chip there."""
     if cfg.trending_sash == "hide":
         return dataclasses.replace(cfg, sash_mode="hidden")
+    if _rank_centered(cfg):
+        # Under the notch, so it leaves both corners free: nothing to move.
+        return cfg
     if cfg.trending_sash == "opposite":
         free = "left" if _rank_on_right(cfg) else "right"
         if cfg.sash_mode == "sash":
@@ -5165,7 +5217,8 @@ def _sash_beside_rank(cfg: "RequestConfig") -> "RequestConfig":
 
 def _draw_trending_rank(image: Image.Image, cfg: "RequestConfig", rank: int,
                         before: np.ndarray | None, media_kind: str | None = None,
-                        frost: tuple = (None, False)) -> Image.Image:
+                        frost: tuple = (None, False),
+                        notch_box: "tuple[int, int, int, int] | None" = None) -> Image.Image:
     """Draw the rank as cfg.trending_style's mark.  *before* is the numeral's
     band as it was before the sash drew; the numeral shrinks to clear
     whatever the sash put there, such as a centred notch.  *media_kind* picks
@@ -5192,6 +5245,20 @@ def _draw_trending_rank(image: Image.Image, cfg: "RequestConfig", rank: int,
                                               frost_reference=frost[1],
                                               text_color=cfg.sash_text_color,
                                               top_inset=top_inset), footprint
+    if _rank_centered(cfg):
+        # Under the notch (*notch_box*, what it drew), centred on it a small
+        # gap below; with no notch drawn (a sash, an edge notch, none) at the
+        # top centre, at the corner numeral's height.
+        w = image.width
+        top = round(trending_rank.number_box(w, cfg.trending_scale)[0])
+        center_x = None
+        if notch_box is not None:
+            top = max(top, round(notch_box[3] + 0.025 * w))
+            center_x = (notch_box[0] + notch_box[2]) / 2
+        footprint = trending_rank.number_footprint(w, rank, scale=cfg.trending_scale,
+                                                   top=top, center_x=center_x)
+        return trending_rank.draw_rank_number(image, rank, scale=cfg.trending_scale,
+                                              top=top, center_x=center_x), footprint
     max_w = None
     if before is not None:
         w = image.width
@@ -5491,9 +5558,26 @@ def _hug_chip(image: Image.Image, items: list, cols: np.ndarray, right: bool,
         return False
     row_w = graphic_badges.row_width(fitted, gap)
     chip_edge = width - margin - free if right else margin + free
+    # A row that nearly fills the run spreads into the rest: the slack shared
+    # out across its gaps (the one off the chip included), each at most
+    # _HUG_MAX_GAP times the set gap.  A short row stays packed against the
+    # chip, which is the point of the mode.
+    slack = free - gap - row_w
+    if row_w >= _HUG_FILL * (free - gap) and slack > 0:
+        step = min(gap + slack / len(fitted), gap * _HUG_MAX_GAP)
+        spread_w = row_w + (step - gap) * (len(fitted) - 1)
+        x = chip_edge + step if right else chip_edge - step - spread_w
+        graphic_badges.draw_row(image, fitted, left_x=int(round(x)), center_y=center_y, gap=step)
+        return True
     left_x = chip_edge + gap if right else chip_edge - gap - row_w
     graphic_badges.draw_row(image, fitted, left_x=int(left_x), center_y=center_y, gap=gap)
     return True
+
+
+# How full a hugging row must be before it spreads into the slack, and how far
+# its gaps may then grow, as a multiple of the group's spacing.
+_HUG_FILL = 0.7
+_HUG_MAX_GAP = 2.5
 
 
 # How far a group beside an auto chip may shrink below its set size before it
@@ -6538,6 +6622,7 @@ async def _run_background_jobs() -> None:
         asyncio.create_task(_cache_warm_loop(ready)),
         asyncio.create_task(_trending_fetch_loop()),
         asyncio.create_task(watchlist.watchlist_refresh_loop(_HTTP_CLIENT, _on_watchlist_change)),
+        asyncio.create_task(art_overrides.remote_sync_loop(_HTTP_CLIENT)),
     ]
     try:
         # A loop that ends (a disabled feature returns at once) or fails
@@ -7940,6 +8025,7 @@ async def admin_art_title(request: Request, media_type: str, tmdb_id: str,
             "tvdb": tvdb.poster_source_enabled(),
         },
         "overrides": art_overrides.title_overrides(media_type, tmdb_id),
+        "remote_overrides": art_overrides.remote_title_overrides(media_type, tmdb_id),
         "edit_link": _artwork_edit_link_on(),
         # For the page's live preview (<img> can't send the admin header).
         # The access key is in every poster URL an instance hands out, so the
@@ -7965,7 +8051,8 @@ async def admin_art_edit_link(request: Request, x_admin_key: str = Header(defaul
 @app.get("/admin/api/art/overrides")
 async def admin_art_overrides(request: Request, x_admin_key: str = Header(default="")):
     await _admin._authorise(request, x_admin_key)
-    return _admin._json({"titles": art_overrides.list_overrides()})
+    return _admin._json({"titles": art_overrides.list_overrides(),
+                         "remote": art_overrides.remote_state()})
 
 
 def _art_set(fields: dict, path: str) -> dict:
@@ -8048,6 +8135,23 @@ async def admin_art_upload(request: Request, media_type: str, tmdb_id: str, slot
         "media_type": media_type, "tmdb_id": tmdb_id, "slot": slot, "language": language,
         "sources": [x for x in sources.split(",") if x], "title": title,
     }, path)
+
+
+@app.get("/art-overrides/export.json")
+async def art_overrides_export(request: Request):
+    """Every artwork override, for instances that follow this one (see
+    art_overrides, "Sharing").  Only with ART_OVERRIDES_SHARE on."""
+    if not _cfg.ART_OVERRIDES_SHARE:
+        raise HTTPException(status_code=404, detail="Not Found")
+    data = await asyncio.to_thread(art_overrides.export)
+    etag = data["rev"]
+    headers = {"Cache-Control": "public, max-age=300", "Access-Control-Allow-Origin": "*"}
+    if etag:
+        headers["ETag"] = f'"{etag}"'
+        sent = (request.headers.get("if-none-match") or "").removeprefix("W/").strip('"')
+        if sent == etag:
+            return Response(status_code=304, headers=headers)
+    return JSONResponse(data, headers=headers)
 
 
 @app.get("/custom-art/{name}")
@@ -9012,6 +9116,28 @@ async def get_poster(
         # answer for this item.
         if not tmdb_id or not imdb_id:
             _mapped = anime_ids.lookup(anime_namespace, anime_id, type)
+            if (_mapped is not None and _mapped.tmdb_id and not tmdb_id
+                    and tmdb_id_gone(_mapped.tmdb_id, type) and _HTTP_CLIENT is not None):
+                # The mapping still names a TMDB entry TMDB has deleted (a
+                # duplicate merged into another): the IMDb id beside it, as
+                # for any request, else a fresh look by name below.
+                _alt = None
+                if _mapped.imdb_id:
+                    try:
+                        _alt = await resolve_imdb_to_tmdb(
+                            _HTTP_CLIENT, _mapped.imdb_id, type, _resolve_tmdb_key(tmdb_key))
+                    except IdResolveError:
+                        _alt = None
+                _alt_id = _alt["tmdb_id"] if _alt and _alt["tmdb_id"] != _mapped.tmdb_id else None
+                _mapped = anime_ids.MappedIds(_alt_id, _mapped.imdb_id)
+            if (_mapped is None or not _mapped.tmdb_id) and not tmdb_id and _HTTP_CLIENT is not None:
+                # New releases reach the mapping weeks late: a later season
+                # via its prequel, a new show by an exact TMDB name match.
+                _found = await anime_resolve.resolve(
+                    _HTTP_CLIENT, anime_namespace, anime_id, type, _resolve_tmdb_key(tmdb_key))
+                if _found is not None:
+                    _mapped = anime_ids.MappedIds(
+                        _found.tmdb_id, (_mapped.imdb_id if _mapped else None) or _found.imdb_id)
             if _mapped is not None:
                 tmdb_id = tmdb_id or _mapped.tmdb_id or ""
                 imdb_id = imdb_id or _mapped.imdb_id or ""
@@ -9597,6 +9723,10 @@ async def get_poster(
             # A failed logo lookup is never fatal — it just means no logo.
             if isinstance(_logo_meta, BaseException):
                 logger.warning(f"TMDB logo lookup failed for {tmdb_id}: {_logo_meta}")
+                if (isinstance(_logo_meta, httpx.HTTPStatusError)
+                        and _is_tmdb_title_404(_logo_meta, "movie" if type == "movie" else "tv", tmdb_id)):
+                    # Deleted on TMDB: the next request resolves past it.
+                    mark_tmdb_id_gone(tmdb_id, type, imdb_id or None)
                 _logo_meta = None
 
             using_anime_art = _anime_meta is not None
@@ -9637,6 +9767,11 @@ async def get_poster(
                         **tmdb_data,
                         "text_backdrop_path": _logo_meta[7].get("text_backdrop_path"),
                     }
+                # The providers carry no IMDb id; TMDB's, when the request came
+                # without one, is what Metahub's background, MDBList's ratings
+                # and the quality lookup go by, as for a mapped title.
+                if not tmdb_data.get("imdb_id") and _logo_meta[7].get("imdb_id"):
+                    tmdb_data = {**tmdb_data, "imdb_id": _logo_meta[7]["imdb_id"]}
         elif use_cinemeta:
             # Cinemeta is the spine: art, title, genres, dates and status all
             # come from its one document, shaped like a TMDB title with no
@@ -10158,9 +10293,10 @@ async def get_poster(
             title, for the no-art rescue tiers below. Both None unless the
             feature is on, the title has an IMDb id, and Cinemeta knows it.
             Not on a Cinemeta-spined render (that art is already in play) and
-            not for anime (the providers' cover art has its own rules)."""
-            if (not _cfg.CINEMETA_ENABLED or use_cinemeta or is_anime
-                    or not effective_imdb_id):
+            not for anime portraits (the providers' cover art has its own
+            rules); an anime landscape takes the background like any title."""
+            if (not _cfg.CINEMETA_ENABLED or use_cinemeta
+                    or (is_anime and not _is_landscape) or not effective_imdb_id):
                 return None, None
             _has_ps, _has_bg = await cinemeta.probe_art(client, effective_imdb_id)
             return (
@@ -10215,6 +10351,21 @@ async def get_poster(
                     _ls_path    = _tv_bg
                     is_textless = rcfg.landscape_art != "original"
                     logger.info(f"TVDB landscape art for {tmdb_id}: {_tv_bg}")
+            # fanart.tv's, likewise; "fanart_anime" only for anime, by the
+            # portrait poster source's test.
+            if (has_tmdb_id and not use_cinemeta
+                    and (rcfg.landscape_art_source == "fanart"
+                         or (rcfg.landscape_art_source == "fanart_anime"
+                             and (is_anime or (16 in genre_ids and _original_lang == "ja"))))):
+                from fanart import fanart_background_url
+                _fa_bg = await fanart_background_url(
+                    client, media_type=type, tmdb_id=tmdb_id, imdb_id=effective_imdb_id,
+                    languages=_poster_language_order if rcfg.landscape_art == "original" else None,
+                )
+                if _fa_bg:
+                    _ls_path    = _fa_bg
+                    is_textless = rcfg.landscape_art != "original"
+                    logger.info(f"fanart.tv landscape art for {tmdb_id}: {_fa_bg}")
             # The operator's chosen landscape art (dashboard → Artwork), by the
             # same language walk as original-art posters.  Rows cached before
             # the text-backdrop languages were kept don't know them, so there
@@ -10237,6 +10388,16 @@ async def get_poster(
                 if _ls_path is not None:
                     logger.info(f"No TMDB backdrop for {tmdb_id} — landscape using Metahub background")
                     is_textless = True
+            if (_ls_path is None and using_anime_art and tmdb_data.get("anime_banner")
+                    and not (rcfg.landscape_poster_crop and poster_path)):
+                # The anime provider's own wide art (AniList's 1900x400 banner,
+                # Kitsu's cover image): a centre cut of it, which beats the
+                # canvas for a title TMDB doesn't have yet.  A 16:9 cut of a
+                # strip that wide is a close-up, so a user who asked for the
+                # poster cut gets that instead.
+                _ls_path = tmdb_data["anime_banner"]
+                is_textless = True
+                logger.info(f"No backdrop for {tmdb_id} — landscape using the {anime_namespace} banner")
             # "art" in the logo priority: no logo above it swaps the textless
             # backdrop for the text-bearing one, as landscape_art=original
             # would pick it (TVDB's first, when that is the source).
@@ -10260,7 +10421,14 @@ async def get_poster(
                 else:
                     _carry_on_below_art()
             is_no_poster  = _ls_path is None
-            if _ls_path is None:
+            if _ls_path is None and rcfg.landscape_poster_crop and poster_path:
+                # A 16:9 cut of the poster art, faces kept in, else its upper
+                # part (titles mostly sit low on a poster), with our logo on.
+                logger.info(f"No backdrop for {tmdb_id} — landscape cropping the poster {poster_path}")
+                _image_coro = fetch_landscape_crop(client, tmdb_id, poster_path)
+                is_textless = True
+                is_no_poster = False
+            elif _ls_path is None:
                 logger.info(f"No backdrop for {tmdb_id} — landscape falls back to genre canvas")
                 _image_coro = _resolved(_make_landscape_canvas(genre_ids))
                 is_textless = True
@@ -10517,7 +10685,11 @@ async def get_poster(
 
         # Anime ranks on the anime lists, whichever id the poster was asked
         # for by (see _anime_trending_keys); everything else on TMDB's.
-        _anime_rank_keys = _anime_trending_keys(anime_namespace, anime_id, type, tmdb_id, imdb_id,
+        # By the IMDb id TMDB gave too, when the request brought none: a
+        # mapping row can name a TMDB entry since replaced, and the IMDb id
+        # still finds it.
+        _anime_rank_keys = _anime_trending_keys(anime_namespace, anime_id, type, tmdb_id,
+                                                imdb_id or effective_imdb_id or "",
                                                 has_tmdb_id) if anime_split() else []
         _trending_by_tmdb = bool(has_tmdb_id and (effective_tmdb_key or trending_source_url(type)))
         (

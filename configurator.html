@@ -3184,11 +3184,20 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </select>
               </div>
               <div class="field" id="landscape-art-source-field" hidden>
-                <label class="field-label" data-tip="Where the backdrop comes from. TVDB backdrops with no language are clean art, so Textless gets the best of those; with Original, TVDB gives a backdrop in your logo language, which carries the title. Titles TVDB has nothing for keep their TMDB backdrop.">Art Source</label>
+                <label class="field-label" data-tip="Where the backdrop comes from. Fanart backgrounds are clean art, so Textless gets the most liked one; with Original, Fanart gives a thumb in your logo language, which carries the title. The anime option uses Fanart only for anime. TVDB backdrops with no language are clean art, so Textless gets the best of those; with Original, TVDB gives a backdrop in your logo language. Titles the source has nothing for keep their TMDB backdrop.">Art Source</label>
                 <select id="cfg-landscape-art-source" onchange="build(); queuePreviewReload()">
                   <option value="tmdb" selected>TMDB</option>
+                  <option value="fanart">Fanart</option>
+                  <option value="fanart_anime">TMDB, with Fanart for anime</option>
                   <option value="tvdb">TVDB</option>
                 </select>
+              </div>
+              <div class="toggle-row">
+                <span class="toggle-label" data-tip="For a title with no backdrop anywhere (new anime, small releases), crop the poster to 16:9 with your logo on top instead of showing a plain genre background. The cut keeps faces in frame, or else takes the upper part of the poster, where the title usually isn't.">Crop Poster When No Backdrop</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-landscape-poster-crop" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
               </div>
             </div>
             <div class="toggle-row portrait-only">
@@ -3349,9 +3358,10 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
               <div id="sash-trending-mark-fields" style="display:none;">
                 <div class="field">
-                  <label class="field-label" data-tip="Which top corner the Trending number or ribbon takes.">Trending Rank Side</label>
+                  <label class="field-label" data-tip="Which top corner the Trending number or ribbon takes. Under Notch (number only) hangs the number below the notch wherever it is drawn, centred or a side chip (Auto included), or at the top centre when there's no notch.">Trending Rank Side</label>
                   <select class="segmented-source" id="cfg-trending-side" onchange="build(); queuePreviewReload()">
                     <option value="left" selected>Left</option>
+                    <option value="center">Under Notch</option>
                     <option value="right">Right</option>
                   </select>
                   <div class="segmented" data-for="cfg-trending-side"></div>
@@ -4737,16 +4747,17 @@ async function fetchServerCaps() {
     updateResolutionAvailability();
     syncCustomFonts(Array.isArray(serverCaps.custom_fonts) ? serverCaps.custom_fonts : []);
     document.getElementById('poster-source-field').hidden = !(serverCaps.fanart_posters || serverCaps.tvdb_posters);
-    document.getElementById('landscape-art-source-field').hidden = !serverCaps.tvdb_posters;
-    if (!serverCaps.tvdb_posters) document.getElementById('cfg-landscape-art-source').value = 'tmdb';
+    document.getElementById('landscape-art-source-field').hidden = !(serverCaps.fanart_posters || serverCaps.tvdb_posters);
     // Only the sources this instance offers; a restored choice it doesn't
     // offer falls back to TMDB.
-    for (const opt of document.querySelectorAll('#cfg-poster-source option')) {
-      opt.hidden = opt.value === 'tvdb' ? !serverCaps.tvdb_posters
-        : opt.value.startsWith('fanart') ? !serverCaps.fanart_posters : false;
+    for (const id of ['cfg-poster-source', 'cfg-landscape-art-source']) {
+      for (const opt of document.querySelectorAll(`#${id} option`)) {
+        opt.hidden = opt.value === 'tvdb' ? !serverCaps.tvdb_posters
+          : opt.value.startsWith('fanart') ? !serverCaps.fanart_posters : false;
+      }
+      const _srcSel = document.getElementById(id);
+      if (_srcSel.selectedOptions[0] && _srcSel.selectedOptions[0].hidden) _srcSel.value = 'tmdb';
     }
-    const _srcSel = document.getElementById('cfg-poster-source');
-    if (_srcSel.selectedOptions[0] && _srcSel.selectedOptions[0].hidden) _srcSel.value = 'tmdb';
     document.getElementById('poster-pick-field').hidden = !serverCaps.random_posters;
     // Restored before the caps answered, so the URL left them out.
     if (vEl('cfg-poster-source') !== 'tmdb' || vEl('cfg-poster-pick') !== 'top'
@@ -6603,7 +6614,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   // badge and info sizes to 1.00 on the next reload.
   if (emitLandscape || full) {
     params.set('landscape_art', vEl('cfg-landscape-art') || 'textless');
-    if (serverCaps.tvdb_posters && vEl('cfg-landscape-art-source') === 'tvdb') params.set('landscape_art_source', 'tvdb');
+    if ((serverCaps.fanart_posters || serverCaps.tvdb_posters) && vEl('cfg-landscape-art-source') !== 'tmdb') params.set('landscape_art_source', vEl('cfg-landscape-art-source'));
     params.set('badge_pos',     vEl('cfg-landscape-badge-pos') || 'top_left');
     params.set('landscape_badge_scale', n('cfg-landscape-badge-scale').toFixed(2));
     params.set('landscape_info_scale', n('cfg-landscape-info-scale').toFixed(2));
@@ -6616,6 +6627,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     const _lir = vEl('cfg-landscape-info-row') || 'auto';
     if (_lir !== 'auto') params.set('landscape_info_pos', `${_lir}_${vEl('cfg-landscape-info-col') || 'right'}`);
     if (c('tog-landscape-vignette-top')) params.set('landscape_vignette_top', 'true');
+    if (c('tog-landscape-poster-crop')) params.set('landscape_poster_crop', 'true');
     params.set('landscape_score_out_of_10', c('tog-landscape-score-10') ? 'true' : 'false');
     params.set('landscape_score_star', c('tog-landscape-score-star') ? 'true' : 'false');
     // Portrait settings brought over; each left out at its default.
@@ -6849,7 +6861,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   if (emitAll && _trStyle !== 'sash') {
     params.set('trending_style', _trStyle);
     if (n('cfg-trending-scale') !== 1) params.set('trending_scale', n('cfg-trending-scale').toFixed(2));
-    if (vEl('cfg-trending-side') === 'right') params.set('trending_side', 'right');
+    if (vEl('cfg-trending-side') !== 'left') params.set('trending_side', vEl('cfg-trending-side'));
     if (vEl('cfg-trending-sash') !== 'keep') params.set('trending_sash', vEl('cfg-trending-sash'));
     if (_trStyle === 'ribbon') {
       if (vEl('cfg-trending-ribbon-style') !== 'charcoal') params.set('trending_ribbon_style', vEl('cfg-trending-ribbon-style'));
@@ -7114,9 +7126,13 @@ const COPY_TEMPLATE_KEY = 'postersplus_copy_template';
 
 // Share settings: the look, for someone else to import into their own
 // configurator — not a URL any client is given. It goes out in the "{shape}"
-// form so the portrait and landscape settings both travel, with every
-// parameter spelled out (full) because the recipient's server may not share
-// this one's defaults. Nothing identifying goes with it: the host is a
+// form so the portrait and landscape settings both travel, leaving out what
+// is at its default like any copied URL. That is safe across instances: the
+// import fills an absent parameter from the importing server's defaults, and
+// those are the code's own on every instance (the one an operator can change,
+// the logo language, is dropped below). Spelling every parameter out made a
+// default config ~2100 characters, past Discord's 2000-character message
+// limit. Nothing identifying goes with it: the host is a
 // reserved .invalid name, so a share pasted into a client by mistake fails
 // outright instead of reaching anyone's instance, and keys, the access key
 // and the selected title are dropped. So are the viewer's own choices —
@@ -7127,7 +7143,7 @@ const _SHARE_DROP  = ['tmdb_id', 'imdb_id', 'stremio_id', 'type', 'access_key', 
                       'mdblist_key', 'logo_language', 'primary_client', 'resolution'];
 
 function buildShareUrl() {
-  const url = buildBaseParams({ usePlaceholders: true, full: true, templateId: 'share',
+  const url = buildBaseParams({ usePlaceholders: true, templateId: 'share',
                                 domainOverride: SHARE_ORIGIN });
   const q = url.indexOf('?');
   const p = new URLSearchParams(q < 0 ? '' : url.slice(q + 1));
@@ -7856,6 +7872,15 @@ function updateTrendingStyleFields() {
     style === 'ribbon' && vEl('cfg-trending-ribbon-style') === 'frosted' ? '' : 'none';
   document.getElementById('sash-trending-label-row').style.display  = style === 'ribbon' ? '' : 'none';
   document.getElementById('sash-trending-corner-row').style.display = style === 'ribbon' ? '' : 'none';
+  // Only the number hangs under the notch; the ribbon hangs from the top
+  // edge, so it is offered just the corners.
+  document.querySelectorAll('.segmented[data-for="cfg-trending-side"] .segmented-opt').forEach(btn => {
+    if (btn.dataset.value === 'center') btn.style.display = style === 'ribbon' ? 'none' : '';
+  });
+  if (style === 'ribbon' && vEl('cfg-trending-side') === 'center') {
+    document.getElementById('cfg-trending-side').value = 'left';
+    syncSegmented();
+  }
   if (style !== 'sash') initCustomMobileSliders();
 }
 
@@ -9019,10 +9044,14 @@ function _buildPresetCard(grid, preset) {
   const name = document.createElement('div');
   name.className = 'preset-card-name';
   name.textContent = preset.name;
-  const desc = document.createElement('div');
-  desc.className = 'preset-card-desc';
-  desc.textContent = preset.description;
-  body.append(name, desc);
+  body.append(name);
+  // The description is optional (null from the server when left blank).
+  if (preset.description) {
+    const desc = document.createElement('div');
+    desc.className = 'preset-card-desc';
+    desc.textContent = preset.description;
+    body.append(desc);
+  }
   if (preset.source === 'user') {
     const del = document.createElement('button');
     del.type = 'button';
@@ -9047,7 +9076,7 @@ const _LANDSCAPE_ONLY_CONTROLS = ['cfg-landscape-art', 'cfg-landscape-art-source
                                   'tog-landscape-vignette-top', 'tog-landscape-greyscale',
                                   'cfg-landscape-badge-style', 'cfg-landscape-badge-text-color',
                                   'tog-landscape-winner-star', 'cfg-landscape-logo-scale',
-                                  'tog-landscape-rating-badges'];
+                                  'tog-landscape-rating-badges', 'tog-landscape-poster-crop'];
 // Everything both shapes read, or that a preset never carries (identity and
 // keys — settingsOnly leaves them alone in any case).
 const _BOTH_SHAPES_CONTROLS = new Set([
@@ -9446,7 +9475,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (!preserveShape) {
     _setEl('tog-landscape', (p.get('shape') || '').toLowerCase() === 'landscape');
     _setEl('cfg-landscape-art',        p.get('landscape_art')        || 'textless');
-    _setEl('cfg-landscape-art-source', p.get('landscape_art_source') === 'tvdb' ? 'tvdb' : 'tmdb');
+    _setEl('cfg-landscape-art-source', ['tvdb', 'fanart', 'fanart_anime'].includes(p.get('landscape_art_source')) ? p.get('landscape_art_source') : 'tmdb');
     _setEl('cfg-landscape-badge-pos',  p.get('badge_pos')            || 'top_left');
     _setEl('cfg-landscape-color-link', p.get('landscape_color_link') || 'badge_follows_vignette');
     _setEl('cfg-landscape-badge-scale', p.get('landscape_badge_scale') || '1.00');
@@ -9461,6 +9490,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
       _setEl('cfg-landscape-info-row', _okInfo ? _lir : 'auto');
       _setEl('cfg-landscape-info-col', _okInfo ? _lic : 'right'); }
     _setEl('tog-landscape-vignette-top', p.get('landscape_vignette_top') || 'false');
+    _setEl('tog-landscape-poster-crop', p.get('landscape_poster_crop') || 'false');
     _setEl('tog-landscape-greyscale',   p.get('landscape_greyscale') || 'false');
     _setEl('cfg-landscape-badge-style', ['black', 'silver', 'gold'].includes(p.get('landscape_badge_style'))
       ? p.get('landscape_badge_style') : 'glass');
@@ -9534,7 +9564,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   _setEl('cfg-sash-side', p.get('sash_side') === 'left' ? 'left' : 'right');
   _setEl('cfg-trending-style', ['number', 'ribbon'].includes(p.get('trending_style')) ? p.get('trending_style') : 'sash');
   _setEl('cfg-trending-scale', p.get('trending_scale') || '1.00');
-  _setEl('cfg-trending-side', p.get('trending_side') === 'right' ? 'right' : 'left');
+  _setEl('cfg-trending-side', ['right', 'center'].includes(p.get('trending_side')) ? p.get('trending_side') : 'left');
   _setEl('cfg-trending-sash', ['hide', 'opposite'].includes(p.get('trending_sash')) ? p.get('trending_sash') : 'keep');
   _setEl('tog-trending-label', p.get('trending_label') === 'true');
   _setEl('tog-trending-corner', p.get('trending_corner') === 'true');
@@ -9856,6 +9886,7 @@ restoreSettings();
 restoreTrendingOnly();
 // After restore, so the buttons paint the persisted value straight away.
 initSegmented();
+updateTrendingStyleFields();   // hides buttons the restored style doesn't offer
 buildLogoPriorityList();
 buildRatingBadgeList();
 updateRatingFields();

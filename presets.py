@@ -129,7 +129,8 @@ def public_list() -> list[dict]:
     return [{
         "id": p["id"],
         "name": p.get("name", ""),
-        "description": p.get("description", ""),
+        # Optional: null when the operator left it blank.
+        "description": p.get("description") or None,
         "shape": "landscape" if p.get("shape") == "landscape" else "portrait",
         "params": p.get("params", ""),
         "screenshot": f"/preset-art/{p['image']}" if _IMAGE_RE.match(str(p.get("image") or "")) else None,

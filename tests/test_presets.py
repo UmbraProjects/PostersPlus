@@ -168,6 +168,15 @@ class EndpointTests(_Case):
         self.assertEqual(caps["operator_presets"][0]["params"], "sash_mode=notch")
         self.assertEqual(self.client.get("/server-caps").status_code, 403)
 
+    def test_a_preset_without_a_description_is_listed(self):
+        for body in ({"name": "Bare", "params": "sash_mode=notch"},
+                     {"name": "Blank", "description": "   ", "params": "sash_mode=notch"}):
+            r = self.client.put("/admin/api/presets", headers=self.h(), json=body)
+            self.assertEqual(r.status_code, 200, r.text)
+        caps = self.client.get("/server-caps?access_key=instance-key").json()
+        listed = {p["name"]: p["description"] for p in caps["operator_presets"]}
+        self.assertEqual(listed, {"Bare": None, "Blank": None})
+
     def test_bad_bodies(self):
         self.assertEqual(self.client.put("/admin/api/presets", headers=self.h(), content=b"[1]").status_code, 400)
         self.assertEqual(self.client.put("/admin/api/presets", headers=self.h(),

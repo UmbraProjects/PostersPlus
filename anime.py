@@ -26,6 +26,7 @@ Design notes
   with no art.
 """
 import asyncio
+import time
 import hashlib
 import logging
 
@@ -72,6 +73,27 @@ class _TransientError(Exception):
 # much tighter budget for no reason.
 _CONCURRENCY = {"anilist": ANILIST_CONCURRENCY, "kitsu": KITSU_CONCURRENCY}
 _semaphores: "dict[str, asyncio.Semaphore]" = {}
+
+
+# AniList's Retry-After, honoured across every caller: once it throttles,
+# further calls until then only earn more 429s (and, in a catalog burst, keep
+# the limit from resetting).  Per worker, which is where the budget is spent.
+_anilist_quiet_until = 0.0
+
+
+def anilist_cooling() -> bool:
+    """Whether AniList asked us to wait and the wait isn't over."""
+    return time.monotonic() < _anilist_quiet_until
+
+
+def note_anilist_throttle(retry_after: "str | None") -> None:
+    """Start the wait an AniList 429 asked for (60 s when it named none)."""
+    global _anilist_quiet_until
+    try:
+        wait = min(max(float(retry_after), 1.0), 300.0)
+    except (TypeError, ValueError):
+        wait = 60.0
+    _anilist_quiet_until = max(_anilist_quiet_until, time.monotonic() + wait)
 
 
 def _get_semaphore(namespace: str) -> "asyncio.Semaphore":
@@ -259,6 +281,9 @@ query ($id: Int) {
     duration
     isAdult
     coverImage { extraLarge large }
+    bannerImage
+    synonyms
+    relations { edges { relationType node { id type format } } }
     studios(isMain: true) { nodes { name } }
   }
 }
@@ -267,6 +292,8 @@ query ($id: Int) {
 
 async def _fetch_anilist(client: httpx.AsyncClient, anime_id: int) -> dict | None:
     """One GraphQL call returning art, titles, genres, status and score."""
+    if anilist_cooling():
+        raise _TransientError("AniList asked us to wait (Retry-After)")
     logger.info(f"External API Call: AniList metadata fetch for {anime_id}")
     resp = await client.post(
         ANILIST_API_URL,
@@ -278,6 +305,7 @@ async def _fetch_anilist(client: httpx.AsyncClient, anime_id: int) -> dict | Non
     if resp.status_code == 404:
         return None
     if resp.status_code == 429:
+        note_anilist_throttle(resp.headers.get("retry-after"))
         raise _TransientError(
             f"AniList rate-limited (retry-after={resp.headers.get('retry-after')})"
         )
@@ -303,6 +331,7 @@ query ($page: Int, $perPage: Int, $statusNot: MediaStatus, $formats: [MediaForma
       seasonYear
       startDate { year }
       coverImage { extraLarge large }
+      genres
     }
   }
 }
@@ -366,6 +395,8 @@ async def fetch_anilist_trending(
                         "name": title.get("english") or title.get("romaji"),
                         "year": str(year) if year else None,
                         "poster": cover.get("extraLarge") or cover.get("large"),
+                        # TMDB ids, for the catalogs' genre filter.
+                        "genres": _map_genres(media.get("genres") or []),
                     }.items() if v}
                 if len(ids) >= limit:
                     break
@@ -471,6 +502,11 @@ def _blank_tmdb_data() -> dict:
         "anime_score":          None,
         "anime_age_rating":     None,
         "anime_media_type":     None,
+        # The provider's wide art (AniList's banner, Kitsu's cover image):
+        # landscape's last art before a crop of the cover or the canvas.
+        "anime_banner":         None,
+        # AniList's titles, year, format and prequel, for anime_resolve.
+        "anime_lookup":         None,
     }
 
 
@@ -514,6 +550,20 @@ def _normalise_anilist(media: dict) -> tuple:
     tmdb_data["anime_media_type"]  = (
         "movie" if (media.get("format") or "") in _MOVIE_FORMATS else "series"
     )
+    tmdb_data["anime_banner"]      = media.get("bannerImage")
+    # What anime_resolve needs to find a TMDB id the id mapping lacks, so it
+    # doesn't ask AniList again: titles, start year, format and the prequel.
+    tmdb_data["anime_lookup"] = {
+        "id": media.get("id"),
+        "format": media.get("format"),
+        "title": {"english": titles.get("english"), "romaji": titles.get("romaji")},
+        "synonyms": (media.get("synonyms") or [])[:5],
+        "startDate": {"year": start.get("year")},
+        "relations": {"edges": [
+            e for e in ((media.get("relations") or {}).get("edges") or [])
+            if e.get("relationType") == "PREQUEL"
+        ]},
+    }
 
     studios = ((media.get("studios") or {}).get("nodes")) or []
     tmdb_data["production_companies"] = [
@@ -558,6 +608,7 @@ def _normalise_kitsu(data: dict) -> tuple:
     tmdb_data["anime_media_type"]   = (
         "movie" if (attrs.get("subtype") or "") in _MOVIE_FORMATS else "series"
     )
+    tmdb_data["anime_banner"]       = (attrs.get("coverImage") or {}).get("original")
 
     # averageRating is a percentage delivered as a string ("82.53").
     raw_score = attrs.get("averageRating")

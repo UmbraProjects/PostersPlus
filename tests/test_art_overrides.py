@@ -166,6 +166,7 @@ class StorageTests(unittest.TestCase):
                 title TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL, crop TEXT,
                 PRIMARY KEY (media_type, tmdb_id, slot, language))
         """)
+        self.db.execute("CREATE TABLE art_overrides_remote AS SELECT * FROM art_overrides WHERE 0")
         self.state = {}
         self.invalidated = []
         patches = [

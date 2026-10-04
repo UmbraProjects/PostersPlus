@@ -137,6 +137,7 @@ class CinemetaNormaliseTests(unittest.TestCase):
         import anime
         anime_keys = set(anime._blank_tmdb_data()) - {
             "anime_source", "anime_score", "anime_age_rating", "anime_media_type",
+            "anime_banner", "anime_lookup",
         }
         self.assertTrue(anime_keys <= set(cinemeta._blank_tmdb_data()))
 

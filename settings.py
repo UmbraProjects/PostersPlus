@@ -46,7 +46,7 @@ SETTINGS_PATH = os.environ.get("SETTINGS_PATH", "/app/cache/settings.json").stri
 # carry it; parsing stays in config.py.
 # "order" is a ranking of a fixed set: every choice once, most important
 # first, stored comma-separated.
-KINDS = ("text", "secret", "int", "float", "bool", "choice", "list", "url", "order")
+KINDS = ("text", "secret", "int", "float", "bool", "choice", "list", "url", "order", "multi")
 
 
 @dataclass
@@ -93,6 +93,7 @@ GROUP_ORDER = (
     "Cache warming",
     "TVDB fallback art",
     "Fanart",
+    "Artwork sharing",
     "Cinemeta fallback",
     "Anime sources",
     "Rendering",
@@ -294,6 +295,14 @@ def normalise(setting: Setting, raw) -> str | None:
 
     if kind == "list":
         return ",".join(part.strip() for part in value.split(",") if part.strip())
+
+    if kind == "multi":
+        # Any number of the choices, kept in their own order.
+        parts = {part.strip() for part in value.split(",") if part.strip()}
+        unknown = sorted(parts - set(setting.choices))
+        if unknown:
+            raise ValueError("unknown entry " + ", ".join(unknown))
+        return ",".join(c for c in setting.choices if c in parts)
 
     if kind == "order":
         parts = [part.strip() for part in value.split(",") if part.strip()]

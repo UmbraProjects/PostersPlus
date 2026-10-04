@@ -412,6 +412,23 @@ def init_db() -> None:
     """)
     # A textless pick's manual crop, "x,y,zoom" (see art_overrides.parse_crop).
     _add_column_if_missing(conn, "art_overrides", "crop", "TEXT")
+    # Another instance's overrides, followed (ART_OVERRIDES_REMOTE_URL): the
+    # same rows, replaced wholesale at each sync.  Local rows win.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS art_overrides_remote (
+            media_type TEXT NOT NULL,
+            tmdb_id    TEXT NOT NULL,
+            slot       TEXT NOT NULL,
+            language   TEXT NOT NULL DEFAULT '',
+            path       TEXT NOT NULL,
+            provider   TEXT NOT NULL,
+            sources    TEXT NOT NULL DEFAULT '',
+            title      TEXT NOT NULL DEFAULT '',
+            updated_at REAL NOT NULL,
+            crop       TEXT,
+            PRIMARY KEY (media_type, tmdb_id, slot, language)
+        )
+    """)
 
     for statement in REPORT_SCHEMA:
         conn.execute(statement)

@@ -171,6 +171,10 @@ TVDB_POSTER_SOURCE    = _flag(_env("TVDB_POSTER_SOURCE", "false", group='TVDB fa
 FANART_API_KEY        = _env('FANART_API_KEY', "", group='API keys', kind='secret', label='Fanart API key', help='Optional Fanart project key, needed for the Fanart poster source (see FANART_POSTERS).').strip()
 FANART_POSTERS        = _flag(_env("FANART_POSTERS", "false", group='Fanart', kind='bool', label='Offer Fanart posters', help='Let users pick Fanart as their poster source, for every title or for anime only: its most-liked textless poster, or under Original Art its most-liked poster in their language. TMDB when Fanart has none. Needs the Fanart key and, for series, the TVDB key. Adds poster downloads, cache and text scans for users who pick it.'), False)
 
+# Artwork overrides shared between instances (art_overrides.py, "Sharing").
+ART_OVERRIDES_SHARE      = _flag(_env("ART_OVERRIDES_SHARE", "false", group='Artwork sharing', kind='bool', label='Share artwork overrides', help='Let other Posters+ instances follow the art you pick in the dashboard\'s Artwork view: every override is served read-only at /art-overrides/export.json, and uploaded or linked images at /custom-art/. Nothing else is shared. Off by default.'), False)
+ART_OVERRIDES_REMOTE_URL = _env('ART_OVERRIDES_REMOTE_URL', "", group='Artwork sharing', kind='url', label='Follow artwork from', help="Another Posters+ instance whose Artwork overrides to use here, e.g. https://posters.example.com (its dashboard address works too). That instance must have Share artwork overrides on. Checked hourly; your own overrides win wherever both have one. Images it uploaded are copied here once. Blank follows none.", placeholder='https://posters.example.com').strip()
+
 # Where a TVDB clearlogo sits in the logo source chain:
 #   1 = TVDB first      — beats both TMDB and the Metahub CDN
 #   2 = TVDB mid        — after TMDB's own logos, but before Metahub
@@ -399,6 +403,17 @@ TRENDING_CATALOGS_ENABLED    = _env('TRENDING_CATALOGS_ENABLED', "true", group='
 # Leave out what can't be watched at home yet before ranks are numbered, so a
 # trending row (and the ranks on its posters) holds only what can be played.
 TRENDING_HIDE_UNRELEASED     = _env('TRENDING_HIDE_UNRELEASED', "false", group='Trending', kind='bool', label='Hide unreleased from trending', help='Leave titles that are not out at home yet off the trending lists: films still in cinemas or not released at all, series whose first episode has not aired, anime series AniList lists as not yet airing, and anime films not out at home by their TMDB dates. The remaining titles are ranked 1, 2, 3 without gaps, so the catalogs and the rank on every poster still agree. Takes effect at the next trending refresh. Off by default.').strip().lower() == "true"
+# The genre names TRENDING_HIDE_GENRES offers: GENRE_MAP's (below), once each.
+_TRENDING_GENRE_CHOICES = (
+    "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama",
+    "Family", "Fantasy", "History", "Horror", "Kids", "Music", "Mystery", "News",
+    "Reality", "Rom-Com", "Romance", "Sci-Fi", "Soap", "Talk", "Thriller", "War", "Western",
+)
+# Genres left off the trending lists for the whole instance, before ranks are
+# numbered, so every poster's rank and its catalog row still agree.  Names are
+# GENRE_MAP's; TV's merged genres count as both halves (genre_names).
+TRENDING_HIDE_GENRES = [g for g in _env('TRENDING_HIDE_GENRES', "", group='Trending', kind='multi', label='Hide genres from trending', help="Leave titles of these genres off the trending lists, the trending sashes' ranks and the trending catalogs alike. The remaining titles are ranked 1, 2, 3 without gaps, so catalog rows and the rank on every poster still agree. TV's merged genres count as both halves: Sci-Fi & Fantasy is Sci-Fi and Fantasy, Action & Adventure is Action and Adventure. Takes effect at the next trending refresh.", choices=_TRENDING_GENRE_CHOICES).split(",") if g in _TRENDING_GENRE_CHOICES]
+TRENDING_HIDE_MIXED_GENRES = _env('TRENDING_HIDE_MIXED_GENRES', "true", group='Trending', kind='bool', label='Hide titles that are partly a hidden genre', help='On: any title with a hidden genre is left off, so hiding Romance also hides a Comedy + Romance film. Off: only titles whose genres are all hidden ones are, so that film stays. Hiding Rom-Com covers titles that are both Comedy and Romance.').strip().lower() == "true"
 # Cap on how many entries are taken from a custom source, so a 10k-item list
 # cannot balloon the snapshot held in memory and in trending_cache.
 TRENDING_SOURCE_MAX_ITEMS    = max(1, int(_env('TRENDING_SOURCE_MAX_ITEMS', "500", group='Trending', kind='int', label='Custom source cap', help='Maximum entries taken from a custom trending source.', min=1, max=10000, advanced=True)))
@@ -865,6 +880,36 @@ def with_derived_genres(genre_ids: "list[int]") -> list[int]:
     if 35 in ids and 10749 in ids and ROMCOM_GENRE_ID not in ids:
         ids.append(ROMCOM_GENRE_ID)
     return ids
+
+
+# TV's merged genres stand for both their halves when a title is matched by
+# genre name (the trending catalogs' genre filter).
+_GENRE_NAME_EXTRAS = {10759: ("Adventure",), 10765: ("Fantasy",)}
+
+
+def genre_names(genre_ids: "list[int]") -> set[str]:
+    """The genre names *genre_ids* carry, movie and TV ids alike, Rom-Com
+    included (derived here when not already there)."""
+    names: set[str] = set()
+    for gid in with_derived_genres(genre_ids):
+        if GENRE_MAP.get(gid):
+            names.add(GENRE_MAP[gid])
+        names.update(_GENRE_NAME_EXTRAS.get(gid, ()))
+    return names
+
+
+def genre_hidden(genre_ids: "list[int]", hidden: "set[str]", mixed: bool) -> bool:
+    """Whether a title with *genre_ids* is one of the *hidden* genres (names):
+    any of them when *mixed*, else only when every genre it has is hidden.
+    Rom-Com is derived from Comedy + Romance, so it neither keeps a title nor,
+    hidden, stands apart from them: hiding it covers both."""
+    names = genre_names(genre_ids)
+    if mixed:
+        return bool(names & hidden)
+    base = names - {"Rom-Com"}
+    if "Rom-Com" in names and "Rom-Com" in hidden:
+        base -= {"Comedy", "Romance"}
+    return bool(names) and base <= hidden
 
 
 def genre_label(genre_ids: "list[int]", priority: "list[int]") -> str:

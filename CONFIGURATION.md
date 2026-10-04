@@ -121,6 +121,8 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `TRENDING_SOURCE_ANIME_MOVIE` | - | An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces AniList's trending anime films, for the Trending Anime Movies catalog and the rank on every anime film poster. Blank keeps AniList's list. Only used while the trending catalogs addon is on. |
 | `TRENDING_CATALOGS_ENABLED` | `true` | Serve the trending lists behind the Trending sashes as a Stremio addon with Trending Movies, Series, Anime and Anime Movies catalogs, at /trending/manifest.json (/trending/<access key>/manifest.json when an access key is set). Import it into your metadata addon and the "#N Today" labels match the row order. Anime then ranks on its own lists (from AniList, unless an anime trending source is set) and leaves the movie and TV lists, so every anime poster, whatever id it is requested by, carries its rank in the anime catalogs. On by default; turn off to serve no addon. `true` or `false`. |
 | `TRENDING_HIDE_UNRELEASED` | `false` | Leave titles that are not out at home yet off the trending lists: films still in cinemas or not released at all, series whose first episode has not aired, anime series AniList lists as not yet airing, and anime films not out at home by their TMDB dates. The remaining titles are ranked 1, 2, 3 without gaps, so the catalogs and the rank on every poster still agree. Takes effect at the next trending refresh. Off by default. `true` or `false`. |
+| `TRENDING_HIDE_GENRES` | - | Leave titles of these genres off the trending lists, the trending sashes' ranks and the trending catalogs alike. The remaining titles are ranked 1, 2, 3 without gaps, so catalog rows and the rank on every poster still agree. TV's merged genres count as both halves: Sci-Fi & Fantasy is Sci-Fi and Fantasy, Action & Adventure is Action and Adventure. Takes effect at the next trending refresh. Comma-separated, any of `Action`, `Adventure`, `Animation`, `Comedy`, `Crime`, `Documentary`, `Drama`, `Family`, `Fantasy`, `History`, `Horror`, `Kids`, `Music`, `Mystery`, `News`, `Reality`, `Rom-Com`, `Romance`, `Sci-Fi`, `Soap`, `Talk`, `Thriller`, `War`, `Western`. |
+| `TRENDING_HIDE_MIXED_GENRES` | `true` | On: any title with a hidden genre is left off, so hiding Romance also hides a Comedy + Romance film. Off: only titles whose genres are all hidden ones are, so that film stays. Hiding Rom-Com covers titles that are both Comedy and Romance. `true` or `false`. |
 
 #### Watchlist
 
@@ -185,6 +187,13 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | Variable | Default | Description |
 |---|---|---|
 | `FANART_POSTERS` | `false` | Let users pick Fanart as their poster source, for every title or for anime only: its most-liked textless poster, or under Original Art its most-liked poster in their language. TMDB when Fanart has none. Needs the Fanart key and, for series, the TVDB key. Adds poster downloads, cache and text scans for users who pick it. `true` or `false`. |
+
+#### Artwork sharing
+
+| Variable | Default | Description |
+|---|---|---|
+| `ART_OVERRIDES_SHARE` | `false` | Let other Posters+ instances follow the art you pick in the dashboard's Artwork view: every override is served read-only at /art-overrides/export.json, and uploaded or linked images at /custom-art/. Nothing else is shared. Off by default. `true` or `false`. |
+| `ART_OVERRIDES_REMOTE_URL` | - | Another Posters+ instance whose Artwork overrides to use here, e.g. https://posters.example.com (its dashboard address works too). That instance must have Share artwork overrides on. Checked hourly; your own overrides win wherever both have one. Images it uploaded are copied here once. Blank follows none. |
 
 #### Cinemeta fallback
 
@@ -338,6 +347,174 @@ Each catalog lists ranks 1 to `TRENDING_BROAD_FETCH_COUNT`, and item N is rank N
 With the addon enabled, anime ranks only on the two anime lists, which are built first. Every title on them is left off the movie and series lists, whatever its language, so no title is in two rows with two ranks; so is Japanese anime that isn't trending on AniList, by the anime id mapping or TMDB's Animation-from-Japan. The movie and series lists are numbered without them. Chinese and Korean animation that isn't on the anime lists stays on the series and movie lists, and so does Western animation. Every anime poster then shows its anime rank, whatever id it is requested by and whichever catalog it is in. An AniList or Kitsu id (a MyAnimeList id arrives as one of those) is one entry, a season on both sites, and shows that entry's rank. A TMDB or IMDb id is the whole show and shows the best rank any of its seasons holds. A title that isn't on the anime list shows its TMDB rank, if it has one.
 
 `TRENDING_SOURCE_ANIME` and `TRENDING_SOURCE_ANIME_MOVIE` replace AniList's lists, in the same shapes as the movie and TV sources. Their rows are TMDB ids, so their catalogs hand out IMDb (or TMDB) ids and posters are ranked by the TMDB id they carry.
+
+`TRENDING_HIDE_GENRES` (dashboard → Trending) leaves titles of those genres off the lists themselves, for the whole instance, before the ranks are numbered, as `TRENDING_HIDE_UNRELEASED` does, so the rows and the "#N" on every poster still agree. With `TRENDING_HIDE_MIXED_GENRES` on (the default) any title carrying a hidden genre is left off, so hiding Romance also hides a Comedy + Romance film; off, only titles whose genres are all hidden ones are, so that film stays. TV's merged genres count as both halves (Sci-Fi & Fantasy is Sci-Fi and Fantasy), and hiding Rom-Com covers titles that are both Comedy and Romance. Genres come from the list's own rows; a custom source's rows are looked up once in the title metadata the posters cache.
+
+## Artwork sharing
+
+| Variable | Default | Description |
+|---|---|---|
+| `ART_OVERRIDES_SHARE` | `false` | Let other Posters+ instances follow the art you pick in the dashboard's Artwork view: every override is served read-only at /art-overrides/export.json, and uploaded or linked images at /custom-art/. Nothing else is shared. Off by default. `true` or `false`. |
+| `ART_OVERRIDES_REMOTE_URL` | - | Another Posters+ instance whose Artwork overrides to use here, e.g. https://posters.example.com (its dashboard address works too). That instance must have Share artwork overrides on. Checked hourly; your own overrides win wherever both have one. Images it uploaded are copied here once. Blank follows none. |
+
+#### Cinemeta fallback
+
+| Variable | Default | Description |
+|---|---|---|
+| `CINEMETA_ENABLED` | `true` | Render from Stremio's Cinemeta catalogue (IMDb-keyed, no API key) when no TMDB key is available or TMDB has no record for the IMDb id, and try its Metahub art before the genre canvas when TMDB has no artwork. Needs an imdb_id (or a tt... stremio_id) on the request. `true` or `false`. |
+
+#### Anime sources
+
+| Variable | Default | Description |
+|---|---|---|
+| `ANIME_SOURCES_ENABLED` | `true` | Serve art, titles, genres and a community score from AniList and Kitsu when a client passes an anilist_id or kitsu_id (or a kitsu:/anilist: stremio_id). Clients that only speak imdb/tmdb are unaffected. Neither provider needs an API key. `true` or `false`. |
+| `ANIME_COMPOSITE_LOGO` | `true` | Composite a title logo over anime cover art. That art rarely carries a logotype (or only a small block of Japanese corner text), so a proper logo is usually an improvement; off serves the provider's art untouched. Logos come from TMDB, Metahub or TVDB, so the request needs a tmdb_id or imdb_id, or anime id mapping to supply one. `true` or `false`. |
+| `ANIME_ID_MAP_ENABLED` | `true` | Fill in the TMDB and IMDb ids an anime request didn't send, from the community Kitsu/AniList mapping list (downloaded daily into a local table). Lets a client that only sends a kitsu: or anilist: id get TMDB logos, landscape backdrops and IMDb-keyed ratings; art still comes from the anime provider. Also what lets a MyAnimeList id (mal_id, or a mal: stremio_id) render, as the Kitsu or AniList entry it maps to. `true` or `false`. |
+
+#### Rendering
+
+| Variable | Default | Description |
+|---|---|---|
+| `RANDOM_POSTERS` | `false` | Let users pick a random one of the top five posters (TMDB, Fanart or TVDB) instead of the top one. Each title can then store up to five posters in the disk cache instead of one; the pick changes when the poster re-renders. `true` or `false`. |
+
+#### Text detection
+
+| Variable | Default | Description |
+|---|---|---|
+| `TEXTLESS_TEXT_DETECTION` | `true` | Detect title text on posters TMDB mislabelled as textless and skip compositing a logo over them. Uses the PP-OCRv5 Mobile detector. `true` or `false`. |
+| `TEXTLESS_DETECTION_MAX_VOTES` | `3000` | Foreground OCR vote limit. Titles with more TMDB votes render without waiting, skip composite caching, and enter the idle background scan queue. Raise for foreground accuracy; lower for faster stale-cache bursts. Changing it invalidates cached composites. Only used when `TEXTLESS_TEXT_DETECTION` is `true`. |
+| `TEXTLESS_BACKDROP_FALLBACK` | `true` | When a poster TMDB tags as textless turns out to have its title burned in, use the runner-up textless poster (titles with 6+ of them) or a crop of the backdrop with a logo instead. Adds about half a second to the first render of those titles. Changing it invalidates cached composites. Only used when `TEXTLESS_TEXT_DETECTION` is `true`. `true` or `false`. |
+
+#### Performance
+
+| Variable | Default | Description |
+|---|---|---|
+| `WORKERS` | `1` | Uvicorn worker processes. One worker avoids duplicate uncached renders, scans and API work across processes. |
+| `QUALITY_BG_CONCURRENCY` | `5` | Caps concurrent background quality fetches when many uncached titles appear at once. |
+| `QUALITY_WAIT_TIMEOUT` | `30` | How long a request with wait_for_quality=true waits for the scraper. |
+| `MDBLIST_CONCURRENCY` | `3` | Maximum concurrent outbound MDBList requests per worker. MDBList drops requests past roughly 3 per key. |
+| `MDBLIST_MIN_INTERVAL` | `0.2` | Minimum seconds between the start of one outbound MDBList request and the next, across live renders and cache warming. MDBList has a short per-IP burst limit on top of the daily quota, and 3 unpaced concurrent calls can reach it during a cold catalog warm; 0.2 holds the server to 5 calls per second. 0 turns the pacing off. |
+| `POSTER_RENDER_CONCURRENCY` | `8` | Maximum uncached poster renders in flight per worker. Cache hits are never held back; a burst of fresh renders (a cold catalog grid) queues past this rather than exhausting the upstream connection pool. Raise on a machine with headroom, lower on a small VPS. |
+
+<!-- settings-reference:end -->
+
+> CPU guidance: keep `WORKERS × TEXTLESS_DETECTION_CONCURRENCY` at or below the CPU cores available to the container. Larger values can oversubscribe CPU, duplicate uncached work across workers, and reduce sustained throughput.
+
+> Sizing, measured with 120 uncached posters requested at once (a cold catalog grid), one worker, Oracle A1 (Ampere) cores:
+>
+> | Cores | `TEXTLESS_DETECTION_CONCURRENCY` | `POSTER_RENDER_CONCURRENCY` | 120 cold posters | Peak memory |
+> |---|---|---|---|---|
+> | 1 | 1 (default) | 8 (default) | ~66 s | ~680 MB |
+> | 2 | 1 | 8 | ~36 s | ~670 MB |
+> | 2 | **2** | 8 | ~31 s | ~850 MB |
+> | 4 | 1 | 8 | ~30 s | ~790 MB |
+> | 4 | **2** | 8 | ~21 s | ~850 MB |
+> | 4 | 3 | 8 | ~18 s | ~1.1 GB |
+>
+> `POSTER_RENDER_CONCURRENCY` is not a throughput knob: 4 to 32 measured the same wall time at every core count, and higher values only raise peak memory (each admitted render holds its decoded art while it waits for CPU). Leave it at `8`; `4`–`6` is a sensible ceiling on a 1 GB host. What scales with cores is `TEXTLESS_DETECTION_CONCURRENCY`: at the default of 1 the burned-in-text scans run one at a time and are most of the floor, so on 2 or more cores with 2 GB or more of RAM set it to `2`. Beyond ~18 s the single-process event loop is the ceiling and more cores do not help one worker.
+
+> The ~4.6 MB PP-OCRv5 Mobile model is baked into the image by default. Set `BAKE_PPOCR_MODEL=false` to download it into the cache volume on first use.
+
+When OCR rejects a TMDB poster marked as textless, Posters Plus records it in
+`/app/cache/fake_textless_posters.txt`. Each image appears once, with direct
+TMDB and image links for manual review. The report is advisory only and never
+edits TMDB automatically; delete it at any time to start a fresh review list.
+
+---
+
+## Quality via QualiCache
+
+The `aiostreams` and `scraper` backends scrape on the request path: the first
+view of a title waits on an addon, and a slow or rate-limited Torrentio/Comet
+shows up as posters served without badges.
+
+QualiCache inverts that. It is a hosted service, run alongside PostersPlus for
+its users and Nuvio HTPC's, that checks the same kind of addons in the background
+and picks one best release from a known release group. PostersPlus only reads
+what is already in its cache, so it never blocks on a scrape. QualiCache itself
+is not open source; connect to the hosted instance with the URL and access key
+below.
+
+```dotenv
+QUALITY_SOURCE=qualicache
+QUALICACHE_URL=https://quality.myaio.xyz
+QUALICACHE_API_KEY=HN7Aj1Z4CV95k0ZxJJ583nmU
+# Accept known ranked groups only (high), unknown groups too (medium), or all tiers (low)
+QUALICACHE_MIN_TRUST=medium
+```
+
+Leave `AIOSTREAMS_URL` and `AIOSTREAMS_AUTH` unset- they're ignored when
+`QUALITY_SOURCE` isn't `aiostreams`, and PostersPlus warns at startup if both
+are configured.
+
+**Pending results.** A title QualiCache hasn't collected yet answers `pending`
+rather than an error. PostersPlus serves the poster immediately without badges
+and doesn't cache that composite, so the next request picks the badges up once
+QualiCache has them. Crucially, pending doesn't count against the quality
+source's failure budget- a cold title never triggers the backoff that a real
+outage does. In practice, common and recently released titles are usually warm before
+anyone asks for them.
+
+QualiCache also ships an AIOStreams-shaped compatibility endpoint, so it works
+with `QUALITY_SOURCE=aiostreams` and no PostersPlus changes. Prefer
+`QUALITY_SOURCE=qualicache`: it reads QualiCache's tokens directly instead of
+round-tripping them through the AIOStreams response shape, and it can tell
+"still collecting" apart from "failed", which the compatibility endpoint can't
+express.
+
+QualiCache's token vocabulary is wider than PostersPlus's badge set. Tokens with
+no badge (`8K`, `1440P`, `720P`, `SD`, `BLURAY`, `WEBRIP`, `HDTV`) are dropped
+rather than mapped to an approximate equivalent, so a badge is never shown for
+quality the release doesn't actually have.
+
+---
+
+## Watchlist marker
+
+Self-hosted instances can mark every title in **one** user's watchlist with an amber **Watchlist** sash. It is a single list for the whole instance by design: the rendered-poster cache is shared by every client of an instance, so a per-user watchlist would fragment it per user and multiply upstream quota. That also makes it a poor fit for the public instance, which leaves it unset.
+
+Set `WATCHLIST_SOURCE` to one of:
+
+| Value | What it reads | What you need |
+|---|---|---|
+| `mdblist` | The MDBList watchlist of the account behind `MDBLIST_API_KEY` | Nothing extra. **Trakt users:** enable Trakt sync in MDBList's preferences and MDBList mirrors your Trakt watchlist here- Trakt's own API now needs a VIP-gated app key, so this is the free route |
+| `simkl` | The account's *Plan to Watch* list (`WATCHLIST_SIMKL_STATUSES` adds `watching` / `hold`) | A free SIMKL app: create one at [simkl.com/settings/developer](https://simkl.com/settings/developer/), choosing **TV, devices & command line**- PostersPlus links by code, so that type needs no secret and no redirect URL (pick **AUTH V2** if offered; V1 still works but retires around April 2027)- and set `SIMKL_CLIENT_ID`. Then open the [admin dashboard](README.md#admin-dashboard)'s **Watchlist** group: a *SIMKL account* panel offers a link code; open the link, sign in, approve, and the panel flips to linked. (The same link and code are printed in the container log, which is the route without an `ADMIN_KEY`.) Tokens live in the cache volume and V2 tokens refresh themselves. Only an app registered as *Server apps & services* also needs `SIMKL_CLIENT_SECRET` |
+| `trakt` | `TRAKT_USERNAME`'s watchlist | `TRAKT_CLIENT_ID` from an existing Trakt API app (creating one requires Trakt VIP as of August 2026). Reads the public profile with no OAuth; a private profile needs `TRAKT_ACCESS_TOKEN` too |
+| `pmdb` | The [PublicMetaDB](https://publicmetadb.com) watchlist of the account behind `PMDB_API_KEY` (`PMDB_LIST_ID` reads another list instead) | A PMDB API key from **Settings → API** on publicmetadb.com. PMDB lists carry only TMDB ids, so the sash needs the title's TMDB id: it shows wherever the server or client has a TMDB key, but not on a Cinemeta-only render |
+| an MDBList list URL | That list, via its JSON export- a shared household "to watch" list, for example | Nothing; public lists need no key |
+
+The same panel has an **Unlink account** button once linked: it forgets the token, takes the sash off every poster that had it, and offers a new code- for switching accounts, or moving from a V1 app to a V2 one. (A V2 grant is revoked at SIMKL as well; a V1 token has no revoke endpoint, so remove PostersPlus at simkl.com/settings/connected-apps if you want it gone there too.) Linking is an operator action, which is why it lives behind `ADMIN_KEY` rather than in the configurator: the link code is withheld from users of the instance, since approving it with their own account would point the instance at their watchlist. The configurator only shows which source is configured and how many titles it holds.
+
+The list is re-checked every `WATCHLIST_REFRESH_MINUTES` (default 30). Each check is cheap- one MDBList page per 500 titles, SIMKL's tiny `/sync/activities` call with the list itself only re-read when it changed, two Trakt calls, PMDB's list lookup plus one page per 500 titles- and when a title is added or removed, only the cached posters for *that* title are re-rendered, so the marker follows the tracker within one interval. The snapshot survives restarts. The sash is first in the default priority (a queued title beats an Oscar winner); drag it lower in the configurator if you would rather keep the prestige sashes on top. Plex/Jellyfin users need to re-run the sync script to push the updated posters.
+
+## Custom trending sources
+
+Set `TRENDING_SOURCE_MOVIE` and/or `TRENDING_SOURCE_TV` to an ordinary MDBList page URL or any endpoint returning TMDB-shaped `{"results": [{"id": 1234}]}` JSON. The source order becomes the ranking for both Trending sashes and cache warming. Movie and TV sources are independent; leave either one empty to keep TMDB's global list for that media type. Entries must contain numeric TMDB ids.
+
+## Trending catalogs addon
+
+The Trending sashes print a rank ("#10 Today"), but a Trending row in your metadata addon is built from its own copy of the list, fetched at a different time. TMDB's list moves every few minutes, so the two rarely agree. PostersPlus serves the lists behind the sashes as a small Stremio addon, so the row order matches the labels exactly. It is on by default; set `TRENDING_CATALOGS_ENABLED=false` to turn it off.
+
+The manifest is at `/trending/manifest.json`, or `/trending/<ACCESS_KEY>/manifest.json` when an access key is set (the configurator shows the full URL under Core). It has four catalogs:
+
+| Catalog | List |
+|---|---|
+| Trending Movies | TMDB's day list, or `TRENDING_SOURCE_MOVIE`, without anime |
+| Trending Series | TMDB's day list, or `TRENDING_SOURCE_TV`, without anime |
+| Trending Anime | AniList's trending anime series (TV, TV short and ONA), or `TRENDING_SOURCE_ANIME` |
+| Trending Anime Movies | AniList's trending anime films, or `TRENDING_SOURCE_ANIME_MOVIE` |
+
+Each catalog lists ranks 1 to `TRENDING_BROAD_FETCH_COUNT`, and item N is rank N. Each poster URL it hands out carries an `rv=` naming the list it was cut from, so when a list is rebuilt outside the daily refresh, a client holding the previous images (each with its old rank) fetches new ones instead of keeping them for their max-age. In AIOMetadata, import the manifest as a custom manifest and set each catalog's cache time to 0, so the row is re-read from PostersPlus whenever it opens. A longer cache time works too, but the row then lags the labels for up to that long after each daily refresh. AIOMetadata's own filters, such as an age-rating cap, can still remove titles from a row, which leaves a gap in the numbers.
+
+With the addon enabled, anime ranks only on the two anime lists, which are built first. Every title on them is left off the movie and series lists, whatever its language, so no title is in two rows with two ranks; so is Japanese anime that isn't trending on AniList, by the anime id mapping or TMDB's Animation-from-Japan. The movie and series lists are numbered without them. Chinese and Korean animation that isn't on the anime lists stays on the series and movie lists, and so does Western animation. Every anime poster then shows its anime rank, whatever id it is requested by and whichever catalog it is in. An AniList or Kitsu id (a MyAnimeList id arrives as one of those) is one entry, a season on both sites, and shows that entry's rank. A TMDB or IMDb id is the whole show and shows the best rank any of its seasons holds. A title that isn't on the anime list shows its TMDB rank, if it has one.
+
+`TRENDING_SOURCE_ANIME` and `TRENDING_SOURCE_ANIME_MOVIE` replace AniList's lists, in the same shapes as the movie and TV sources. Their rows are TMDB ids, so their catalogs hand out IMDb (or TMDB) ids and posters are ranked by the TMDB id they carry.
+
+The configurator's **Hide Genres** chips leave titles of those genres off every row of the addon URL it gives you (they ride in its `cfg-` segment as `tc_hide_genres`, and are never passed on to the posters). With **Hide Mixed Titles** on (the default) any title carrying a hidden genre is left off, so hiding Romance also hides a Comedy + Romance film; off, only titles whose genres are all hidden ones are, so that film stays. TV's merged genres count as both halves (Sci-Fi & Fantasy is Sci-Fi and Fantasy), and hiding Rom-Com covers titles that are both Comedy and Romance. Ranks don't change: each poster keeps its place on the whole list, so a row with titles hidden skips their numbers.
+
+## Artwork sharing
+
+A large public instance can share the art its operator picks in the dashboard's Artwork view with smaller ones. On the sharing instance, turn on `ART_OVERRIDES_SHARE`: every override is then served read-only at `/art-overrides/export.json`, alongside the uploaded and linked images already public at `/custom-art/`. On a following instance, set `ART_OVERRIDES_REMOTE_URL` to the sharer's address (its dashboard link, such as `https://posters.example.com/admin#artwork`, works too). The follower checks hourly, skips anything a dashboard write here would refuse (art from hosts other than TMDB, fanart.tv and TVDB, malformed ids), and copies each shared image once, keeping it only if its bytes match its name, which is a hash of its content. Your own overrides win wherever both instances have one for the same title, slot and language. The Artwork view shows what is followed: the list says when it last synced, and a title's slots read "Shared" where the followed pick applies. Clearing the URL drops the followed overrides when the server restarts.
 
 ## Customising directors, studios and cast
 

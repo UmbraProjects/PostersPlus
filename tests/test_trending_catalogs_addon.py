@@ -286,7 +286,7 @@ class AniListTrendingTests(unittest.TestCase):
             ids = asyncio.run(anime.fetch_anilist_trending(client, details))
         self.assertEqual(ids, ["anilist:1", "anilist:2", "anilist:3"])
         self.assertEqual(calls, [1, 2])
-        self.assertEqual(details["anilist:1"], {"name": "One", "year": "2026", "poster": "l1"})
+        self.assertEqual(details["anilist:1"], {"name": "One", "year": "2026", "poster": "l1", "genres": [16]})
         self.assertEqual(details["anilist:2"]["poster"], "x2")
 
     def test_query_keeps_to_series_formats(self):

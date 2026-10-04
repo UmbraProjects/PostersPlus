@@ -48,6 +48,7 @@ import asyncio
 import hashlib
 import io
 import ipaddress
+import json
 import logging
 import os
 import re
@@ -153,6 +154,8 @@ class Override:
     title: str
     updated_at: float
     crop: Crop | None = None
+    # From a followed instance (ART_OVERRIDES_REMOTE_URL), not this one's own.
+    remote: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -355,7 +358,8 @@ def _drop_unused_custom(paths: Iterable[str]) -> None:
         return
     try:
         used = {row[0] for row in get_db().execute(
-            "SELECT path FROM art_overrides WHERE path LIKE 'custom:%'")}
+            "SELECT path FROM art_overrides WHERE path LIKE 'custom:%' "
+            "UNION SELECT path FROM art_overrides_remote WHERE path LIKE 'custom:%'")}
     except Exception as exc:
         logger.error(f"Art overrides: couldn't check custom image use ({exc})")
         return
@@ -375,24 +379,28 @@ def _drop_unused_custom(paths: Iterable[str]) -> None:
 # Snapshot
 # ---------------------------------------------------------------------------
 
+_COLUMNS = ("media_type, tmdb_id, slot, language, path, provider, sources, "
+            "title, updated_at, crop")
+
+
 def _load() -> dict[tuple[str, str], Entry]:
-    rows = get_db().execute(
-        "SELECT media_type, tmdb_id, slot, language, path, provider, sources, "
-        "title, updated_at, crop FROM art_overrides"
-    ).fetchall()
+    """Every override in effect: a followed instance's, then this one's own
+    over them, slot by slot and language by language."""
     out: dict[tuple[str, str], Entry] = {}
-    for media_type, tmdb_id, slot, language, path, provider, sources, title, updated_at, crop in rows:
-        if slot not in SLOTS:
-            continue
-        try:
-            crop = parse_crop(crop)
-        except ValueError:
-            crop = None
-        out.setdefault((media_type, tmdb_id), {}).setdefault(slot, {})[language] = Override(
-            slot, language, path, provider,
-            frozenset(s for s in (sources or "").split(",") if s),
-            title or "", float(updated_at), crop,
-        )
+    for table, remote in (("art_overrides_remote", True), ("art_overrides", False)):
+        rows = get_db().execute(f"SELECT {_COLUMNS} FROM {table}").fetchall()
+        for media_type, tmdb_id, slot, language, path, provider, sources, title, updated_at, crop in rows:
+            if slot not in SLOTS:
+                continue
+            try:
+                crop = parse_crop(crop)
+            except ValueError:
+                crop = None
+            out.setdefault((media_type, tmdb_id), {}).setdefault(slot, {})[language] = Override(
+                slot, language, path, provider,
+                frozenset(s for s in (sources or "").split(",") if s),
+                title or "", float(updated_at), crop, remote,
+            )
     return out
 
 
@@ -606,7 +614,9 @@ def list_overrides() -> list[dict]:
     refresh(force=True)
     titles = []
     for (media_type, tmdb_id), entry in _snapshot.items():
-        items = [o.as_dict() for slot in entry.values() for o in slot.values()]
+        items = [o.as_dict() for slot in entry.values() for o in slot.values() if not o.remote]
+        if not items:
+            continue
         titles.append({
             "media_type": media_type,
             "tmdb_id": tmdb_id,
@@ -621,4 +631,238 @@ def list_overrides() -> list[dict]:
 def title_overrides(media_type: str, tmdb_id: str) -> list[dict]:
     refresh(force=True)
     entry = _snapshot.get((media_kind(media_type), str(tmdb_id))) or {}
-    return [o.as_dict() for slot in entry.values() for o in slot.values()]
+    return [o.as_dict() for slot in entry.values() for o in slot.values() if not o.remote]
+
+
+def remote_title_overrides(media_type: str, tmdb_id: str) -> list[dict]:
+    """The followed instance's overrides for a title, for the dashboard to
+    show beside this one's own.  Each says whether a local one replaces it."""
+    try:
+        rows = get_db().execute(
+            f"SELECT {_COLUMNS} FROM art_overrides_remote WHERE media_type = ? AND tmdb_id = ?",
+            (media_kind(media_type), str(tmdb_id)),
+        ).fetchall()
+    except Exception:
+        return []
+    entry = _snapshot.get((media_kind(media_type), str(tmdb_id))) or {}
+    out = []
+    for _mt, _id, slot, language, path, provider, sources, title, updated_at, _crop in rows:
+        current = entry.get(slot, {}).get(language)
+        out.append({"slot": slot, "language": language, "path": path, "provider": provider,
+                    "sources": sorted(x for x in (sources or "").split(",") if x),
+                    "replaced": current is not None and not current.remote})
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Sharing: one instance follows another's overrides
+# ---------------------------------------------------------------------------
+#
+# A large public instance curates art; small self-hosted ones follow it.  The
+# sharer turns on ART_OVERRIDES_SHARE, which serves every override as JSON at
+# /art-overrides/export.json (custom images are at /custom-art/<name>
+# already).  A follower sets ART_OVERRIDES_REMOTE_URL; its background worker
+# pulls the export every _REMOTE_INTERVAL, replaces art_overrides_remote with
+# it, and downloads the custom images it hasn't got.  Its own overrides win,
+# slot by slot and language by language.  Every row is validated exactly as
+# a dashboard write would be, and a custom image is kept only if its bytes
+# hash to its name (names are content hashes), so the sharer can't make a
+# follower fetch anything but art from the usual providers or itself.
+
+EXPORT_VERSION = 1
+_REMOTE_INTERVAL = 3600.0
+_REMOTE_STATE_KEY = "art_overrides_remote_state"
+_MAX_EXPORT_BYTES = 20 * 1024 * 1024
+
+
+def export() -> dict:
+    """This instance's own overrides, for followers."""
+    rows = get_db().execute(f"SELECT {_COLUMNS} FROM art_overrides").fetchall()
+    return {
+        "version": EXPORT_VERSION,
+        "rev": get_app_state(_REV_KEY) or "",
+        "overrides": [
+            {"media_type": mt, "tmdb_id": tid, "slot": slot, "language": language,
+             "path": path, "sources": [x for x in (sources or "").split(",") if x],
+             "title": title or "", "updated_at": float(updated_at), "crop": crop}
+            for mt, tid, slot, language, path, _provider, sources, title, updated_at, crop in rows
+        ],
+    }
+
+
+def remote_base(url: str | None) -> str | None:
+    """The followed instance's base address from what the operator typed: a
+    bare site ("https://postersplus.cc"), or any page on it — the dashboard's
+    Artwork link (".../admin#artwork") included.  None when it isn't one."""
+    url = (url or "").strip()
+    if not url:
+        return None
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password:
+        return None
+    path = parts.path
+    for tail in ("/admin", "/configure", "/art-overrides"):
+        at = path.find(tail)
+        if at >= 0:
+            path = path[:at]
+    netloc = parts.hostname + (f":{parts.port}" if parts.port else "")
+    return f"{parts.scheme}://{netloc}{path.rstrip('/')}"
+
+
+def _remote_row(item: dict) -> tuple | None:
+    """A followed row as an art_overrides_remote tuple, or None when it
+    wouldn't pass a dashboard write."""
+    try:
+        slot = str(item.get("slot") or "")
+        if slot not in SLOTS:
+            return None
+        tmdb_id = str(item.get("tmdb_id") or "")
+        if not re.fullmatch(r"\d{1,10}", tmdb_id):
+            return None
+        media_type = media_kind(str(item.get("media_type") or ""))
+        language = normalise_language(slot, item.get("language"))
+        path = str(item.get("path") or "")
+        provider = provider_of(path)
+        sources = normalise_sources(slot, item.get("sources") if isinstance(item.get("sources"), list) else None)
+        crop = parse_crop(item.get("crop"))
+        if crop is not None and slot != "textless":
+            return None
+        updated_at = float(item.get("updated_at") or 0)
+    except (TypeError, ValueError):
+        return None
+    return (media_type, tmdb_id, slot, language, path, provider, ",".join(sorted(sources)),
+            str(item.get("title") or "")[:200], updated_at, crop.token() if crop else None)
+
+
+async def _fetch_custom(client: httpx.AsyncClient, base: str, path: str) -> bool:
+    """Bring a followed custom image here, unless it already is.  Kept only
+    when its bytes hash to its name."""
+    file = custom_file(path)
+    if file is None:
+        return False
+    if os.path.exists(file):
+        return True
+    name = path[len(CUSTOM_PREFIX):]
+    try:
+        resp = await client.get(f"{base}/custom-art/{name}", timeout=httpx.Timeout(30.0, connect=8.0))
+    except httpx.HTTPError as exc:
+        logger.warning(f"Art overrides: couldn't fetch shared image {name} ({type(exc).__name__})")
+        return False
+    data = resp.content if resp.status_code == 200 else b""
+    if not data or len(data) > MAX_CUSTOM_BYTES or hashlib.sha256(data).hexdigest()[:16] != name.split(".")[0]:
+        logger.warning(f"Art overrides: shared image {name} missing or not what its name says")
+        return False
+    os.makedirs(_cfg.CUSTOM_ART_DIR, exist_ok=True)
+    tmp = f"{file}.tmp-{os.getpid()}-{threading.get_ident()}"
+    with open(tmp, "wb") as fh:
+        fh.write(data)
+    os.replace(tmp, file)
+    return True
+
+
+def remote_state() -> dict:
+    """What the last sync did, for the dashboard."""
+    try:
+        state = json.loads(get_app_state(_REMOTE_STATE_KEY) or "{}")
+    except ValueError:
+        state = {}
+    state["url"] = remote_base(_cfg.ART_OVERRIDES_REMOTE_URL)
+    return state
+
+
+def _set_remote_state(**fields) -> None:
+    state = remote_state()
+    state.pop("url", None)
+    state.update(fields)
+    set_app_state(_REMOTE_STATE_KEY, json.dumps(state))
+
+
+def _replace_remote(rows: list[tuple]) -> set[tuple[str, str]]:
+    """Swap art_overrides_remote for *rows*; the titles whose rows changed."""
+    with _db_lock:
+        db = get_db()
+        old = db.execute(f"SELECT {_COLUMNS} FROM art_overrides_remote").fetchall()
+        def by_title(rs):
+            out: dict = {}
+            for r in rs:
+                # What a render reads: not the title or the time.
+                out.setdefault((r[0], r[1]), set()).add(tuple(r[2:7]) + (r[9],))
+            return out
+        before, after = by_title(old), by_title(rows)
+        changed = {k for k in before.keys() | after.keys() if before.get(k) != after.get(k)}
+        if changed:
+            db.execute("DELETE FROM art_overrides_remote")
+            db.executemany(
+                f"INSERT OR REPLACE INTO art_overrides_remote ({_COLUMNS}) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+        db.commit()
+    dropped = {r[4] for r in old} - {r[4] for r in rows}
+    if changed:
+        set_app_state(_REV_KEY, str(time.time_ns()))
+        for media_type, tmdb_id in changed:
+            invalidate_final_posters(tmdb_id, media_type)
+        refresh(force=True)
+        _drop_unused_custom(dropped)
+    return changed
+
+
+async def sync_remote(client: httpx.AsyncClient) -> None:
+    """Pull the followed instance's overrides once.  With none set, drop any
+    a previous one left."""
+    base = remote_base(_cfg.ART_OVERRIDES_REMOTE_URL)
+    if base is None:
+        if get_db().execute("SELECT 1 FROM art_overrides_remote LIMIT 1").fetchone():
+            changed = await asyncio.to_thread(_replace_remote, [])
+            logger.info(f"Art overrides: no longer following; dropped {len(changed)} title(s)")
+            _set_remote_state(count=0, synced_at=time.time(), error=None, rev=None)
+        return
+    state = remote_state()
+    headers = {"If-None-Match": f'"{state["rev"]}"'} if state.get("rev") and state.get("base") == base else {}
+    try:
+        resp = await client.get(f"{base}/art-overrides/export.json", headers=headers,
+                                timeout=httpx.Timeout(30.0, connect=8.0))
+    except httpx.HTTPError as exc:
+        _set_remote_state(error=f"couldn't reach it ({type(exc).__name__})", checked_at=time.time())
+        logger.warning(f"Art overrides: couldn't reach {base} ({exc})")
+        return
+    if resp.status_code == 304:
+        _set_remote_state(error=None, checked_at=time.time())
+        return
+    if resp.status_code == 404:
+        _set_remote_state(error="that instance doesn't share its artwork", checked_at=time.time())
+        return
+    if resp.status_code != 200 or len(resp.content) > _MAX_EXPORT_BYTES:
+        _set_remote_state(error=f"HTTP {resp.status_code}", checked_at=time.time())
+        return
+    try:
+        data = resp.json()
+        items = data["overrides"]
+        if data.get("version") != EXPORT_VERSION or not isinstance(items, list):
+            raise ValueError
+    except (ValueError, KeyError, TypeError):
+        _set_remote_state(error="not an artwork export", checked_at=time.time())
+        return
+    rows, skipped = [], 0
+    for item in items:
+        row = _remote_row(item) if isinstance(item, dict) else None
+        if row is not None and row[5] == "custom" and not await _fetch_custom(client, base, row[4]):
+            row = None
+        if row is None:
+            skipped += 1
+            continue
+        rows.append(row)
+    changed = await asyncio.to_thread(_replace_remote, rows)
+    _set_remote_state(base=base, rev=str(data.get("rev") or "") or None, count=len(rows),
+                      skipped=skipped, synced_at=time.time(), checked_at=time.time(), error=None)
+    logger.info(f"Art overrides: synced {len(rows)} override(s) from {base}"
+                f" ({len(changed)} title(s) changed{f', {skipped} skipped' if skipped else ''})")
+
+
+async def remote_sync_loop(client: httpx.AsyncClient) -> None:
+    """sync_remote every _REMOTE_INTERVAL, in the background worker."""
+    while True:
+        try:
+            await sync_remote(client)
+        except Exception as exc:
+            logger.error(f"Art overrides: sync failed ({exc})")
+        await asyncio.sleep(_REMOTE_INTERVAL)

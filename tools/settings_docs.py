@@ -77,6 +77,8 @@ def render() -> str:
                 desc += " `true` or `false`."
             elif s.kind == "list":
                 desc += " Comma-separated."
+            elif s.kind == "multi":
+                desc += " Comma-separated, any of " + ", ".join(f"`{c}`" for c in s.choices) + "."
             out.append(f"| `{s.key}` | {_default(s)} | {_cell(desc)} |")
         out.append("")
     out.append(END)

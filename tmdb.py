@@ -90,6 +90,8 @@ from config import (
     TRENDING_SOURCE_ANIME_MOVIE,
     TRENDING_SOURCE_MAX_ITEMS,
     TRENDING_HIDE_UNRELEASED,
+    TRENDING_HIDE_GENRES,
+    TRENDING_HIDE_MIXED_GENRES,
     TRENDING_FETCH_COUNT,
     TRENDING_BROAD_FETCH_COUNT,
     CINEMETA_ENABLED,
@@ -1392,6 +1394,71 @@ async def fetch_landscape_image(
     return await asyncio.to_thread(_decode_and_store, content)
 
 
+# Where a poster's 16:9 cut sits with no face to centre on: a third of the
+# way down, above the title most posters carry low.
+_PORTRAIT_CUT_Y = 0.3
+
+
+def _landscape_from_portrait(image: Image.Image) -> Image.Image:
+    """A 16:9 cut of a portrait image at the landscape canvas: across its full
+    width, centred on its faces where it has any, else _PORTRAIT_CUT_Y down."""
+    target_w, target_h = LANDSCAPE_WIDTH, LANDSCAPE_HEIGHT
+    if image.width / image.height >= target_w / target_h:
+        return normalise_landscape(image)
+    scale = target_w / image.width
+    image = image.resize((target_w, round(image.height * scale)), Image.Resampling.LANCZOS)
+    room = image.height - target_h
+    top = room * _PORTRAIT_CUT_Y
+    try:
+        import face_detect
+        faces = face_detect.detect_face_boxes(image.convert("RGB"))
+    except Exception:
+        faces = []
+    if faces:
+        weight = sum(max(score, 0.0) ** 3 * fw * fh for _x, _y, fw, fh, score in faces)
+        if weight > 0:
+            cy = sum((y + fh / 2) * max(score, 0.0) ** 3 * fw * fh
+                     for _x, y, fw, fh, score in faces) / weight
+            top = cy - target_h / 2
+    top = round(min(max(top, 0), room))
+    return image.crop((0, top, target_w, top + target_h))
+
+
+async def fetch_landscape_crop(
+    client: httpx.AsyncClient,
+    tmdb_id: str,
+    poster_path: str,
+) -> Image.Image:
+    """A poster cut to the landscape canvas (landscape_poster_crop), for a
+    title with no backdrop anywhere.  A TMDB poster is fetched at w780, which
+    a 1000-wide cut barely enlarges."""
+    cache_key = landscape_image_cache_key(tmdb_id, poster_path) + "_pcut"
+    image = await asyncio.to_thread(
+        _cached_art, cache_key, (LANDSCAPE_WIDTH, LANDSCAPE_HEIGHT), normalise_landscape
+    )
+    if image is not None:
+        logger.info(f"Landscape poster cut cache hit for {tmdb_id}")
+        return image
+    if poster_path.startswith("custom:"):
+        from art_overrides import custom_art_bytes
+        content = await asyncio.to_thread(custom_art_bytes, poster_path)
+        if content is None:
+            raise FileNotFoundError(f"custom art {poster_path} is missing")
+    elif is_absolute_art(poster_path):
+        logger.info(f"External API Call: Requested poster art for a landscape cut of {tmdb_id}")
+        content = await _get_art(client, poster_path, follow_redirects=True)
+    else:
+        logger.info(f"External API Call: Requested poster from TMDB for a landscape cut of {tmdb_id}")
+        content = await _get_art(client, f"https://image.tmdb.org/t/p/w780{poster_path}")
+
+    def _decode_and_store(content: bytes) -> Image.Image:
+        image = _landscape_from_portrait(Image.open(io.BytesIO(content)).convert("RGBA"))
+        _store_art(cache_key, image)
+        return image
+
+    return await asyncio.to_thread(_decode_and_store, content)
+
+
 def _crop_and_normalise_backdrop(image: Image.Image, tmdb_id: str,
                                  avoid_text: bool,
                                  size: tuple[int, int] | None = None) -> Image.Image:
@@ -1936,6 +2003,8 @@ def trending_source_signature(media_type: str) -> str:
     out = "+released" if TRENDING_HIDE_UNRELEASED else ""
     if out and media_type == "anime_movie":
         out += "-home"            # AniList's films checked against TMDB's dates too
+    if TRENDING_HIDE_GENRES:
+        out += ("-genres:" if TRENDING_HIDE_MIXED_GENRES else "-onlygenres:") + ",".join(TRENDING_HIDE_GENRES)
     if media_type not in ANIME_ENDPOINTS and anime_split():
         out += _ANIME_SPLIT_MARK
     url = _normalise_trending_url(trending_source_url(media_type))
@@ -1997,6 +2066,9 @@ def _trending_item_details(item: dict) -> dict:
         out["lang"] = lang
     if 16 in (item.get("genre_ids") or []) and lang == "ja":
         out["anime"] = True
+    # TMDB genre ids, for the catalogs' genre filter.
+    if isinstance(item.get("genre_ids"), list):
+        out["genres"] = [g for g in item["genre_ids"] if isinstance(g, int)]
     # TMDB's vote count, for the cinema window TRENDING_HIDE_UNRELEASED
     # judges a film's release status by (cinema_window_days).
     if isinstance(item.get("vote_count"), int):
@@ -2145,7 +2217,7 @@ async def _fetch_tmdb_trending_ids(
     """
     # Anime is a fifth of TV's list, and unreleased films a good share of
     # movies': twice the pages keeps the broad sash's ranks filled after.
-    pages_n = 10 if (TRENDING_HIDE_UNRELEASED or anime_split()) else 5
+    pages_n = 10 if (TRENDING_HIDE_UNRELEASED or TRENDING_HIDE_GENRES or anime_split()) else 5
     logger.info(f"External API Call: Refreshing TMDB trending snapshot (pages 1-{pages_n} concurrent)")
 
     async def _fetch_page(page: int) -> list[dict]:
@@ -2251,6 +2323,47 @@ def _without_anime(endpoint: str, ids: list[str], details: dict[str, dict],
     kept = [i for i in ids if not is_anime(i)]
     if len(kept) < len(ids):
         logger.info(f"Trending {endpoint}: {len(ids) - len(kept)} anime title(s) left to the anime lists")
+    return kept
+
+
+async def _without_hidden_genres(
+    client: httpx.AsyncClient, tmdb_key: str, endpoint: str,
+    ids: list[str], details: dict[str, dict],
+) -> list[str]:
+    """*ids* without the titles TRENDING_HIDE_GENRES hides.  Genres come off
+    the list's own rows (TMDB's and AniList's carry them); a row without them
+    (a custom source's) is looked up in the title metadata the posters cache,
+    and kept when that fails, so a hiccup doesn't empty the row.  Numbered
+    after this, so the ranks have no gaps."""
+    hidden = set(TRENDING_HIDE_GENRES)
+    if not hidden:
+        return ids
+    kind = trending_kind(endpoint)
+    sem = asyncio.Semaphore(8)
+
+    async def genres_of(entry_id: str) -> "list[int] | None":
+        detail = details.get(entry_id) or {}
+        if isinstance(detail.get("genres"), list):
+            return detail["genres"]
+        if entry_id.startswith("anilist:") or not tmdb_key:
+            return None
+        async with sem:
+            try:
+                meta = await fetch_poster_metadata(client, entry_id, tmdb_key, kind)
+            except Exception as exc:
+                logger.warning(f"Trending: no genres for {kind} {entry_id}: {exc}")
+                return None
+        genre_ids = list(meta[0])
+        detail["genres"] = genre_ids
+        details[entry_id] = detail
+        return genre_ids
+
+    from config import genre_hidden
+    genres = await asyncio.gather(*(genres_of(i) for i in ids))
+    kept = [i for i, g in zip(ids, genres)
+            if g is None or not genre_hidden(g, hidden, TRENDING_HIDE_MIXED_GENRES)]
+    if len(kept) < len(ids):
+        logger.info(f"Trending {endpoint}: left out {len(ids) - len(kept)} title(s) of hidden genres")
     return kept
 
 
@@ -2363,15 +2476,18 @@ async def ensure_trending_snapshot(
             # out what isn't home yet checks each one's TMDB dates (below) and
             # needs more of the list to have as many after.
             check_home = films and TRENDING_HIDE_UNRELEASED
-            want = max(TRENDING_FETCH_COUNT, TRENDING_BROAD_FETCH_COUNT) * (2 if check_home else 1)
+            want = max(TRENDING_FETCH_COUNT, TRENDING_BROAD_FETCH_COUNT) * (
+                2 if (check_home or TRENDING_HIDE_GENRES) else 1)
             ids = await _read_twice(lambda: fetch_anilist_trending(client, details, films=films, limit=want),
                                     f"AniList {endpoint}")
             if not ids:
                 _trending_source_failed_at[endpoint] = time.monotonic()
                 return None
             _trending_source_failed_at.pop(endpoint, None)
+            ids = await _without_hidden_genres(client, tmdb_key, endpoint, ids, details)
             if check_home:
                 ids = await _released_only(client, tmdb_key, endpoint, ids, details)
+            ids = ids[:max(TRENDING_FETCH_COUNT, TRENDING_BROAD_FETCH_COUNT)]
             rankings = {entry_id: position for position, entry_id in enumerate(ids, start=1)}
             await asyncio.to_thread(set_cached_trending_snapshot, endpoint, rankings, source_sig, details)
             await asyncio.to_thread(_expire_overlapping_lists)
@@ -2415,6 +2531,7 @@ async def ensure_trending_snapshot(
             for anime_endpoint in ANIME_ENDPOINTS:
                 await ensure_trending_snapshot(client, tmdb_key, anime_endpoint)
             ids = _without_anime(endpoint, ids, details, _anime_list_tmdb_ids(trending_kind(endpoint)))
+        ids = await _without_hidden_genres(client, tmdb_key, endpoint, ids, details)
         if TRENDING_HIDE_UNRELEASED:
             ids = await _released_only(client, tmdb_key, endpoint, ids, details)
         rankings = {entry_id: position for position, entry_id in enumerate(ids, start=1)}

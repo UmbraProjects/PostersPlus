@@ -314,6 +314,14 @@
 
   /* "order" settings: a ranked list, dragged or moved with the arrows. */
   .order-list { list-style: none; margin: 0; padding: 0; counter-reset: order; max-width: 420px; }
+  /* A "multi" setting: any number of its choices, as toggle chips. */
+  .multi-chips { display: flex; flex-wrap: wrap; gap: 6px; max-width: 560px; }
+  .multi-chip {
+    padding: 5px 10px; font-size: 11.5px; color: var(--text-muted);
+    background: var(--black2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    cursor: pointer; user-select: none;
+  }
+  .multi-chip.on { color: var(--gold-bright); border-color: var(--gold-dim); }
   .order-item {
     display: flex; align-items: center; gap: 10px;
     padding: 5px 8px; margin-bottom: 3px;
@@ -1197,9 +1205,22 @@ function control(s) {
     }
     case 'order':
       return orderList(s);
+    case 'multi': {
+      const on = new Set(String(v ?? '').split(',').map(x => x.trim()));
+      return `<div class="multi-chips" id="${id}">${s.choices.map(c => `<button type="button" class="multi-chip ${on.has(c) ? 'on' : ''}" aria-pressed="${on.has(c)}" data-v="${esc(c)}" onclick="multiToggle('${s.key}', this)">${esc((s.labels || {})[c] || c)}</button>`).join('')}</div>`;
+    }
     default:
       return `<input type="text" id="${id}" value="${esc(v)}" placeholder="${esc(s.placeholder || s.default || '')}" oninput="edit('${s.key}', this.value)" onchange="controllerChanged('${s.key}')">`;
   }
+}
+
+// A "multi" setting: the chips that are on, in the choices' own order.
+function multiToggle(key, btn) {
+  const on = btn.classList.toggle('on');
+  btn.setAttribute('aria-pressed', on);
+  const s = findSetting(key);
+  const picked = [...document.querySelectorAll(`#f-${key} .multi-chip.on`)].map(b => b.dataset.v);
+  edit(key, s.choices.filter(c => picked.includes(c)).join(','));
 }
 
 // An "order" setting: its choices ranked, most important first.  Dragging
@@ -2459,6 +2480,7 @@ function artSlotLang() { return artNoLang(art.slot) ? '' : art.lang; }
 async function loadArtList() {
   const r = await api('/admin/api/art/overrides');
   art.list = r.ok ? r.body.titles : [];
+  art.remote = r.ok ? r.body.remote : null;
   if (activeView === 'artwork' && !art.title) renderView();
 }
 // Both search boxes search as you type, like the configurator's: 500 ms
@@ -2843,6 +2865,13 @@ function renderArtwork() {
     html += art.results.length ? `<div class="art-results">${art.results.map(r => `<button type="button" class="art-result" onclick="artOpen('${r.media_type}','${esc(r.tmdb_id)}')">${r.thumb ? `<img src="${esc(r.thumb)}" alt="" loading="lazy">` : '<span class="ph"></span>'}<span class="meta"><div class="name">${esc(r.title)}</div><div class="sub">${r.media_type === 'tv' ? 'Series' : 'Movie'}${r.year ? ' · ' + esc(r.year) : ''} · TMDB ${esc(r.tmdb_id)}</div></span>${r.overridden ? '<span class="chip file">chosen art</span>' : ''}</button>`).join('')}</div>`
       : `<div class="art-empty">Nothing found for “${esc(art.q)}”.</div>`;
   }
+  const rm = art.remote;
+  if (rm && rm.url) {
+    const what = rm.error ? `last check failed: ${esc(rm.error)}`
+      : rm.synced_at ? `${rm.count || 0} override${rm.count === 1 ? '' : 's'}, checked ${fmtAgo(rm.checked_at || rm.synced_at)}${rm.skipped ? ` (${rm.skipped} skipped)` : ''}`
+      : 'not synced yet';
+    html += `<div class="field-hint" style="margin:8px 0 0">Following <code>${esc(rm.url)}</code>: ${what}. Your own choices win where both have one.</div>`;
+  }
   html += `<div class="field-head" style="margin-top:8px"><span class="field-label">Titles with chosen art</span></div>`;
   if (!art.list) html += `<div class="art-empty">Loading…</div>`;
   else if (!art.list.length) html += `<div class="art-empty">None yet.</div>`;
@@ -2850,13 +2879,20 @@ function renderArtwork() {
   return html + `</div></div>`;
 }
 
+// A followed instance's override for a slot, when no local one replaces it.
+function artRemoteOverride(slot, lang) {
+  const t = art.title; if (!t || !t.remote_overrides) return null;
+  const key = artNoLang(slot) ? '' : lang;
+  return t.remote_overrides.find(o => o.slot === slot && o.language === key && !o.replaced) || null;
+}
 function artSlotCard(k) {
   const t = art.title, v = ART_SLOTS[k];
   const o = artOverride(k, art.lang);
+  const ro = o ? null : artRemoteOverride(k, art.lang);
   const cur = t.current[k];
-  const path = o ? o.path : (art.lang === 'null' ? null : cur && cur.path);
+  const path = o ? o.path : ro ? ro.path : (art.lang === 'null' ? null : cur && cur.path);
   const label = v.label;
-  const sub = o ? (o.provider === 'custom' ? 'Your image' : ART_ORIGIN[o.provider]) : 'Automatic';
+  const sub = o ? (o.provider === 'custom' ? 'Your image' : ART_ORIGIN[o.provider]) : ro ? 'Shared' : 'Automatic';
   const thumb = path ? `<img src="${esc(o && o.crop ? artPreviewUrl(false) : artThumbFor(path, v.kind))}" alt="" referrerpolicy="no-referrer">` : '';
   return `<button type="button" class="art-slot ${k === art.slot ? 'active' : ''} ${v.kind}" onclick="artSetSlot('${k}')">
     <span class="art-slot-thumb">${thumb}</span>
