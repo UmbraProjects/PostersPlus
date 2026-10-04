@@ -409,10 +409,19 @@ _TRENDING_GENRE_CHOICES = (
     "Family", "Fantasy", "History", "Horror", "Kids", "Music", "Mystery", "News",
     "Reality", "Rom-Com", "Romance", "Sci-Fi", "Soap", "Talk", "Thriller", "War", "Western",
 )
+
+
+def _trending_genres(raw: str) -> list[str]:
+    """TRENDING_HIDE_GENRES's names, as typed in .env ("horror, Romance") or
+    saved by the dashboard; unknown ones dropped."""
+    lookup = {g.casefold(): g for g in _TRENDING_GENRE_CHOICES}
+    return [lookup[g.strip().casefold()] for g in raw.split(",") if g.strip().casefold() in lookup]
+
+
 # Genres left off the trending lists for the whole instance, before ranks are
 # numbered, so every poster's rank and its catalog row still agree.  Names are
 # GENRE_MAP's; TV's merged genres count as both halves (genre_names).
-TRENDING_HIDE_GENRES = [g for g in _env('TRENDING_HIDE_GENRES', "", group='Trending', kind='multi', label='Hide genres from trending', help="Leave titles of these genres off the trending lists, the trending sashes' ranks and the trending catalogs alike. The remaining titles are ranked 1, 2, 3 without gaps, so catalog rows and the rank on every poster still agree. TV's merged genres count as both halves: Sci-Fi & Fantasy is Sci-Fi and Fantasy, Action & Adventure is Action and Adventure. Takes effect at the next trending refresh.", choices=_TRENDING_GENRE_CHOICES).split(",") if g in _TRENDING_GENRE_CHOICES]
+TRENDING_HIDE_GENRES = _trending_genres(_env('TRENDING_HIDE_GENRES', "", group='Trending', kind='multi', label='Hide genres from trending', help="Leave titles of these genres off the trending lists, the trending sashes' ranks and the trending catalogs alike. The remaining titles are ranked 1, 2, 3 without gaps, so catalog rows and the rank on every poster still agree. TV's merged genres count as both halves: Sci-Fi & Fantasy is Sci-Fi and Fantasy, Action & Adventure is Action and Adventure. Takes effect at the next trending refresh.", choices=_TRENDING_GENRE_CHOICES))
 TRENDING_HIDE_MIXED_GENRES = _env('TRENDING_HIDE_MIXED_GENRES', "true", group='Trending', kind='bool', label='Hide titles that are partly a hidden genre', help='On: any title with a hidden genre is left off, so hiding Romance also hides a Comedy + Romance film. Off: only titles whose genres are all hidden ones are, so that film stays. Hiding Rom-Com covers titles that are both Comedy and Romance.').strip().lower() == "true"
 # Cap on how many entries are taken from a custom source, so a 10k-item list
 # cannot balloon the snapshot held in memory and in trending_cache.

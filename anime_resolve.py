@@ -135,6 +135,14 @@ async def _search_tmdb(client: httpx.AsyncClient, tmdb_key: str, kind: str,
     return None
 
 
+def _usable(mapped: anime_ids.MappedIds | None, media_type: str) -> bool:
+    """Whether a mapping row names a TMDB id TMDB still has: a row naming a
+    deleted one (a duplicate merged away) is what sent the request here."""
+    from tmdb import tmdb_id_gone
+    return bool(mapped is not None and mapped.tmdb_id
+                and not tmdb_id_gone(mapped.tmdb_id, media_type))
+
+
 async def _resolve(client: httpx.AsyncClient, namespace: str, anime_id: int,
                    media_type: str, tmdb_key: str | None) -> dict:
     kind = "movie" if media_type == "movie" else "tv"
@@ -158,7 +166,7 @@ async def _resolve(client: httpx.AsyncClient, namespace: str, anime_id: int,
         return {}
     # The AniList id itself may be mapped where the Kitsu or MAL one isn't.
     mapped = anime_ids.lookup("anilist", int(media["id"]), media_type)
-    if mapped is not None and mapped.tmdb_id:
+    if _usable(mapped, media_type):
         return {"tmdb_id": mapped.tmdb_id, "imdb_id": mapped.imdb_id, "via": "anilist"}
     # 1. A later season of a series the mapping knows.
     node, hops = media, 0
@@ -172,7 +180,7 @@ async def _resolve(client: httpx.AsyncClient, namespace: str, anime_id: int,
                 break
             hops += 1
             mapped = anime_ids.lookup("anilist", int(prequel["id"]), media_type)
-            if mapped is not None and mapped.tmdb_id:
+            if _usable(mapped, media_type):
                 return {"tmdb_id": mapped.tmdb_id, "imdb_id": mapped.imdb_id, "via": f"prequel:{hops}"}
             node = await _anilist(client, anilist_id=int(prequel["id"]))
             if node is None:
@@ -192,6 +200,9 @@ async def resolve(client: httpx.AsyncClient, namespace: str, anime_id: int,
     kind = "movie" if media_type == "movie" else "tv"
     key = f"animeres:v1:{namespace}:{anime_id}:{kind}"
     cached = get_cached_tvdb_json(key)
+    if cached and cached.get("tmdb_id") and not _usable(anime_ids.MappedIds(cached["tmdb_id"], None), media_type):
+        # Found before TMDB deleted it: look again.
+        cached = None
     if cached is None:
         fut = _inflight.get(key)
         if fut is not None:

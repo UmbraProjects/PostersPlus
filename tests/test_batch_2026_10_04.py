@@ -144,6 +144,11 @@ class TrendingGenreFilterTests(unittest.TestCase):
     """TRENDING_HIDE_GENRES leaves titles off the list itself, before ranks are
     numbered, so the catalogs and every poster's rank still agree."""
 
+    def test_env_names_are_trimmed_and_case_blind(self):
+        self.assertEqual(config._trending_genres("horror, Romance ,SCI-FI,Nope"),
+                         ["Horror", "Romance", "Sci-Fi"])
+        self.assertEqual(config._trending_genres(""), [])
+
     def test_mixed_titles(self):
         romcom = [35, 10749]
         self.assertTrue(config.genre_hidden(romcom, {"Romance"}, mixed=True))

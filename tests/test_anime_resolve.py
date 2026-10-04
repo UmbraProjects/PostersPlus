@@ -18,6 +18,7 @@ class ResolveTests(unittest.TestCase):
     def setUp(self):
         self.cache = {}
         self.metadata = {}
+        self.gone = set()
 
         async def metadata(client, namespace, anime_id):
             lookup = self.metadata.get(anime_id)
@@ -28,6 +29,7 @@ class ResolveTests(unittest.TestCase):
             mock.patch.object(ar, "set_cached_tvdb_json", lambda k, v, ttl: self.cache.__setitem__(k, v)),
             mock.patch.object(ar.anime, "fetch_anime_metadata", metadata),
             mock.patch.object(ar.anime, "_anilist_quiet_until", 0.0),
+            mock.patch("tmdb.tmdb_id_gone", lambda tid, mt: tid in self.gone),
         ):
             p.start()
             self.addCleanup(p.stop)
@@ -65,6 +67,26 @@ class ResolveTests(unittest.TestCase):
         media = {212888: _media(212888, "Overgeared", "Tempal: Item no Chikara")}
         got = self._run(media, {}, search={212888: "324502"}, anime_id=212888)
         self.assertEqual(got.tmdb_id, "324502")
+
+    def test_a_deleted_tmdb_id_in_the_mapping_is_passed_over(self):
+        # The AniList id's own row names a TMDB entry since deleted: the name
+        # search runs instead of handing the deleted id back.
+        self.gone.add("111")
+        media = {6: _media(6, "Some Show")}
+        got = self._run(media, {6: anime_ids.MappedIds("111", None)}, search={6: "222"}, anime_id=6)
+        self.assertEqual(got.tmdb_id, "222")
+
+    def test_a_deleted_prequel_id_is_walked_past(self):
+        self.gone.add("111")
+        media = {3: _media(3, prequel=2), 2: _media(2, prequel=1), 1: _media(1)}
+        mapped = {2: anime_ids.MappedIds("111", None), 1: anime_ids.MappedIds("99", None)}
+        self.assertEqual(self._run(media, mapped, anime_id=3).tmdb_id, "99")
+
+    def test_a_cached_hit_since_deleted_is_resolved_again(self):
+        media = {6: _media(6, "Some Show")}
+        self.assertEqual(self._run(media, {}, search={6: "111"}, anime_id=6).tmdb_id, "111")
+        self.gone.add("111")
+        self.assertEqual(self._run(media, {}, search={6: "222"}, anime_id=6).tmdb_id, "222")
 
     def test_films_do_not_follow_prequels(self):
         media = {5: _media(5, prequel=4, fmt="MOVIE"), 4: _media(4)}

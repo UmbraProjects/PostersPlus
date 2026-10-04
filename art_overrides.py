@@ -842,17 +842,21 @@ async def sync_remote(client: httpx.AsyncClient) -> None:
     except (ValueError, KeyError, TypeError):
         _set_remote_state(error="not an artwork export", checked_at=time.time())
         return
-    rows, skipped = [], 0
+    rows, skipped, fetch_failed = [], 0, False
     for item in items:
         row = _remote_row(item) if isinstance(item, dict) else None
         if row is not None and row[5] == "custom" and not await _fetch_custom(client, base, row[4]):
-            row = None
+            row, fetch_failed = None, True
         if row is None:
             skipped += 1
             continue
         rows.append(row)
     changed = await asyncio.to_thread(_replace_remote, rows)
-    _set_remote_state(base=base, rev=str(data.get("rev") or "") or None, count=len(rows),
+    # With an image still to fetch, the rev isn't kept: the next sync asks for
+    # the whole export again rather than hearing "unchanged" and never
+    # retrying it.
+    rev = None if fetch_failed else (str(data.get("rev") or "") or None)
+    _set_remote_state(base=base, rev=rev, count=len(rows),
                       skipped=skipped, synced_at=time.time(), checked_at=time.time(), error=None)
     logger.info(f"Art overrides: synced {len(rows)} override(s) from {base}"
                 f" ({len(changed)} title(s) changed{f', {skipped} skipped' if skipped else ''})")

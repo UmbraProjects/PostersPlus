@@ -159,6 +159,23 @@ class SyncTests(unittest.TestCase):
         self.assertIsNone(ao.for_title("movie", "550"))
         self.assertIsNone(ao.custom_art_bytes(self.custom))
 
+    def test_an_image_that_failed_to_download_is_retried(self):
+        row = {"media_type": "movie", "tmdb_id": "550", "slot": "textless", "language": "",
+               "path": self.custom, "sources": ["tmdb"], "updated_at": 1}
+        export = self._export([row])
+
+        def down(request):
+            if request.url.path.startswith("/custom-art/"):
+                return httpx.Response(503)
+            return httpx.Response(200, json=export)
+        self._sync(httpx.AsyncClient(transport=httpx.MockTransport(down)))
+        self.assertIsNone(ao.for_title("movie", "550"))
+        # Same rev at the sharer: still asked for in full, so the image comes.
+        seen = []
+        self._sync(self._client(export, seen=seen))
+        self.assertIsNone(seen[0].headers.get("if-none-match"))
+        self.assertEqual(ao.for_title("movie", "550")["textless"][""].path, self.custom)
+
     def test_unfollowing_clears_the_rows(self):
         export = self._export([{"media_type": "movie", "tmdb_id": "550", "slot": "textless",
                                 "language": "", "path": "/r.jpg", "sources": ["tmdb"]}])
