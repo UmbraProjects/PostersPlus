@@ -68,8 +68,8 @@ class ConfiguratorKeylessTests(unittest.TestCase):
         self.assertNotIn("Enter your TMDB API key above to search", html)
         self.assertIn("async function fetchTmdbId(", html)
         self.assertIn("if (tmdbId) params.set('tmdb_id', tmdbId);", html)
-        self.assertIn("if (resolvedTmdbId || resolvedImdbId) loadPreview();", html)
-        self.assertIn("if (!data.tmdbId && !data.imdbId) return;", html)
+        self.assertIn("if (resolvedTmdbId || resolvedImdbId || resolvedAnimeId) loadPreview();", html)
+        self.assertIn("if (!data.tmdbId && !data.imdbId && !data.animeId) return;", html)
 
 
 if __name__ == "__main__":

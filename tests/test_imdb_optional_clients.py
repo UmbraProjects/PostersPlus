@@ -70,7 +70,7 @@ class ConfiguratorTemplateTests(unittest.TestCase):
 
     def test_preview_does_not_wait_on_an_imdb_id(self):
         # Either id is enough to preview; neither is waited on for the other.
-        self.assertIn("if (resolvedTmdbId || resolvedImdbId) loadPreview();", self.html)
+        self.assertIn("if (resolvedTmdbId || resolvedImdbId || resolvedAnimeId) loadPreview();", self.html)
         self.assertNotIn("if (resolvedImdbId && resolvedTmdbId) loadPreview();", self.html)
         self.assertNotIn("if (!resolvedImdbId || !resolvedTmdbId)", self.html)
 

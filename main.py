@@ -909,6 +909,7 @@ from digital_release import digital_release_poll_loop
 import imdb_dataset
 import anime_ids
 import anime_resolve
+import anime_search
 import anime_season
 import watchlist
 import admin as _admin
@@ -8696,24 +8697,44 @@ async def search_proxy(
     effective_key = _resolve_tmdb_key(tmdb_key)
     if _HTTP_CLIENT is None:
         raise HTTPException(status_code=503, detail="Service unavailable")
-    if not effective_key:
-        # No key anywhere: search Cinemeta instead, which needs none.  Results
-        # are shaped like TMDB's so the configurator reads them unchanged —
-        # `id` is null (Cinemeta's catalogue carries no TMDB id; /resolve-tmdb
-        # finds one on selection) and the poster is an absolute url.
-        if not _cfg.CINEMETA_ENABLED:
-            raise HTTPException(status_code=400, detail="No TMDB API key available")
-        return {"results": await cinemeta.search(_HTTP_CLIENT, q), "source": "cinemeta"}
-    resp = await _proxy_tmdb_get(
-        "https://api.themoviedb.org/3/search/multi",
-        {
-            "api_key": effective_key,
-            "query": q,
-            "include_adult": "false",
-            "page": "1",
-        },
-    )
-    return Response(content=resp.content, media_type="application/json", status_code=resp.status_code)
+    if not effective_key and not _cfg.CINEMETA_ENABLED:
+        raise HTTPException(status_code=400, detail="No TMDB API key available")
+    # Kitsu alongside, for the anime seasons and titles TMDB lists none of
+    # (anime_search.py); its failure only leaves them out.
+    anime_task = (asyncio.create_task(anime_search.kitsu_search(_HTTP_CLIENT, q))
+                  if anime_search.enabled() else None)
+    try:
+        if not effective_key:
+            # No key anywhere: search Cinemeta instead, which needs none.
+            # Results are shaped like TMDB's so the configurator reads them
+            # unchanged — `id` is null (Cinemeta's catalogue carries no TMDB
+            # id; /resolve-tmdb finds one on selection) and the poster is an
+            # absolute url.
+            data = {"results": await cinemeta.search(_HTTP_CLIENT, q), "source": "cinemeta"}
+        else:
+            resp = await _proxy_tmdb_get(
+                "https://api.themoviedb.org/3/search/multi",
+                {
+                    "api_key": effective_key,
+                    "query": q,
+                    "include_adult": "false",
+                    "page": "1",
+                },
+            )
+            if resp.status_code != 200 or anime_task is None:
+                return Response(content=resp.content, media_type="application/json",
+                                status_code=resp.status_code)
+            try:
+                data = resp.json()
+            except ValueError:
+                return Response(content=resp.content, media_type="application/json")
+    except BaseException:
+        if anime_task is not None:
+            anime_task.cancel()
+        raise
+    if anime_task is not None:
+        data["results"] = anime_search.merge(data.get("results") or [], await anime_task)
+    return data
 
 
 async def _proxy_tmdb_get(url: str, params: dict) -> httpx.Response:

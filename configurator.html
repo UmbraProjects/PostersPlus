@@ -1020,6 +1020,9 @@
 
   .result-type-badge.movie { color: var(--gold); border-color: var(--gold-dim); }
   .result-type-badge.tv   { color: var(--silver); border-color: var(--silver-dim); }
+  .result-type-badge.anime { color: var(--text-secondary); border-color: var(--border); }
+  /* A later anime season (from Kitsu), listed under its show. */
+  .search-result-item.anime-season { padding-left: 27px; }
 
   .search-no-results {
     padding: 16px;
@@ -2390,7 +2393,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                     <span id="selected-year" style="color:var(--text-muted);font-size:10px;">—</span>
                   </div>
                   <div class="selected-card-ids" id="selected-ids">
-                    TMDB: <span id="selected-tmdb-id">—</span> &nbsp;·&nbsp; IMDB: <span id="selected-imdb-id">—</span>
+                    TMDB: <span id="selected-tmdb-id">—</span> &nbsp;·&nbsp; IMDB: <span id="selected-imdb-id">—</span><span id="selected-anime" hidden> &nbsp;·&nbsp; <span id="selected-anime-id"></span></span>
                   </div>
                   <div class="selected-resolving" id="selected-resolving" style="display:none;">
                     <span class="search-spinner" style="border-top-color:var(--silver);display:block;"></span>
@@ -4404,6 +4407,9 @@ const SASH_DEFAULT_DISABLED = new Set([]);
 let sashOrder    = SASH_SLOTS.filter(s => !SASH_DEFAULT_DISABLED.has(s.id)).map(s => s.id);
 let sashDisabled = new Set(SASH_DEFAULT_DISABLED);   // IDs explicitly disabled via ✕ button
 let mediaType = 'movie', resolvedImdbId = '', resolvedTmdbId = '';
+// An anime entry picked from search ("kitsu:45857"): a later season, or a
+// title TMDB doesn't have.  The preview sends it as stremio_id, as Nuvio does.
+let resolvedAnimeId = '';
 let serverCaps = { tmdb_key_set: false, mdblist_key_set: false, aiostreams_configured: false, quality_configured: false, imdb_dataset_enabled: false, imdb_dataset_titles: 0 };
 let serverCapsLoaded = false;
 let searchDebounce = null, previewDebounce = null, previewLoading = false, imdbResolvePending = false;
@@ -5492,6 +5498,11 @@ function saveApiKeys() {
   localStorage.setItem('postersplus_primary_client', vEl('cfg-primary-client'));
 }
 
+function showSelectedAnimeId(animeId) {
+  document.getElementById('selected-anime').hidden = !animeId;
+  document.getElementById('selected-anime-id').textContent = animeId ? animeId.replace(':', ': ') : '';
+}
+
 function saveSelection(data) { localStorage.setItem('postersplus_selection', JSON.stringify(data)); }
 
 // How long a "this title has no IMDb link" answer is trusted before the
@@ -5556,8 +5567,9 @@ function hydrateFromLocalStorage() {
     const raw = localStorage.getItem('postersplus_selection');
     if (!raw) return;
     const data = JSON.parse(raw);
-    if (!data.tmdbId && !data.imdbId) return;
+    if (!data.tmdbId && !data.imdbId && !data.animeId) return;
     resolvedTmdbId = data.tmdbId || ''; mediaType = data.type || 'movie';
+    resolvedAnimeId = data.animeId || ''; showSelectedAnimeId(resolvedAnimeId);
     document.getElementById('cfg-tmdb-resolved').value = resolvedTmdbId;
     document.getElementById('cfg-media-type').value = data.type || 'movie';
     document.getElementById('cfg-search-query').value = data.title || '';
@@ -5577,7 +5589,8 @@ function hydrateFromLocalStorage() {
       document.getElementById('cfg-imdb').value = data.imdbId;
       document.getElementById('selected-imdb-id').textContent = data.imdbId;
       document.getElementById('selected-resolving').style.display = 'none';
-    } else if (negativeIsFresh) {
+    } else if (negativeIsFresh || !data.tmdbId) {
+      // No TMDB id to ask about (an anime entry TMDB doesn't have).
       setNoLinkedImdbId();
     } else {
       document.getElementById('selected-imdb-id').textContent = '…';
@@ -5665,9 +5678,11 @@ async function doSearch() {
       throw new Error(data.detail || `Error ${resp.status}`);
     }
     const data = await resp.json();
+    // Up to ten of TMDB's (the server trims them), plus the anime seasons
+    // and titles it lacks, from Kitsu.
     const items = (data.results || [])
       .filter(r => r.media_type === 'movie' || r.media_type === 'tv')
-      .slice(0, 10);
+      .slice(0, 20);
     renderResults(items);
   } catch (e) {
     setStatus(`Search error: ${e.message}`, 'err');
@@ -5701,9 +5716,10 @@ function renderResults(items) {
     const imdbId = item.imdb_id || '';
     const thumb = item.poster_path ? TMDB_IMG + item.poster_path : (item.poster_url || null);
     const row = document.createElement('div');
-    row.className = 'search-result-item';
+    row.className = 'search-result-item' + (item.anime_nested ? ' anime-season' : '');
     row.setAttribute('role', 'option');
     row.dataset.tmdbId = tmdbId; row.dataset.imdbId = imdbId; row.dataset.type = type;
+    row.dataset.animeId = item.anime_id || '';
     row.dataset.title = title; row.dataset.year = year;
     row.dataset.thumb = thumb || '';
     row.innerHTML = `
@@ -5712,6 +5728,7 @@ function renderResults(items) {
         <div class="result-title">${escHtml(title)}</div>
         <div class="result-meta">
           <span class="result-type-badge ${escHtml(type)}">${escHtml(type.toUpperCase())}</span>
+          ${item.anime_label ? `<span class="result-type-badge anime">${escHtml(item.anime_label)}</span>` : ''}
           <span>${escHtml(year)}</span>
         </div>
       </div>
@@ -5735,6 +5752,7 @@ function outsideClickHandler(e) {
  *  searches; the selection is saved so a reload keeps the same title. */
 function _showImportedTitle(tmdbId, imdbId, type) {
   resolvedTmdbId = tmdbId; resolvedImdbId = imdbId; mediaType = type;
+  resolvedAnimeId = ''; showSelectedAnimeId('');
   document.getElementById('cfg-tmdb-resolved').value = tmdbId;
   document.getElementById('cfg-imdb').value = imdbId;
   document.getElementById('cfg-media-type').value = type;
@@ -5758,12 +5776,14 @@ async function selectResult(dataset) {
   const { type, title, year, thumb } = dataset;
   let { tmdbId, imdbId } = dataset;
   imdbId = imdbId || '';
+  const animeId = dataset.animeId || '';
   resolvedTmdbId = tmdbId; resolvedImdbId = imdbId; mediaType = type;
+  resolvedAnimeId = animeId; showSelectedAnimeId(animeId);
   document.getElementById('cfg-tmdb-resolved').value = tmdbId;
   document.getElementById('cfg-imdb').value = imdbId;
   document.getElementById('cfg-media-type').value = type;
   document.getElementById('cfg-search-query').value = title;
-  saveSelection({ tmdbId, imdbId: imdbId || null, type, title, year, thumb });
+  saveSelection({ tmdbId, imdbId: imdbId || null, type, title, year, thumb, animeId });
   const card = document.getElementById('selected-card');
   card.classList.add('visible');
   if (thumb) { document.getElementById('selected-thumb').src = thumb; document.getElementById('selected-thumb').style.display = ''; }
@@ -5775,6 +5795,17 @@ async function selectResult(dataset) {
   document.getElementById('selected-tmdb-id').textContent = tmdbId || '…';
   document.getElementById('selected-imdb-id').textContent = imdbId || '…';
   document.getElementById('selected-resolving').style.display = 'flex';
+
+  if (!tmdbId && !imdbId && animeId) {
+    // An anime entry TMDB doesn't have: the anime id alone renders it, as a
+    // Nuvio catalogue sends it.  Nothing to resolve.
+    document.getElementById('selected-resolving').style.display = 'none';
+    document.getElementById('selected-tmdb-id').textContent = 'None';
+    document.getElementById('selected-imdb-id').textContent = 'None';
+    setStatus(`Selected: ${title} (${animeId})`, 'ok');
+    build(); queuePreviewReload();
+    return;
+  }
 
   if (!tmdbId && imdbId) {
     // A Cinemeta result: the IMDb id is in hand and the TMDB id is looked up
@@ -5818,6 +5849,7 @@ async function selectResult(dataset) {
 
 function clearSelection() {
   resolvedTmdbId = ''; resolvedImdbId = ''; mediaType = 'movie';
+  resolvedAnimeId = ''; showSelectedAnimeId('');
   document.getElementById('cfg-tmdb-resolved').value = '';
   document.getElementById('cfg-imdb').value = '';
   document.getElementById('cfg-media-type').value = 'movie';
@@ -6510,6 +6542,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   // restricted). mal_id= also works if added by hand; anidb_id= is ignored.
   if (tmdbId) params.set('tmdb_id', tmdbId);
   if (imdbId) params.set('imdb_id', imdbId);
+  if (!usePlaceholders && resolvedAnimeId) params.set('stremio_id', resolvedAnimeId);
   if (usePlaceholders) {
     if (template.imdbOptional) params.set('imdb_id',    '{imdb_id?}');
     if (template.animeIds)     params.set('stremio_id', '{id}');
@@ -7769,7 +7802,7 @@ for (const done of ['pointerup', 'pointercancel']) {
 function queuePreviewReload() {
   clearTimeout(previewDebounce);
   previewDebounce = setTimeout(() => {
-    if (resolvedTmdbId || resolvedImdbId) loadPreview();
+    if (resolvedTmdbId || resolvedImdbId || resolvedAnimeId) loadPreview();
   }, 350);
 }
 
@@ -7786,7 +7819,7 @@ function setStatus(msg, cls='') {
 async function loadPreview() {
   if (previewLoading) { clearTimeout(previewDebounce); return; }
   if (imdbResolvePending) return;
-  if (!resolvedTmdbId && !resolvedImdbId) { setStatus('Search and select a title first', 'err'); return; }
+  if (!resolvedTmdbId && !resolvedImdbId && !resolvedAnimeId) { setStatus('Search and select a title first', 'err'); return; }
   // Without a key the server renders from the IMDb id (Cinemeta); only a
   // title known by TMDB id alone has nothing to render from.
   if (!vEl('cfg-tmdb-key') && !serverCaps.tmdb_key_set && !resolvedImdbId) { setStatus('This instance has no server side TMDB key. Provide your own, or search again — key-less search picks titles by IMDb id, which renders without one.', 'err'); return; }

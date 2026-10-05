@@ -15,6 +15,14 @@
 - Covers with lettering are left out by a recogniser check of their own
   (the poster text rules pass a cover whose middle is a kanji logo). It
   catches most, not all: a heavily stylised title can still get through.
+- The configurator's search finds anime seasons and titles TMDB doesn't
+  list. Kitsu is searched alongside TMDB (or Cinemeta): a show's later
+  seasons, cours and specials appear under it ("Jujutsu Kaisen" → Season 2,
+  The Culling Game), and a title TMDB lacks after TMDB's results (Detective
+  Conan: The Gold-Star Answer). The preview sends the Kitsu id as Nuvio
+  does, so it shows that season's own art. Season 1 of a show TMDB has isn't
+  repeated, and Kitsu being down only leaves these out. Needs the anime id
+  mapping.
 
 ### New anime in landscape, shared artwork, and genres hidden from trending
 
