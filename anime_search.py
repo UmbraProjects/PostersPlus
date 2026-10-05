@@ -11,7 +11,10 @@ module keeps only what the TMDB results lack, by the id mapping:
   match, "solo levelling");
 - a later season, cour or special (anime_ids.season_place): kept, listed
   straight under its show when that is among the results;
-- an entry with no TMDB id: kept, after the TMDB results.
+- an entry with no TMDB id: kept, after the TMDB results, specials last.
+
+A row that doesn't sit under one of TMDB's results must also carry every
+word of the query in one of its titles, as Kitsu's text search is loose.
 
 An anime row is shaped like a TMDB one, plus ``anime_id`` ("kitsu:45857"),
 which the configurator's preview sends as stremio_id, as Nuvio does, and
@@ -22,8 +25,12 @@ on its own.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
+import re
+import unicodedata
+from difflib import SequenceMatcher
 
 import httpx
 
@@ -44,6 +51,23 @@ _SUBTYPES = {"TV", "ONA", "OVA", "movie", "special"}
 _TMDB_ROWS = 10
 _SEASON_ROWS = 8
 _UNLINKED_ROWS = 4
+# How long /search waits on Kitsu before answering with TMDB's rows alone.
+# The lookup carries on and is cached, so the next search has it.
+SEARCH_WAIT = 2.5
+
+_background: set = set()
+
+
+async def kitsu_entries(task: "asyncio.Task") -> list[dict]:
+    """*task*'s (kitsu_search's) entries if they come within SEARCH_WAIT,
+    else [] while it finishes in the background."""
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), SEARCH_WAIT)
+    except asyncio.TimeoutError:
+        logger.info("Kitsu search slow: answering without it")
+        _background.add(task)
+        task.add_done_callback(_background.discard)
+        return []
 
 
 def enabled() -> bool:
@@ -109,9 +133,6 @@ def _anime_row(entry: dict) -> dict | None:
     # The start of a show (or a film) TMDB has: merge keeps it only when
     # TMDB's results miss that show, as they do for a misspelling.
     start = bool(mapped is not None and mapped.tmdb_id and place is None)
-    if place is None and subtype == "special":
-        # Unplaced specials are recaps, PVs and shorts, not titles to preview.
-        return None
     titles = attrs.get("titles") or {}
     title = titles.get("en") or attrs.get("canonicalTitle") or titles.get("en_jp")
     if not title:
@@ -132,7 +153,42 @@ def _anime_row(entry: dict) -> dict | None:
         "anime_season": place is not None,
         "anime_nested": False,
         "anime_start": start,
+        # An unplaced special is often a recap or a PV, but can be a title in
+        # its own right (Detective Conan: The Gold-Star Answer): kept, last.
+        "_special": subtype == "special" and place is None,
+        # Every title Kitsu knows it by, for merge's relevance check.
+        "_names": [attrs.get("canonicalTitle"), *titles.values()],
     }
+
+
+def _words(text: str | None) -> list[str]:
+    """Words without case or accents, in any script (a CJK title is one)."""
+    text = unicodedata.normalize("NFKD", text or "").casefold()
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    return [w for w in re.split(r"\W+", text) if w]
+
+
+def _word_matches(wanted: str, word: str) -> bool:
+    # Exact, a prefix of it (a word still being typed), or a near spelling
+    # with the same first letter ("levelling" for "leveling", not "anora"
+    # for "nora").
+    if word == wanted or (len(wanted) >= 3 and word.startswith(wanted)):
+        return True
+    return (len(wanted) >= 4 and word[:1] == wanted[:1]
+            and SequenceMatcher(None, wanted, word).ratio() >= 0.85)
+
+
+def _relevant(query: str, names: list[str]) -> bool:
+    """Whether one of *names* carries every word of *query*.  Kitsu's text
+    search is loose: "anora" brings back Blade of the Immortal."""
+    wanted = _words(query)
+    if not wanted:
+        return True
+    for name in names:
+        words = _words(name)
+        if all(any(_word_matches(w, word) for word in words) for w in wanted):
+            return True
+    return False
 
 
 def _same_title(a: dict, b: dict) -> bool:
@@ -150,26 +206,35 @@ def _same_title(a: dict, b: dict) -> bool:
     return not all(y.isdigit() for y in years) or abs(int(years[0]) - int(years[1])) <= 1
 
 
-def merge(results: list[dict], entries: list[dict]) -> list[dict]:
+def keys_of(row: dict) -> set:
+    """The ids a row is known by: its TMDB id (with its type) and IMDb id."""
+    out = set()
+    if row.get("id") is not None:
+        out.add((row["media_type"], str(row["id"])))
+    if row.get("imdb_id"):
+        out.add(row["imdb_id"])
+    return out
+
+
+def merge(results: list[dict], entries: list[dict], query: str = "") -> list[dict]:
     """TMDB's (or Cinemeta's) movie and show rows, with the anime rows they
-    lack: each later season under its show, the rest after."""
+    lack: each later season under its show, the rest after.  A row that
+    doesn't sit under a TMDB result has to match *query* by its own titles."""
     base = [r for r in results if isinstance(r, dict)
             and r.get("media_type") in ("movie", "tv")][:_TMDB_ROWS]
     rows = [row for row in map(_anime_row, entries) if row is not None]
+    base_keys = set().union(*map(keys_of, base)) if base else set()
+    rows = [r for r in rows if (r["anime_season"] and keys_of(r) & base_keys)
+            or _relevant(query, [n for n in r["_names"] if isinstance(n, str)])]
 
-    def keys(row: dict) -> set:
-        out = set()
-        if row.get("id") is not None:
-            out.add((row["media_type"], str(row["id"])))
-        if row.get("imdb_id"):
-            out.add(row["imdb_id"])
-        return out
-
+    keys = keys_of
     # A show's start stands in for the TMDB row the results lack, once.
     seen = set().union(*map(keys, base)) if base else set()
     starts = []
     for row in rows:
-        if row["anime_start"] and not keys(row) & seen:
+        # By name too: a key-less search's Cinemeta rows carry no TMDB id.
+        if (row["anime_start"] and not keys(row) & seen
+                and not any(_same_title(row, b) for b in base)):
             starts.append(row)
             seen |= keys(row)
     seasons = [r for r in rows if r["anime_season"]][:_SEASON_ROWS]
@@ -177,6 +242,7 @@ def merge(results: list[dict], entries: list[dict]) -> list[dict]:
     # by name ("Solo Leveling: ReAwakening" is "Solo Leveling -ReAwakening-").
     unlinked = [r for r in rows if not r["anime_season"] and not r["anime_start"]
                 and not any(_same_title(r, b) for b in base)]
+    unlinked.sort(key=lambda r: r["_special"])
     shows = base + starts[:_UNLINKED_ROWS]
 
     out, placed = [], set()
@@ -189,4 +255,4 @@ def merge(results: list[dict], entries: list[dict]) -> list[dict]:
                 placed.add(i)
     out.extend(row for i, row in enumerate(seasons) if i not in placed)
     out.extend(unlinked[:_UNLINKED_ROWS])
-    return out
+    return [{k: v for k, v in row.items() if not k.startswith("_")} for row in out]

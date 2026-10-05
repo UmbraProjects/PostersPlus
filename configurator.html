@@ -5678,11 +5678,10 @@ async function doSearch() {
       throw new Error(data.detail || `Error ${resp.status}`);
     }
     const data = await resp.json();
-    // Up to ten of TMDB's (the server trims them), plus the anime seasons
-    // and titles it lacks, from Kitsu.
+    // Up to ten of TMDB's plus the anime seasons and titles it lacks, from
+    // Kitsu: the server trims both (anime_search.py), so all are shown.
     const items = (data.results || [])
-      .filter(r => r.media_type === 'movie' || r.media_type === 'tv')
-      .slice(0, 20);
+      .filter(r => r.media_type === 'movie' || r.media_type === 'tv');
     renderResults(items);
   } catch (e) {
     setStatus(`Search error: ${e.message}`, 'err');

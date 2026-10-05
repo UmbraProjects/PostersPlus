@@ -8733,7 +8733,8 @@ async def search_proxy(
             anime_task.cancel()
         raise
     if anime_task is not None:
-        data["results"] = anime_search.merge(data.get("results") or [], await anime_task)
+        data["results"] = anime_search.merge(data.get("results") or [],
+                                             await anime_search.kitsu_entries(anime_task), q)
     return data
 
 

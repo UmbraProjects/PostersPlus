@@ -62,6 +62,14 @@ class MergeTests(unittest.TestCase):
                          ("Kitsu · Season", 95479, "tt12343534"))
         self.assertTrue(season["anime_nested"])
 
+    def test_a_cinemeta_row_isnt_repeated_by_its_kitsu_start(self):
+        # Key-less search: no TMDB id on the row, and no IMDb id in the mapping.
+        cinemeta = {"id": None, "imdb_id": "tt9999999", "media_type": "tv",
+                    "name": "Spy x Family", "first_air_date": "2022-04-09"}
+        with mock.patch.dict(MAPPING, {45000: ("120089", None, None)}):
+            out = srch.merge([cinemeta], [_entry(45000, "Spy x Family", date="2022-04-09")])
+        self.assertEqual(out, [cinemeta])
+
     def test_titles_tmdb_lacks_come_after_its_results(self):
         out = srch.merge([_tmdb(95479, "JUJUTSU KAISEN")],
                          [_entry(99001, "Some Kitsu Only Show", en="Some Show")])
@@ -95,6 +103,21 @@ class MergeTests(unittest.TestCase):
         self.assertEqual([r.get("anime_id") or r["id"] for r in out],
                          [1357633, "kitsu:50837", "kitsu:99001"])   # another film by year
 
+    def test_rows_of_their_own_must_match_the_query(self):
+        entries = [_entry(99001, "Blade of the Immortal"), _entry(99002, "Nora"),
+                   _entry(99003, "Solo Leveling", en="Solo Leveling"),
+                   _entry(45857, "Jujutsu Kaisen Season 2")]
+        self.assertEqual([r["anime_id"] for r in srch.merge([], entries, "anora")], [])
+        self.assertEqual([r["anime_id"] for r in srch.merge([], entries, "solo levelling")],
+                         ["kitsu:99003"])
+        self.assertEqual([r["anime_id"] for r in srch.merge([], entries, "solo lev")],
+                         ["kitsu:99003"])
+        # Under a show TMDB found, a season needs no match of its own (Kitsu
+        # often has only its romaji title).
+        out = srch.merge([_tmdb(95479, "JUJUTSU KAISEN")], entries, "jjk")
+        self.assertEqual([r.get("anime_id") for r in out], [None, "kitsu:45857"])
+        self.assertNotIn("_names", out[1])
+
     def test_cinemeta_rows_match_by_imdb_id(self):
         cinemeta = {"id": None, "imdb_id": "tt12343534", "media_type": "tv", "name": "Jujutsu Kaisen"}
         out = srch.merge([cinemeta], [_entry(45857, "Jujutsu Kaisen Season 2")])
@@ -104,7 +127,7 @@ class MergeTests(unittest.TestCase):
         out = srch.merge([], [_entry(47880, "JJK Recap", "special"), _entry(45619, "Spy x Family 2")])
         self.assertEqual([r["anime_label"] for r in out], ["Kitsu · Special", "Kitsu · Season"])
 
-    def test_unplaced_specials_are_left_out_and_unlinked_rows_capped(self):
+    def test_unplaced_specials_come_last_and_unlinked_rows_are_capped(self):
         entries = [_entry(99000, "A Recap", "special")] + [
             _entry(99001 + n, f"Kitsu Only {n}") for n in range(6)] + [
             _entry(45857, "Jujutsu Kaisen Season 2")]
@@ -112,6 +135,11 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(out[0]["anime_id"], "kitsu:45857")      # seasons first
         self.assertEqual(len(out), 1 + srch._UNLINKED_ROWS)
         self.assertNotIn("kitsu:99000", [r["anime_id"] for r in out])
+        # A special on its own is kept: it may be the title searched for.
+        conan = _entry(50796, "Meitantei Conan: Hanamaru na Answer", "special",
+                       en="Detective Conan: The Gold-Star Answer")
+        self.assertEqual([r["anime_id"] for r in srch.merge([], [conan], "detective conan gold")],
+                         ["kitsu:50796"])
 
     def test_people_and_extra_rows_are_trimmed(self):
         people = [{"id": 1, "media_type": "person", "name": "Someone"}]
@@ -164,8 +192,8 @@ class SearchEndpointTests(unittest.TestCase):
             return httpx.Response(tmdb_status, content=json.dumps(body).encode())
 
         async def kitsu_search(client, q):
-            if isinstance(kitsu, Exception):
-                raise kitsu
+            if callable(kitsu):
+                return await kitsu(client, q)
             return kitsu
         with mock.patch.object(main, "_HTTP_CLIENT", object()), \
                 mock.patch.object(main, "_configurator_key_ok", lambda k: True), \
@@ -186,6 +214,16 @@ class SearchEndpointTests(unittest.TestCase):
     def test_without_the_mapping_the_tmdb_answer_passes_through(self):
         out = self._run([_entry(45857, "Jujutsu Kaisen Season 2")], enabled=False)
         self.assertEqual(json.loads(out.body)["results"][0]["id"], 95479)
+
+    def test_a_slow_kitsu_doesnt_hold_up_the_search(self):
+        import main
+
+        async def slow(client, q):
+            await asyncio.sleep(5)
+            return [_entry(45857, "Jujutsu Kaisen Season 2")]
+        with mock.patch.object(main.anime_search, "SEARCH_WAIT", 0.05):
+            out = self._run(slow)
+        self.assertEqual([r.get("anime_id") for r in out["results"]], [None])
 
     def test_a_tmdb_error_passes_through(self):
         out = self._run([], tmdb_status=401)
