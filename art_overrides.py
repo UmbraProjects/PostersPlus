@@ -20,8 +20,8 @@ A poster override names the poster sources it stands in for (tmdb, fanart,
 tvdb, cinemeta): a user whose source is not in the list gets that source's own
 pick.  Cinemeta posters are always served as-is, so only an original override
 can stand in for one; cinemeta is dropped from a textless override's list.
-Logos and landscape art are not tied to a poster source (landscape always
-draws from TMDB) and apply to every request.
+Logos and landscape art are not tied to a poster source and apply to every
+request, whatever the user's landscape art source.
 
 A language-keyed override follows the configurator's language order rather
 than jumping it: walking the request's order, the first language with either

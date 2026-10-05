@@ -4793,10 +4793,11 @@ async function fetchServerCaps() {
     updateImdbSourceAvailability();
     updateResolutionAvailability();
     syncCustomFonts(Array.isArray(serverCaps.custom_fonts) ? serverCaps.custom_fonts : []);
-    updateArtSourceOptions();
+    const _sourceReset = updateArtSourceOptions();
     document.getElementById('poster-pick-field').hidden = !serverCaps.random_posters;
-    // Restored before the caps answered, so the URL left them out.
-    if ([...POSTER_SOURCE_IDS, ...LANDSCAPE_SOURCE_IDS].some(id => vEl(id) !== 'tmdb')
+    // Restored before the caps answered, so the URL left them out (or, for a
+    // source this instance doesn't offer, still carries it).
+    if (_sourceReset || [...POSTER_SOURCE_IDS, ...LANDSCAPE_SOURCE_IDS].some(id => vEl(id) !== 'tmdb')
         || vEl('cfg-poster-pick') !== 'top') build();
     document.getElementById('header-admin').hidden = !serverCaps.admin_link;
     
@@ -8085,9 +8086,10 @@ function updateOriginalArt() {
 // Cinemeta only in the art mode it has art for.  Metahub's posters all carry
 // the title (Original only) and its backgrounds none (Textless + Logo only).
 // A choice that drops out falls back to TMDB, as the server would parse it;
-// a dropdown left with TMDB alone is hidden.
+// a dropdown left with TMDB alone is hidden.  True when a choice fell back.
 function updateArtSourceOptions() {
-  if (!serverCapsLoaded) return;   // a restored choice waits for the caps
+  if (!serverCapsLoaded) return false;   // a restored choice waits for the caps
+  let reset = false;
   const groups = [
     { ids: POSTER_SOURCE_IDS, field: '.poster-source-field',
       cinemeta: vEl('cfg-art') === 'original' },
@@ -8104,11 +8106,15 @@ function updateArtSourceOptions() {
     for (const id of g.ids) {
       const sel = document.getElementById(id);
       for (const opt of sel.options) opt.hidden = !offered[opt.value];
-      if (sel.selectedOptions[0] && sel.selectedOptions[0].hidden) sel.value = 'tmdb';
+      if (sel.selectedOptions[0] && sel.selectedOptions[0].hidden) {
+        sel.value = 'tmdb';
+        reset = true;
+      }
     }
     const any = Object.entries(offered).some(([s, on]) => on && s !== 'tmdb');
     for (const f of document.querySelectorAll(g.field)) f.hidden = !any;
   }
+  return reset;
 }
 
 // The two Rating Bar styles draw the score as a progress fill, so with the
@@ -9805,6 +9811,9 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('use_original_art'))   _setEl('cfg-art', ['true', '1'].includes(p.get('use_original_art')) ? 'original' : 'textless');
   if (p.has('original_art_source')) _setEl('cfg-original-art-source', p.get('original_art_source'));
   _restorePerTypeSource(p, 'poster_source', 'cfg-poster-source');
+  // The call above ran before the art mode and sources were restored:
+  // repaint the mode's fields and refilter the sources for it.
+  updateOriginalArt();
   _setEl('cfg-poster-pick', p.get('poster_pick') || 'top');
 
   // ── Quality badges ──────────────────────────────────────────────────────
