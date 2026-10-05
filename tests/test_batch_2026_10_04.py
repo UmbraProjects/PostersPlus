@@ -46,11 +46,13 @@ class FanartLandscapeTests(unittest.TestCase):
     def test_parsed_only_when_the_operator_offers_fanart(self):
         q = {"shape": "landscape", "landscape_art_source": "fanart_anime"}
         with mock.patch.object(main._cfg, "FANART_POSTERS", False):
-            self.assertEqual(main.build_request_config(q).landscape_art_source, "tmdb")
+            self.assertEqual(main.build_request_config(q).landscape_art_source_anime, "tmdb")
         with mock.patch.object(main._cfg, "FANART_POSTERS", True), \
                 mock.patch.object(main._cfg, "FANART_API_KEY", "k"):
-            self.assertEqual(main.build_request_config(q).landscape_art_source, "fanart_anime")
-            self.assertEqual(main.build_request_config({**q, "shape": "poster"}).landscape_art_source, "tmdb")
+            cfg = main.build_request_config(q)
+            self.assertEqual((cfg.landscape_art_source_movie, cfg.landscape_art_source_tv,
+                              cfg.landscape_art_source_anime), ("tmdb", "tmdb", "fanart"))
+            self.assertEqual(main.build_request_config({**q, "shape": "poster"}).landscape_art_source_anime, "tmdb")
 
 
 class HugFillTests(unittest.TestCase):

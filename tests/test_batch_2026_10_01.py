@@ -203,10 +203,10 @@ class LandscapeSettingsTests(unittest.TestCase):
     def test_tvdb_art_source_needs_the_operator_switch(self):
         params = {"shape": "landscape", "landscape_art_source": "tvdb"}
         with mock.patch.object(tvdb, "poster_source_enabled", return_value=False):
-            self.assertEqual(main.build_request_config(params).landscape_art_source, "tmdb")
+            self.assertEqual(main.build_request_config(params).landscape_art_source_tv, "tmdb")
         with mock.patch.object(tvdb, "poster_source_enabled", return_value=True):
-            self.assertEqual(main.build_request_config(params).landscape_art_source, "tvdb")
-            self.assertEqual(main.build_request_config({**params, "shape": "portrait"}).landscape_art_source,
+            self.assertEqual(main.build_request_config(params).landscape_art_source_tv, "tvdb")
+            self.assertEqual(main.build_request_config({**params, "shape": "portrait"}).landscape_art_source_tv,
                              "tmdb")
 
     def test_rating_badges_take_the_scores_place_and_fall_back_to_text(self):

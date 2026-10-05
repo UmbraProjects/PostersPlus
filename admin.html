@@ -3004,9 +3004,9 @@ function renderArtTitle() {
       const offered = t.offered_sources[s];
       return `<button type="button" class="${set.has(s) ? 'on' : ''} ${offered ? '' : 'off'}" aria-pressed="${set.has(s)}" title="${offered ? '' : 'Not offered to users on this instance'}" onclick="artToggleSource('${slot}','${s}')">${esc(n)}</button>`;
     }).join('')}</div>
-      <div class="art-side-hint">${slot === 'textless' ? 'Our logo is drawn on top and the burned-in-text scan is skipped, so pick art with no title.' : 'Served as-is, title and all, to users with Original Art on, and to every Cinemeta user when Cinemeta is ticked.'}</div>`;
+      <div class="art-side-hint">${slot === 'textless' ? 'Our logo is drawn on top and the burned-in-text scan is skipped, so pick art with no title.' : 'Served as-is, title and all, to users with Original Art on.'}</div>`;
   } else if (kind === 'backdrops') {
-    side += `<div class="art-side-hint">${slot === 'landscape' ? 'The landscape layout\'s art. Our logo is drawn on top, so pick art with no title.' : 'Served as-is, title and all, to landscape users with Original Art on.'} Landscape art always comes from TMDB, so this applies to every user.</div>`;
+    side += `<div class="art-side-hint">${slot === 'landscape' ? 'The landscape layout\'s art. Our logo is drawn on top, so pick art with no title.' : 'Served as-is, title and all, to landscape users with Original Art on.'} It applies to every landscape user, whatever their art source.</div>`;
   } else {
     side += `<div class="art-side-hint">Used whatever the user's poster source.${art.lang === 'null' ? ' A no-language logo stands in wherever a user\'s logo order reaches "neutral".' : ''}</div>`;
   }

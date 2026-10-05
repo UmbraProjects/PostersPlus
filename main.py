@@ -1979,8 +1979,9 @@ class RequestConfig:
     #              one in the request's language; needs TVDB_POSTER_SOURCE +
     #              the TVDB key.
     #   "cinemeta" the Metahub poster Stremio itself shows (the official
-    #              one-sheet, title baked in), served as-is like original art;
-    #              key-less, needs CINEMETA_ENABLED and an IMDb id.
+    #              one-sheet, title baked in), served as-is; key-less, needs
+    #              CINEMETA_ENABLED and an IMDb id.  Original art only:
+    #              Metahub has no textless posters.
     # A title the source has nothing for keeps its TMDB poster.  The legacy
     # poster_source param sets all three ("fanart_anime": fanart for anime).
     poster_source_movie: str = "tmdb"
@@ -2057,14 +2058,18 @@ class RequestConfig:
     #   "original" — the highest-voted language-tagged backdrop (title treatment
     #                already baked in), served as-is with no logo of ours
     landscape_art: str = "textless"
-    # Where landscape art comes from: "tmdb" (default) or "tvdb" — TVDB's
-    # best no-language background for textless, or its best background in
-    # the request's language for original.  TMDB's when TVDB has none.
-    # Offered with the TVDB poster source (TVDB_POSTER_SOURCE).  "fanart" is
-    # fanart.tv's most-liked background (textless) or thumb in the request's
-    # language (original); "fanart_anime" only for anime, as poster_source.
-    # Offered with the fanart poster source (FANART_POSTERS).
-    landscape_art_source: str = "tmdb"
+    # Where landscape art comes from, per media type as for posters:
+    # "tmdb" (default) or "tvdb" — TVDB's best no-language background for
+    # textless, or its best background in the request's language for
+    # original; offered with the TVDB poster source (TVDB_POSTER_SOURCE).
+    # "fanart" is fanart.tv's most-liked background (textless) or thumb in
+    # the request's language (original); offered with FANART_POSTERS.
+    # "cinemeta" is Metahub's background, textless only (Metahub has no
+    # titled backgrounds); offered with CINEMETA_ENABLED.  TMDB's when the
+    # source has none.  The legacy landscape_art_source sets all three.
+    landscape_art_source_movie: str = "tmdb"
+    landscape_art_source_tv:    str = "tmdb"
+    landscape_art_source_anime: str = "tmdb"
     # With no backdrop from any source (nor an anime provider's banner),
     # crop the poster art to 16:9 rather than drawing the genre canvas.
     landscape_poster_crop: bool = False
@@ -2495,16 +2500,17 @@ def _render_config_signature(cfg: "RequestConfig") -> str:
         return repr(value)
 
     fields = dataclasses.asdict(cfg)
-    # Poster source was one field before it split per media type; a split
-    # the old field could express is written as it was, so those composites
-    # keep their keys.
-    _per_type = tuple(fields.pop(f"poster_source_{k}") for k in ("movie", "tv", "anime"))
-    if _per_type[0] == _per_type[1] == _per_type[2]:
-        fields["poster_source"] = _per_type[0]
-    elif _per_type == ("tmdb", "tmdb", "fanart"):
-        fields["poster_source"] = "fanart_anime"
-    else:
-        fields["poster_source"] = list(_per_type)
+    # Poster and landscape source were one field each before they split per
+    # media type; a split the old field could express is written as it was,
+    # so those composites keep their keys.
+    for _name in _PER_TYPE_SOURCES:
+        _per_type = tuple(fields.pop(f"{_name}_{k}") for k in _MEDIA_KINDS)
+        if _per_type[0] == _per_type[1] == _per_type[2]:
+            fields[_name] = _per_type[0]
+        elif _per_type == ("tmdb", "tmdb", "fanart"):
+            fields[_name] = "fanart_anime"
+        else:
+            fields[_name] = list(_per_type)
     # Fields added after composites were first cached are left out at their
     # default, so adding one doesn't change — and re-render — every cached key.
     for name, default in _SIGNATURE_OMIT_AT_DEFAULT.items():
@@ -2560,22 +2566,43 @@ def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
     )
 
 
-def _offered_poster_sources() -> dict[str, bool]:
-    """The poster sources this instance lets users pick."""
+# Art sources picked per media type: RequestConfig carries <name>_movie,
+# <name>_tv and <name>_anime for each.
+_PER_TYPE_SOURCES = ("poster_source", "landscape_art_source")
+_MEDIA_KINDS = ("movie", "tv", "anime")
+
+
+def _offered_art_sources(cinemeta_has_art: bool) -> dict[str, bool]:
+    """The art sources this instance lets users pick.  Metahub's posters
+    all carry the title and its backgrounds none, so Cinemeta is offered
+    for posters only under original art and for landscape only under
+    textless; the caller says which applies."""
     return {
         "tmdb": True,
         "fanart": bool(_cfg.FANART_POSTERS and _cfg.FANART_API_KEY),
         "tvdb": tvdb.poster_source_enabled(),
-        "cinemeta": bool(_cfg.CINEMETA_ENABLED),
+        "cinemeta": bool(_cfg.CINEMETA_ENABLED) and cinemeta_has_art,
     }
 
 
-def _poster_source_for(cfg: RequestConfig, media_type: str, anime: bool) -> str:
-    """The poster source a title takes: the anime choice for anime, else the
+def _parse_per_type_source(cfg: RequestConfig, params: dict, name: str,
+                           offered: dict[str, bool]) -> None:
+    """Set cfg.<name>_movie/_tv/_anime.  The legacy single <name> param sets
+    all three ("fanart_anime": fanart for anime, TMDB for the rest) and a
+    per-type param beats it.  A source not offered parses as "tmdb", so those
+    requests share the TMDB composite rather than minting an identical one."""
+    legacy = (params.get(name) or "").strip().lower()
+    fallbacks = ("tmdb", "tmdb", "fanart") if legacy == "fanart_anime" else (legacy,) * 3
+    for kind, fallback in zip(_MEDIA_KINDS, fallbacks):
+        src = (params.get(f"{name}_{kind}") or "").strip().lower() or fallback
+        setattr(cfg, f"{name}_{kind}", src if offered.get(src) else "tmdb")
+
+
+def _source_for(cfg: RequestConfig, name: str, media_type: str, anime: bool) -> str:
+    """The <name> source a title takes: the anime choice for anime, else the
     film or series one."""
-    if anime:
-        return cfg.poster_source_anime
-    return cfg.poster_source_movie if media_type == "movie" else cfg.poster_source_tv
+    kind = "anime" if anime else "movie" if media_type == "movie" else "tv"
+    return getattr(cfg, f"{name}_{kind}")
 
 
 def build_request_config(params: dict) -> RequestConfig:
@@ -2940,15 +2967,8 @@ def build_request_config(params: dict) -> RequestConfig:
     _oas = (params.get("original_art_source") or "").strip().lower()
     if _oas in ("primary", "top_rated"):
         cfg.original_art_source = _oas
-    # The legacy single poster_source sets all three; a per-type param beats
-    # it.  A source the operator hasn't enabled parses as "tmdb", so those
-    # requests share the TMDB composite rather than minting an identical one.
-    _pss = (params.get("poster_source") or "").strip().lower()
-    _legacy = ("tmdb", "tmdb", "fanart") if _pss == "fanart_anime" else (_pss,) * 3
-    for _kind, _fallback in zip(("movie", "tv", "anime"), _legacy):
-        _src = (params.get(f"poster_source_{_kind}") or "").strip().lower() or _fallback
-        setattr(cfg, f"poster_source_{_kind}",
-                _src if _offered_poster_sources().get(_src) else "tmdb")
+    _parse_per_type_source(cfg, params, "poster_source",
+                           _offered_art_sources(cinemeta_has_art=cfg.use_original_art))
     # Likewise "top" while the operator hasn't allowed random picks.  Landscape
     # draws from backdrops, which neither setting touches.
     if (params.get("poster_pick") or "").strip().lower() == "random" and _cfg.RANDOM_POSTERS:
@@ -2956,11 +2976,9 @@ def build_request_config(params: dict) -> RequestConfig:
     if cfg.shape == "landscape":
         cfg.poster_source_movie = cfg.poster_source_tv = cfg.poster_source_anime = "tmdb"
         cfg.poster_pick = "top"
-        _lss = (params.get("landscape_art_source") or "").strip().lower()
-        if _lss == "tvdb" and tvdb.poster_source_enabled():
-            cfg.landscape_art_source = "tvdb"
-        elif _lss in ("fanart", "fanart_anime") and _cfg.FANART_POSTERS and _cfg.FANART_API_KEY:
-            cfg.landscape_art_source = _lss
+        _parse_per_type_source(
+            cfg, params, "landscape_art_source",
+            _offered_art_sources(cinemeta_has_art=cfg.landscape_art != "original"))
         cfg.landscape_poster_crop = _b("landscape_poster_crop", cfg.landscape_poster_crop)
     cfg.sash_priority        = _parse_sash_priority(params.get("sash_priority"))
     cfg.rating_text_color    = _parse_hex_color(params.get("rating_text_color"))
@@ -10065,8 +10083,8 @@ async def get_poster(
         # Which source applies is chosen per media type, and for anime:
         # requested by anime id, or TMDB's Animation genre on a
         # Japanese-language original.
-        _poster_source = _poster_source_for(
-            rcfg, type, is_anime or (16 in genre_ids and _original_lang == "ja"))
+        _is_anime_title = is_anime or (16 in genre_ids and _original_lang == "ja")
+        _poster_source = _source_for(rcfg, "poster_source", type, _is_anime_title)
         _fanart_wanted = _poster_source == "fanart"
         if (_fanart_wanted and not using_anime_art
                 and not use_cinemeta):
@@ -10105,9 +10123,9 @@ async def get_poster(
 
         # Cinemeta poster source: the Metahub poster Stremio shows for the
         # IMDb id.  It is the official one-sheet with the title baked in, so
-        # it is always served as-is (original-art rules: no logo on top, no
-        # text scan, no backdrop rescue) whatever the Original Art toggle says.
-        # TMDB's pick stands when there's no IMDb id or Metahub has no poster.
+        # it is offered under original art only (the parser drops it
+        # otherwise) and served as-is like any original-art pick.  TMDB's
+        # pick stands when there's no IMDb id or Metahub has no poster.
         _cinemeta_poster_used = False
         if (_poster_source == "cinemeta" and not using_anime_art
                 and not use_cinemeta and effective_imdb_id
@@ -10130,15 +10148,12 @@ async def get_poster(
         # provider covers aren't from any of the three sources, so neither is
         # touched.  See art_overrides for the language rules.
         #
-        # Cinemeta users: a Cinemeta poster is always served as-is, so it is
-        # the original override (one ticked for Cinemeta) that replaces it,
-        # whatever the Original Art toggle says, and the result is served
-        # as-is too.  That override also beats a TMDB fallback (no IMDb id,
-        # or Metahub has no poster); failing that, a fallback title takes the
+        # Cinemeta users: an original override ticked for Cinemeta replaces
+        # the Metahub poster, and also beats a TMDB fallback (no IMDb id, or
+        # Metahub has no poster); failing that, a fallback title takes the
         # TMDB overrides like any TMDB user.
         _title_art = art_overrides.for_title(type, tmdb_id) if has_tmdb_id else None
         _art_override = None
-        _cinemeta_override = False
         if _title_art and not _is_landscape:
             if (_poster_source == "cinemeta" and not using_anime_art
                     and not use_cinemeta):
@@ -10149,7 +10164,6 @@ async def get_poster(
                     language_order=_poster_language_order,
                     has_language=lambda language: bool(_plangs.get(language)),
                 )
-                _cinemeta_override = _art_override is not None
             if _art_override is None and not _cinemeta_poster_used:
                 _art_override = art_overrides.pick_poster(
                     _title_art,
@@ -10164,7 +10178,7 @@ async def get_poster(
         if _art_override is not None:
             poster_path       = _art_override.path
             _use_backdrop     = False
-            _use_original_art = rcfg.use_original_art or _cinemeta_override
+            _use_original_art = rcfg.use_original_art
             is_textless       = not _use_original_art
             logger.info(f"Operator art for {tmdb_id}: {poster_path}"
                         f"{' (original art)' if _use_original_art else ''}")
@@ -10463,9 +10477,10 @@ async def get_poster(
                 # already in the art; don't double it with our logo.
                 is_textless = bool(backdrop_path)
             _use_backdrop = False
+            _ls_source = _source_for(rcfg, "landscape_art_source", type, _is_anime_title)
             # TVDB's background instead, when asked for and it has one: the
             # untagged ones are clean art, the tagged ones carry the title.
-            if rcfg.landscape_art_source == "tvdb" and not use_cinemeta:
+            if _ls_source == "tvdb" and not use_cinemeta:
                 _tv_bg = await tvdb.tvdb_poster_url(
                     client, media_type=type, tmdb_id=tmdb_id if has_tmdb_id else None,
                     imdb_id=effective_imdb_id, kind="backgrounds",
@@ -10475,12 +10490,8 @@ async def get_poster(
                     _ls_path    = _tv_bg
                     is_textless = rcfg.landscape_art != "original"
                     logger.info(f"TVDB landscape art for {tmdb_id}: {_tv_bg}")
-            # fanart.tv's, likewise; "fanart_anime" only for anime, by the
-            # portrait poster source's test.
-            if (has_tmdb_id and not use_cinemeta
-                    and (rcfg.landscape_art_source == "fanart"
-                         or (rcfg.landscape_art_source == "fanart_anime"
-                             and (is_anime or (16 in genre_ids and _original_lang == "ja"))))):
+            # fanart.tv's, likewise.
+            if _ls_source == "fanart" and has_tmdb_id and not use_cinemeta:
                 from fanart import fanart_background_url
                 _fa_bg = await fanart_background_url(
                     client, media_type=type, tmdb_id=tmdb_id, imdb_id=effective_imdb_id,
@@ -10490,6 +10501,14 @@ async def get_poster(
                     _ls_path    = _fa_bg
                     is_textless = rcfg.landscape_art != "original"
                     logger.info(f"fanart.tv landscape art for {tmdb_id}: {_fa_bg}")
+            # Metahub's background: textless art only (the parser keeps this
+            # source off original), so our logo goes on.
+            if _ls_source == "cinemeta":
+                _, _mh_bg = await _metahub_art()
+                if _mh_bg:
+                    _ls_path    = _mh_bg
+                    is_textless = True
+                    logger.info(f"Cinemeta landscape art for {tmdb_id}: {_mh_bg}")
             # A later season's own art (anime_season.py): every source above
             # gives each season the show's art, as they go by its TMDB id.
             # The operator's pick below still wins.
@@ -10547,7 +10566,7 @@ async def get_poster(
                     and _ls_override is None
                     and await _no_logo_above_art()):
                 _ls_orig = None
-                if rcfg.landscape_art_source == "tvdb" and not use_cinemeta:
+                if _ls_source == "tvdb" and not use_cinemeta:
                     _ls_orig = await tvdb.tvdb_poster_url(
                         client, media_type=type, tmdb_id=tmdb_id if has_tmdb_id else None,
                         imdb_id=effective_imdb_id, kind="backgrounds",

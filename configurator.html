@@ -3186,13 +3186,31 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <option value="original">Original</option>
                 </select>
               </div>
-              <div class="field" id="landscape-art-source-field" hidden>
-                <label class="field-label" data-tip="Where the backdrop comes from. Fanart backgrounds are clean art, so Textless gets the most liked one; with Original, Fanart gives a thumb in your logo language, which carries the title. The anime option uses Fanart only for anime. TVDB backdrops with no language are clean art, so Textless gets the best of those; with Original, TVDB gives a backdrop in your logo language. Titles the source has nothing for keep their TMDB backdrop.">Art Source</label>
-                <select id="cfg-landscape-art-source" onchange="build(); queuePreviewReload()">
+              <div class="field landscape-art-source-field" hidden>
+                <label class="field-label" data-tip="Where film backdrops come from. Anime films follow the Anime Source. Fanart backgrounds are clean art, so Textless gets the most liked one; with Original, Fanart gives a thumb in your logo language, which carries the title. TVDB backdrops with no language are clean art, so Textless gets the best of those; with Original, TVDB gives a backdrop in your logo language. Cinemeta is the background Stremio shows, always clean art, so it's offered with Textless + Logo only. Titles the source has nothing for keep their TMDB backdrop.">Movie Source</label>
+                <select id="cfg-landscape-art-source-movie" onchange="build(); queuePreviewReload()">
                   <option value="tmdb" selected>TMDB</option>
                   <option value="fanart">Fanart</option>
-                  <option value="fanart_anime">TMDB, with Fanart for anime</option>
                   <option value="tvdb">TVDB</option>
+                  <option value="cinemeta">Cinemeta</option>
+                </select>
+              </div>
+              <div class="field landscape-art-source-field" hidden>
+                <label class="field-label" data-tip="Where series backdrops come from. Anime series follow the Anime Source. Fanart backgrounds are clean art, so Textless gets the most liked one; with Original, Fanart gives a thumb in your logo language, which carries the title. TVDB backdrops with no language are clean art, so Textless gets the best of those; with Original, TVDB gives a backdrop in your logo language. Cinemeta is the background Stremio shows, always clean art, so it's offered with Textless + Logo only. Titles the source has nothing for keep their TMDB backdrop.">Series Source</label>
+                <select id="cfg-landscape-art-source-tv" onchange="build(); queuePreviewReload()">
+                  <option value="tmdb" selected>TMDB</option>
+                  <option value="fanart">Fanart</option>
+                  <option value="tvdb">TVDB</option>
+                  <option value="cinemeta">Cinemeta</option>
+                </select>
+              </div>
+              <div class="field landscape-art-source-field" hidden>
+                <label class="field-label" data-tip="Where anime backdrops come from: Japanese animation, or a title requested by an AniList, Kitsu or MAL id. Fanart backgrounds are clean art, so Textless gets the most liked one; with Original, Fanart gives a thumb in your logo language, which carries the title. TVDB backdrops with no language are clean art, so Textless gets the best of those; with Original, TVDB gives a backdrop in your logo language. Cinemeta is the background Stremio shows, always clean art, so it's offered with Textless + Logo only. Titles the source has nothing for keep their TMDB backdrop.">Anime Source</label>
+                <select id="cfg-landscape-art-source-anime" onchange="build(); queuePreviewReload()">
+                  <option value="tmdb" selected>TMDB</option>
+                  <option value="fanart">Fanart</option>
+                  <option value="tvdb">TVDB</option>
+                  <option value="cinemeta">Cinemeta</option>
                 </select>
               </div>
               <div class="toggle-row">
@@ -3203,16 +3221,16 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </label>
               </div>
             </div>
-            <div class="toggle-row portrait-only">
-              <span class="toggle-label" data-tip="Use the original poster art instead of textless art with a logo overlay. Bar or minimal rating modes suit it best.">Original Art</span>
-              <label class="toggle-switch">
-                <input type="checkbox" id="tog-original-art" onchange="updateOriginalArt(); build(); queuePreviewReload()">
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
+            <div class="field portrait-only">
+              <label class="field-label" data-tip="Textless uses clean poster art with your logo on top. Original uses the poster as published, title and all, as-is; Bar or minimal rating modes suit it best.">Art</label>
+              <select id="cfg-art" onchange="updateOriginalArt(); build(); queuePreviewReload()">
+                <option value="textless" selected>Textless + Logo</option>
+                <option value="original">Original</option>
+              </select>
             </div>
             <!-- Original Art source (shown only in Original Art mode) -->
             <div class="field portrait-only" id="original-art-source-field" style="display:none;">
-              <label class="field-label" data-tip="Primary is TMDB's main poster; top-rated picks the highest-voted one.">Art Source</label>
+              <label class="field-label" data-tip="Which TMDB poster Original uses: Primary is TMDB's main poster; top-rated picks the highest-voted one.">TMDB Poster</label>
               <select id="cfg-original-art-source" onchange="build(); queuePreviewReload()">
                 <option value="primary" selected>Primary (TMDB default)</option>
                 <option value="top_rated">Top-rated</option>
@@ -3220,7 +3238,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             </div>
             <!-- Poster source per media type, and pick; each shown only when the operator allows it -->
             <div class="field portrait-only poster-source-field" hidden>
-              <label class="field-label" data-tip="Where film posters come from. Anime films follow the Anime Poster Source. Fanart art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. TVDB posters with no language are textless; with Original Art on, TVDB gives a poster in your logo language. Cinemeta is the poster Stremio shows by default: the official English poster with the title on it, so it's shown as-is with no logo added, whatever Original Art is set to. Titles the source has nothing for keep their TMDB poster.">Movie Poster Source</label>
+              <label class="field-label" data-tip="Where film posters come from. Anime films follow the Anime Source. Fanart art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. TVDB posters with no language are textless; with Original Art on, TVDB gives a poster in your logo language. Cinemeta is the poster Stremio shows by default: the official English poster with the title on it, so it's offered with Original art only. Titles the source has nothing for keep their TMDB poster.">Movie Source</label>
               <select id="cfg-poster-source-movie" onchange="build(); queuePreviewReload()">
                 <option value="tmdb" selected>TMDB</option>
                 <option value="fanart">Fanart</option>
@@ -3229,7 +3247,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
             </div>
             <div class="field portrait-only poster-source-field" hidden>
-              <label class="field-label" data-tip="Where series posters come from. Anime series follow the Anime Poster Source. Fanart art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. TVDB posters with no language are textless; with Original Art on, TVDB gives a poster in your logo language. Cinemeta is the poster Stremio shows by default: the official English poster with the title on it, so it's shown as-is with no logo added, whatever Original Art is set to. Titles the source has nothing for keep their TMDB poster.">Series Poster Source</label>
+              <label class="field-label" data-tip="Where series posters come from. Anime series follow the Anime Source. Fanart art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. TVDB posters with no language are textless; with Original Art on, TVDB gives a poster in your logo language. Cinemeta is the poster Stremio shows by default: the official English poster with the title on it, so it's offered with Original art only. Titles the source has nothing for keep their TMDB poster.">Series Source</label>
               <select id="cfg-poster-source-tv" onchange="build(); queuePreviewReload()">
                 <option value="tmdb" selected>TMDB</option>
                 <option value="fanart">Fanart</option>
@@ -3238,7 +3256,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
             </div>
             <div class="field portrait-only poster-source-field" hidden>
-              <label class="field-label" data-tip="Where anime posters come from: Japanese animation, or a title requested by an AniList, Kitsu or MAL id when that provider has no art. Fanart art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. TVDB posters with no language are textless; with Original Art on, TVDB gives a poster in your logo language. Cinemeta is the poster Stremio shows by default: the official English poster with the title on it, so it's shown as-is with no logo added, whatever Original Art is set to. Titles the source has nothing for keep their TMDB poster.">Anime Poster Source</label>
+              <label class="field-label" data-tip="Where anime posters come from: Japanese animation, or a title requested by an AniList, Kitsu or MAL id when that provider has no art. Fanart art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. TVDB posters with no language are textless; with Original Art on, TVDB gives a poster in your logo language. Cinemeta is the poster Stremio shows by default: the official English poster with the title on it, so it's offered with Original art only. Titles the source has nothing for keep their TMDB poster.">Anime Source</label>
               <select id="cfg-poster-source-anime" onchange="build(); queuePreviewReload()">
                 <option value="tmdb" selected>TMDB</option>
                 <option value="fanart">Fanart</option>
@@ -4433,6 +4451,8 @@ let serverCapsLoaded = false;
 // Poster source is picked per media type (poster_source_movie / _tv / _anime).
 const POSTER_SOURCE_KINDS = ['movie', 'tv', 'anime'];
 const POSTER_SOURCE_IDS = POSTER_SOURCE_KINDS.map(k => `cfg-poster-source-${k}`);
+// Landscape's backdrop source, likewise (landscape_art_source_movie / _tv / _anime).
+const LANDSCAPE_SOURCE_IDS = POSTER_SOURCE_KINDS.map(k => `cfg-landscape-art-source-${k}`);
 let searchDebounce = null, previewDebounce = null, previewLoading = false, imdbResolvePending = false;
 
 const previewPanel = document.querySelector('.preview-panel');
@@ -4773,24 +4793,11 @@ async function fetchServerCaps() {
     updateImdbSourceAvailability();
     updateResolutionAvailability();
     syncCustomFonts(Array.isArray(serverCaps.custom_fonts) ? serverCaps.custom_fonts : []);
-    for (const f of document.querySelectorAll('.poster-source-field'))
-      f.hidden = !(serverCaps.fanart_posters || serverCaps.tvdb_posters || serverCaps.cinemeta_posters);
-    document.getElementById('landscape-art-source-field').hidden = !(serverCaps.fanart_posters || serverCaps.tvdb_posters);
-    // Only the sources this instance offers; a restored choice it doesn't
-    // offer falls back to TMDB.
-    for (const id of [...POSTER_SOURCE_IDS, 'cfg-landscape-art-source']) {
-      for (const opt of document.querySelectorAll(`#${id} option`)) {
-        opt.hidden = opt.value === 'tvdb' ? !serverCaps.tvdb_posters
-          : opt.value === 'cinemeta' ? !serverCaps.cinemeta_posters
-          : opt.value.startsWith('fanart') ? !serverCaps.fanart_posters : false;
-      }
-      const _srcSel = document.getElementById(id);
-      if (_srcSel.selectedOptions[0] && _srcSel.selectedOptions[0].hidden) _srcSel.value = 'tmdb';
-    }
+    updateArtSourceOptions();
     document.getElementById('poster-pick-field').hidden = !serverCaps.random_posters;
     // Restored before the caps answered, so the URL left them out.
-    if (POSTER_SOURCE_IDS.some(id => vEl(id) !== 'tmdb') || vEl('cfg-poster-pick') !== 'top'
-        || vEl('cfg-landscape-art-source') !== 'tmdb') build();
+    if ([...POSTER_SOURCE_IDS, ...LANDSCAPE_SOURCE_IDS].some(id => vEl(id) !== 'tmdb')
+        || vEl('cfg-poster-pick') !== 'top') build();
     document.getElementById('header-admin').hidden = !serverCaps.admin_link;
     
     if (serverCaps.trending_fetch_count) {
@@ -6672,7 +6679,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   // badge and info sizes to 1.00 on the next reload.
   if (emitLandscape || full) {
     params.set('landscape_art', vEl('cfg-landscape-art') || 'textless');
-    if ((serverCaps.fanart_posters || serverCaps.tvdb_posters) && vEl('cfg-landscape-art-source') !== 'tmdb') params.set('landscape_art_source', vEl('cfg-landscape-art-source'));
+    for (const kind of POSTER_SOURCE_KINDS) {
+      const src = vEl(`cfg-landscape-art-source-${kind}`);
+      if (src && src !== 'tmdb') params.set(`landscape_art_source_${kind}`, src);
+    }
     params.set('badge_pos',     vEl('cfg-landscape-badge-pos') || 'top_left');
     params.set('landscape_badge_scale', n('cfg-landscape-badge-scale').toFixed(2));
     params.set('landscape_info_scale', n('cfg-landscape-info-scale').toFixed(2));
@@ -6837,13 +6847,11 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
 
   // ── Logo ───────────────────────────────────────────────────────────────────
   if (emitAll) {
-    params.set('use_original_art',    c('tog-original-art') ? 'true' : 'false');
+    params.set('use_original_art',    vEl('cfg-art') === 'original' ? 'true' : 'false');
     params.set('original_art_source', vEl('cfg-original-art-source') || 'primary');
-    if (serverCaps.fanart_posters || serverCaps.tvdb_posters || serverCaps.cinemeta_posters) {
-      for (const kind of POSTER_SOURCE_KINDS) {
-        const src = vEl(`cfg-poster-source-${kind}`);
-        if (src && src !== 'tmdb') params.set(`poster_source_${kind}`, src);
-      }
+    for (const kind of POSTER_SOURCE_KINDS) {
+      const src = vEl(`cfg-poster-source-${kind}`);
+      if (src && src !== 'tmdb') params.set(`poster_source_${kind}`, src);
     }
     if (serverCaps.random_posters && vEl('cfg-poster-pick') !== 'top') params.set('poster_pick', vEl('cfg-poster-pick'));
   }
@@ -8061,7 +8069,7 @@ function updateOriginalArt() {
   // the group's rows (Textless and Logo Position), so the group goes with them
   // rather than leave its heading standing alone.
   const landscape = c('tog-landscape');
-  const on = c('tog-original-art') && !landscape;
+  const on = vEl('cfg-art') === 'original' && !landscape;
   const lc = document.getElementById('logo-controls');
   const sf = document.getElementById('original-art-source-field');
   const landscapeOriginal = landscape && vEl('cfg-landscape-art') === 'original';
@@ -8070,6 +8078,37 @@ function updateOriginalArt() {
   // Textless draws no logo, so there is nothing for the sizing and anchor to move.
   const ls = document.getElementById('logo-size-fields');
   if (ls) ls.style.display = c('tog-textless') ? 'none' : '';
+  updateArtSourceOptions();
+}
+
+// The art sources each dropdown offers: the ones this instance enables, and
+// Cinemeta only in the art mode it has art for.  Metahub's posters all carry
+// the title (Original only) and its backgrounds none (Textless + Logo only).
+// A choice that drops out falls back to TMDB, as the server would parse it;
+// a dropdown left with TMDB alone is hidden.
+function updateArtSourceOptions() {
+  if (!serverCapsLoaded) return;   // a restored choice waits for the caps
+  const groups = [
+    { ids: POSTER_SOURCE_IDS, field: '.poster-source-field',
+      cinemeta: vEl('cfg-art') === 'original' },
+    { ids: LANDSCAPE_SOURCE_IDS, field: '.landscape-art-source-field',
+      cinemeta: vEl('cfg-landscape-art') !== 'original' },
+  ];
+  for (const g of groups) {
+    const offered = {
+      tmdb: true,
+      fanart: !!serverCaps.fanart_posters,
+      tvdb: !!serverCaps.tvdb_posters,
+      cinemeta: !!serverCaps.cinemeta_posters && g.cinemeta,
+    };
+    for (const id of g.ids) {
+      const sel = document.getElementById(id);
+      for (const opt of sel.options) opt.hidden = !offered[opt.value];
+      if (sel.selectedOptions[0] && sel.selectedOptions[0].hidden) sel.value = 'tmdb';
+    }
+    const any = Object.entries(offered).some(([s, on]) => on && s !== 'tmdb');
+    for (const f of document.querySelectorAll(g.field)) f.hidden = !any;
+  }
 }
 
 // The two Rating Bar styles draw the score as a progress fill, so with the
@@ -9131,7 +9170,7 @@ function _buildPresetCard(grid, preset) {
 // Controls only one shape reads.  A preset for the other shape must not
 // touch them: a landscape preset says nothing about the rating bar, and
 // importing it would otherwise reset the rating bar to its defaults.
-const _LANDSCAPE_ONLY_CONTROLS = ['cfg-landscape-art', 'cfg-landscape-art-source', 'cfg-landscape-badge-pos',
+const _LANDSCAPE_ONLY_CONTROLS = ['cfg-landscape-art', ...LANDSCAPE_SOURCE_IDS, 'cfg-landscape-badge-pos',
                                   'cfg-landscape-badge-scale', 'cfg-landscape-info-scale',
                                   'cfg-landscape-color-link', 'tog-landscape-score-10',
                                   'tog-landscape-score-star', 'cfg-landscape-logo-pos', 'cfg-landscape-logo-row',
@@ -9323,6 +9362,19 @@ function checkWhatsNew() {
   let acked = null;
   try { acked = localStorage.getItem('postersplus_whatsnew_acked'); } catch (_) {}
   ver.dataset.acked = (acked === WHATS_NEW_VERSION) ? 'true' : 'false';
+}
+
+// A per-type source (<name>_movie / _tv / _anime) into its three dropdowns.
+// The legacy single <name> sets all three ("fanart_anime": Fanart for anime
+// only) and a per-type param beats it, as on the server.
+function _restorePerTypeSource(p, name, idPrefix) {
+  const legacy = p.get(name) || 'tmdb';
+  for (const kind of POSTER_SOURCE_KINDS) {
+    const fallback = legacy === 'fanart_anime' ? (kind === 'anime' ? 'fanart' : 'tmdb') : legacy;
+    const value = p.get(`${name}_${kind}`) || fallback;
+    const sel = document.getElementById(`${idPrefix}-${kind}`);
+    sel.value = [...sel.options].some(o => o.value === value) ? value : 'tmdb';
+  }
 }
 
 function _setEl(id, value) {
@@ -9538,7 +9590,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (!preserveShape) {
     _setEl('tog-landscape', (p.get('shape') || '').toLowerCase() === 'landscape');
     _setEl('cfg-landscape-art',        p.get('landscape_art')        || 'textless');
-    _setEl('cfg-landscape-art-source', ['tvdb', 'fanart', 'fanart_anime'].includes(p.get('landscape_art_source')) ? p.get('landscape_art_source') : 'tmdb');
+    _restorePerTypeSource(p, 'landscape_art_source', 'cfg-landscape-art-source');
     _setEl('cfg-landscape-badge-pos',  p.get('badge_pos')            || 'top_left');
     _setEl('cfg-landscape-color-link', p.get('landscape_color_link') || 'badge_follows_vignette');
     _setEl('cfg-landscape-badge-scale', p.get('landscape_badge_scale') || '1.00');
@@ -9750,14 +9802,9 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('logo_bottom_ratio'))    _setEl('cfg-logo-bottom',         p.get('logo_bottom_ratio'));
   if (p.has('logo_bottom_anchor'))   _setEl('tog-logo-bottom-anchor',  p.get('logo_bottom_anchor'));
   if (p.has('textless'))             _setEl('tog-textless',            p.get('textless'));
-  if (p.has('use_original_art'))   _setEl('tog-original-art', p.get('use_original_art'));
+  if (p.has('use_original_art'))   _setEl('cfg-art', ['true', '1'].includes(p.get('use_original_art')) ? 'original' : 'textless');
   if (p.has('original_art_source')) _setEl('cfg-original-art-source', p.get('original_art_source'));
-  // The single legacy poster_source sets all three; a per-type param beats it.
-  const _legacySrc = p.get('poster_source') || 'tmdb';
-  for (const kind of POSTER_SOURCE_KINDS) {
-    const legacy = _legacySrc === 'fanart_anime' ? (kind === 'anime' ? 'fanart' : 'tmdb') : _legacySrc;
-    _setEl(`cfg-poster-source-${kind}`, p.get(`poster_source_${kind}`) || legacy);
-  }
+  _restorePerTypeSource(p, 'poster_source', 'cfg-poster-source');
   _setEl('cfg-poster-pick', p.get('poster_pick') || 'top');
 
   // ── Quality badges ──────────────────────────────────────────────────────

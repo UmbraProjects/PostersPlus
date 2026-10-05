@@ -2,20 +2,25 @@
 
 ## Unreleased
 
-### Poster source per media type, and Cinemeta as a source
+### Art source per media type, for posters and landscape, and Cinemeta
 
-- Poster Source is now three dropdowns: Movie, Series and Anime. Each picks
-  TMDB, Fanart, TVDB or Cinemeta (`poster_source_movie`, `poster_source_tv`,
-  `poster_source_anime`), and a title the source has nothing for keeps its
-  TMDB poster. Anime is Japanese animation, or a title requested by an
-  AniList, Kitsu or MAL id whose provider had no art. The old
-  `poster_source` still works and sets all three (`fanart_anime` sets Fanart
-  for anime only), so existing URLs render, and cache, as before.
-- Cinemeta is the Metahub poster Stremio shows by default (#45, thanks
-  @alpinezx). Its posters carry the title, in English, so they're shown
-  as-is with no logo, whatever Original Art says. Needs no key; offered
+- The art source is now three dropdowns, Movie, Series and Anime, in both
+  shapes: `poster_source_movie` / `_tv` / `_anime` for posters and
+  `landscape_art_source_movie` / `_tv` / `_anime` for landscape. Each picks
+  TMDB, Fanart, TVDB or Cinemeta, and a title the source has nothing for
+  keeps its TMDB art. Anime is Japanese animation, or a title requested by
+  an AniList, Kitsu or MAL id. The old `poster_source` and
+  `landscape_art_source` still work and set all three (`fanart_anime` sets
+  Fanart for anime only), so existing URLs render, and cache, as before.
+- Cinemeta is the Metahub art Stremio shows by default (#45, thanks
+  @alpinezx). Its posters all carry the title, in English, so for posters
+  it is offered with Original art only; its backgrounds never do, so for
+  landscape it is offered with Textless + Logo only. Needs no key; offered
   while `CINEMETA_ENABLED` is on. An OA Poster override in Admin > Artwork
   can be ticked for Cinemeta to replace a wrong Metahub poster.
+- Portrait's Original Art switch is now an Art dropdown (Textless + Logo or
+  Original), as landscape's is, and its Primary / Top-rated pick is labelled
+  TMDB Poster. The URL parameters are unchanged.
 - A Metahub image that 404s after its existence check now clears that check
   for the title's IMDb id even when the request only carried a TMDB id, so
   the next render re-checks instead of failing until the cache runs out.
