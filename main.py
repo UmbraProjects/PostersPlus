@@ -959,7 +959,7 @@ from ratings import (
     _score_color_alt,
     _score_color_metal,
 )
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_landscape_crop, fetch_trending_rank_entry, fetch_anime_trending_rank_entry, _expire_overlapping_lists, trending_kind, anime_split, ANIME_ENDPOINTS, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, logo_priority_falls_back_to_art, split_logo_priority_at_art, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, resolve_tvdb_to_tmdb, IdResolveError, TmdbIdGone, mark_tmdb_id_gone, tmdb_id_gone, forget_imdb_mapping_to, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS, fetch_logo_image, logo_language_steps, logo_step_available, _image_matches_language, sanitise_source_url, fetch_cropped_art
+from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_landscape_crop, fetch_trending_rank_entry, fetch_anime_trending_rank_entry, _expire_overlapping_lists, trending_kind, anime_split, ANIME_ENDPOINTS, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, logo_priority_falls_back_to_art, split_logo_priority_at_art, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, resolve_tvdb_to_tmdb, IdResolveError, TmdbIdGone, tmdb_bearer_auth, tmdb_key_rejected, mark_tmdb_id_gone, tmdb_id_gone, forget_imdb_mapping_to, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS, fetch_logo_image, logo_language_steps, logo_step_available, _image_matches_language, sanitise_source_url, fetch_cropped_art
 # How long a poster rendered while its trending list was unreadable is kept:
 # the same as that list's retry cooldown.
 from tmdb import _TRENDING_SOURCE_RETRY_SECS as _TRENDING_UNREAD_TTL
@@ -1032,6 +1032,7 @@ def _make_http_client() -> httpx.AsyncClient:
             ),
         },
         http2=False,   # most poster APIs don't support h2; skip the negotiation
+        event_hooks={"request": [tmdb_bearer_auth]},
     )
 
 
@@ -1518,6 +1519,17 @@ def _no_tmdb_key_detail(imdb_id: str) -> str:
     return base
 
 
+def _raise_if_client_key_rejected(exc: BaseException, tmdb_key: str | None, title: str) -> None:
+    """A 401 from TMDB on the request's own tmdb_key= is the client's to fix:
+    answer it as one.  Falling back to Cinemeta or TVDB instead would hide it
+    behind a poorer poster, and only on titles nothing has cached yet."""
+    if tmdb_key and tmdb_key != _cfg.SERVER_TMDB_KEY and tmdb_key_rejected(exc):
+        logger.warning(f"TMDB rejected the request's own tmdb_key (401) for {title}")
+        raise HTTPException(
+            status_code=401, detail="TMDB rejected the tmdb_key in this request",
+        ) from exc
+
+
 async def _resolve_title_identity(
     tmdb_id: str, imdb_id: str, media_type: str, tmdb_key: str | None,
 ) -> "tuple[str, str, bool]":
@@ -1557,6 +1569,7 @@ async def _resolve_title_identity(
     try:
         resolved = await resolve_imdb_to_tmdb(_HTTP_CLIENT, imdb_id, media_type, tmdb_key)
     except IdResolveError as exc:
+        _raise_if_client_key_rejected(exc, tmdb_key, imdb_id)
         if not cinemeta_ok:
             raise HTTPException(
                 status_code=502,
@@ -1619,6 +1632,7 @@ async def _resolve_tvdb_identity(
         try:
             resolved = await resolve_tvdb_to_tmdb(_HTTP_CLIENT, tvdb_id, media_type, tmdb_key)
         except IdResolveError as exc:
+            _raise_if_client_key_rejected(exc, tmdb_key, f"tvdb:{tvdb_id}")
             logger.warning(f"{exc} — rendering tvdb:{tvdb_id} from TVDB instead")
             resolved = None
         if resolved is not None:
@@ -11716,11 +11730,7 @@ async def get_poster(
                 f"will self-heal on next request"
             )
             raise HTTPException(status_code=404, detail="Poster image not found on TMDB")
-        if (status == 401 and exc.request.url.host == "api.themoviedb.org"
-                and effective_tmdb_key != _cfg.SERVER_TMDB_KEY):
-            # The client's own tmdb_key= was rejected: theirs to fix, not ours.
-            logger.warning(f"TMDB rejected the request's own tmdb_key (401) for tmdb_id={tmdb_id}")
-            raise HTTPException(status_code=401, detail="TMDB rejected the tmdb_key in this request")
+        _raise_if_client_key_rejected(exc, effective_tmdb_key, f"tmdb_id={tmdb_id}")
         logger.error(f"Upstream HTTP {status} for tmdb_id={tmdb_id}: {exc}")
         raise HTTPException(status_code=502, detail=f"Upstream error {status}")
     except Exception as exc:

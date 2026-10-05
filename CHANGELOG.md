@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### TMDB Read Access Tokens work as a key
+
+- TMDB's settings page lists two credentials, and pasting the longer "API
+  Read Access Token" (`eyJ...`) as `tmdb_key` or `TMDB_API_KEY` used to half
+  work: TMDB rejects it as the `api_key` parameter, so titles already cached
+  rendered while others failed with a 502 or fell back to Cinemeta (#47).
+  It is now sent as a Bearer header, which TMDB accepts, everywhere a key is
+  used, the configurator included.
+- A `tmdb_key=` that TMDB rejects is answered with a 401 saying so, also when
+  it fails on the IMDb or TVDB id lookup. That used to fall back to Cinemeta
+  or TVDB without a word, so a bad key looked like poorer posters.
+
 ### Later anime seasons get their own landscape art
 
 - In landscape, an anime's later seasons and cours no longer all share the

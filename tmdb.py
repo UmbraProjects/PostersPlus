@@ -2830,6 +2830,46 @@ async def fetch_supplemental_candidates(
     return candidates
 
 
+async def tmdb_bearer_auth(request: httpx.Request) -> None:
+    """httpx request hook: send a v4 Read Access Token as a Bearer header.
+
+    Every call here passes the key as ``api_key=``, which TMDB only accepts
+    from a v3 key; the v4 token (a JWT, so ``eyJ…``) it answers with a 401
+    there but takes as ``Authorization: Bearer`` on the same v3 endpoints.
+    People paste either, since TMDB's settings page lists both (issue #47).
+    """
+    if request.url.host != "api.themoviedb.org":
+        return
+    key = request.url.params.get("api_key", "")
+    if key.startswith("eyJ"):
+        request.url = request.url.copy_remove_param("api_key")
+        request.headers["Authorization"] = f"Bearer {key}"
+
+
+def tmdb_key_rejected(exc: BaseException | None) -> bool:
+    """True when *exc* (or what it wraps) is TMDB answering 401 to our key."""
+    while exc is not None:
+        if isinstance(exc, httpx.HTTPStatusError):
+            try:
+                return (exc.response.status_code == 401
+                        and exc.request.url.host == "api.themoviedb.org")
+            except (AttributeError, RuntimeError):   # built without a request/response
+                return False
+        exc = exc.__cause__
+    return False
+
+
+def _failure(exc: BaseException) -> str:
+    """What went wrong with a TMDB call, for an IdResolveError's message.
+
+    Not ``str(exc)``: an httpx status error's text carries the request URL,
+    key included, and the message can reach a client in a 502 detail.  The
+    repr names the error type, where a timeout's own text is empty."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {getattr(exc.response, 'status_code', '?')}"
+    return repr(exc)
+
+
 class IdResolveError(Exception):
     """The id lookup could not be completed (network, 5xx, bad key) — as
     opposed to a definite "no such title", which is a None result."""
@@ -2865,7 +2905,7 @@ async def tmdb_find_by_imdb(
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
-        raise IdResolveError(f"TMDB find failed for {imdb_id}: {exc}") from exc
+        raise IdResolveError(f"TMDB find failed for {imdb_id}: {_failure(exc)}") from exc
 
     # A deleted entry can linger in /find for a while after its own page
     # 404s, and one that links a series' IMDb id would win the lookup again.
@@ -3032,6 +3072,9 @@ async def resolve_imdb_to_tmdb(
     if inflight is not None:
         return await inflight
     fut: "asyncio.Future[dict | None]" = asyncio.get_running_loop().create_future()
+    # The owner re-raises the failure itself; without riders nobody else reads
+    # it, and asyncio would log "Future exception was never retrieved".
+    fut.add_done_callback(_retrieve_exception)
     _idmap_inflight[key] = fut
     try:
         if anthology:
@@ -3049,6 +3092,11 @@ async def resolve_imdb_to_tmdb(
 
 
 _idmap_inflight: "dict[str, asyncio.Future]" = {}
+
+
+def _retrieve_exception(fut: asyncio.Future) -> None:
+    if not fut.cancelled():
+        fut.exception()
 
 
 def _reverse_idmap_key(tmdb_id: str, media_type: str) -> str:
@@ -3092,6 +3140,7 @@ async def resolve_tmdb_to_imdb(
     if inflight is not None:
         return await inflight
     fut: "asyncio.Future[str | None]" = asyncio.get_running_loop().create_future()
+    fut.add_done_callback(_retrieve_exception)
     _idmap_inflight[key] = fut
     try:
         kind = "tv" if media_type in ("tv", "series") else "movie"
@@ -3111,7 +3160,7 @@ async def resolve_tmdb_to_imdb(
             if len(_reverse_idmap_failed_at) >= 10000:
                 _reverse_idmap_failed_at.clear()
             _reverse_idmap_failed_at[key] = time.monotonic()
-            raise IdResolveError(f"TMDB external_ids failed for {kind}/{tmdb_id}: {exc}") from exc
+            raise IdResolveError(f"TMDB external_ids failed for {kind}/{tmdb_id}: {_failure(exc)}") from exc
         _reverse_idmap_failed_at.pop(key, None)
         # A link TMDB adds later should be picked up, so "none" is kept only a day.
         set_cached_tvdb_json(

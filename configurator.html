@@ -5864,11 +5864,14 @@ async function fetchImdbId(tmdbId, type) {
 
   try {
     if (userTmdbKey) {
-      // Direct browser call when user has their own key
-      const endpoint = type === 'tv'
-        ? `https://api.themoviedb.org/3/tv/${tmdbId}/external_ids?api_key=${userTmdbKey}`
-        : `https://api.themoviedb.org/3/movie/${tmdbId}/external_ids?api_key=${userTmdbKey}`;
-      const resp = await fetch(endpoint);
+      // Direct browser call when user has their own key. A v4 Read Access
+      // Token (eyJ…) only works as a Bearer header, not as api_key.
+      const bearer = userTmdbKey.startsWith('eyJ');
+      const kind = type === 'tv' ? 'tv' : 'movie';
+      const endpoint = `https://api.themoviedb.org/3/${kind}/${tmdbId}/external_ids`
+        + (bearer ? '' : `?api_key=${encodeURIComponent(userTmdbKey)}`);
+      const resp = await fetch(endpoint,
+        bearer ? { headers: { Authorization: `Bearer ${userTmdbKey}` } } : undefined);
       const data = await resp.json();
       return data.imdb_id || null;
     } else {

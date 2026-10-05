@@ -133,7 +133,7 @@ QUALICACHE_MIN_TRUST = (
     if QUALICACHE_MIN_TRUST_RAW in QUALICACHE_MIN_TRUST_VALUES
     else "medium"
 )
-SERVER_TMDB_KEY       = _env('TMDB_API_KEY', "", group='API keys', kind='secret', label='TMDB API key', help='Fetches posters, logos and metadata. Strongly recommended; without one (and no per-client tmdb_key) titles render from Cinemeta and need an imdb_id on the request.').strip()
+SERVER_TMDB_KEY       = _env('TMDB_API_KEY', "", group='API keys', kind='secret', label='TMDB API key', help='Fetches posters, logos and metadata. Strongly recommended; without one (and no per-client tmdb_key) titles render from Cinemeta and need an imdb_id on the request. Either the API key or the longer API Read Access Token works.').strip()
 SERVER_MDBLIST_KEY    = _env('MDBLIST_API_KEY', "", group='API keys', kind='secret', label='MDBList API key', help='Ratings, awards, keywords and age ratings. Without it the score reads N/A and the MDBList-only sashes are unavailable.').strip()
 SERVER_MDBLIST_KEY_2  = _env('MDBLIST_API_KEY_2', "", group='API keys', kind='secret', label='MDBList API key (second)', help="Retried in the same request when the primary key is rate-limited; a key that has spent its daily quota stays parked until MDBList's reset.").strip()
 

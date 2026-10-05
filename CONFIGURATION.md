@@ -67,7 +67,7 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 
 | Variable | Default | Description |
 |---|---|---|
-| `TMDB_API_KEY` | - | Fetches posters, logos and metadata. Strongly recommended; without one (and no per-client tmdb_key) titles render from Cinemeta and need an imdb_id on the request. |
+| `TMDB_API_KEY` | - | Fetches posters, logos and metadata. Strongly recommended; without one (and no per-client tmdb_key) titles render from Cinemeta and need an imdb_id on the request. Either the API key or the longer API Read Access Token works. |
 | `MDBLIST_API_KEY` | - | Ratings, awards, keywords and age ratings. Without it the score reads N/A and the MDBList-only sashes are unavailable. |
 | `MDBLIST_API_KEY_2` | - | Retried in the same request when the primary key is rate-limited; a key that has spent its daily quota stays parked until MDBList's reset. |
 | `TVDB_API_KEY` | - | Optional TheTVDB v4 key. When set, TVDB is a fallback art source (logos, backdrops, optionally posters) for titles where TMDB returns nothing usable, reducing fallbacks to text titles and genre canvases. Blank disables it entirely. |
