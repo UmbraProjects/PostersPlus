@@ -3398,12 +3398,20 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <div id="sash-trending-mark-fields" style="display:none;">
                 <div class="field">
                   <label class="field-label" data-tip="Which top corner the Trending number or ribbon takes. Under Notch (number only) hangs the number below the notch wherever it is drawn, centred or a side chip (Auto included), or at the top centre when there's no notch.">Trending Rank Side</label>
-                  <select class="segmented-source" id="cfg-trending-side" onchange="build(); queuePreviewReload()">
+                  <select class="segmented-source" id="cfg-trending-side" onchange="updateTrendingStyleFields(); build(); queuePreviewReload()">
                     <option value="left" selected>Left</option>
                     <option value="center">Under Notch</option>
                     <option value="right">Right</option>
                   </select>
                   <div class="segmented" data-for="cfg-trending-side"></div>
+                </div>
+                <div class="field" id="sash-trending-align-field" style="display:none;">
+                  <label class="field-label" data-tip="Where the number sits under a left or right notch chip (Auto included, when it moves aside). Centre: centred on the chip. Outer Edge: lined up with the chip's edge nearest the poster's side. Under a centred notch it stays centred.">Number under Side Notch</label>
+                  <select class="segmented-source" id="cfg-trending-align" onchange="build(); queuePreviewReload()">
+                    <option value="center" selected>Centre</option>
+                    <option value="edge">Outer Edge</option>
+                  </select>
+                  <div class="segmented" data-for="cfg-trending-align"></div>
                 </div>
                 <div class="field">
                   <label class="field-label" data-tip="What the sash or notch does on posters showing a Trending rank. Do Nothing: stays where it is set, even if it meets the rank. Hide: left off those posters. Opposite Side: moves to the other top corner, the diagonal sash across that corner and the notch as a side chip there. Posters without a rank keep the usual sash.">Sash / Notch with Rank</label>
@@ -6895,6 +6903,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     params.set('trending_style', _trStyle);
     if (n('cfg-trending-scale') !== 1) params.set('trending_scale', n('cfg-trending-scale').toFixed(2));
     if (vEl('cfg-trending-side') !== 'left') params.set('trending_side', vEl('cfg-trending-side'));
+    if (vEl('cfg-trending-side') === 'center' && vEl('cfg-trending-align') === 'edge') params.set('trending_align', 'edge');
     if (vEl('cfg-trending-sash') !== 'keep') params.set('trending_sash', vEl('cfg-trending-sash'));
     if (_trStyle === 'ribbon') {
       if (vEl('cfg-trending-ribbon-style') !== 'charcoal') params.set('trending_ribbon_style', vEl('cfg-trending-ribbon-style'));
@@ -7904,6 +7913,8 @@ function updateTrendingStyleFields() {
     document.getElementById('cfg-trending-side').value = 'left';
     syncSegmented();
   }
+  document.getElementById('sash-trending-align-field').style.display =
+    style === 'number' && vEl('cfg-trending-side') === 'center' ? '' : 'none';
   if (style !== 'sash') initCustomMobileSliders();
 }
 
@@ -9649,6 +9660,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   _setEl('cfg-trending-style', ['number', 'ribbon'].includes(p.get('trending_style')) ? p.get('trending_style') : 'sash');
   _setEl('cfg-trending-scale', p.get('trending_scale') || '1.00');
   _setEl('cfg-trending-side', ['right', 'center'].includes(p.get('trending_side')) ? p.get('trending_side') : 'left');
+  _setEl('cfg-trending-align', p.get('trending_align') === 'edge' ? 'edge' : 'center');
   _setEl('cfg-trending-sash', ['hide', 'opposite'].includes(p.get('trending_sash')) ? p.get('trending_sash') : 'keep');
   _setEl('tog-trending-label', p.get('trending_label') === 'true');
   _setEl('tog-trending-corner', p.get('trending_corner') === 'true');

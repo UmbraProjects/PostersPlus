@@ -2169,6 +2169,9 @@ class RequestConfig:
     trending_side:     str   = "left"   # top corner the number / ribbon takes: "left" | "right";
                                         # "center" hangs the number under the notch, wherever drawn
                                         # (number only: parsed as "left" for the ribbon)
+    # Under a side-chip notch, the numeral centred on the chip ("center") or
+    # lined up with the chip's outer edge ("edge").  A centred notch keeps it centred.
+    trending_align:    str   = "center"
     # What the sash or notch does on a poster showing a rank mark: "keep" (as
     # configured) | "hide" | "opposite" (the diagonal sash, or the notch as a
     # side chip, moves to the corner the mark leaves free).
@@ -2539,6 +2542,7 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "trending_ribbon_style": "charcoal",
                               "trending_frost_opacity": 0.75, "trending_frost_saturation": 1.2,
                               "trending_side": "left", "trending_sash": "keep",
+                              "trending_align": "center",
                               "sash_badge_opacity": None,
                               "landscape_logo_pos": "left", "landscape_vignette_top": False,
                               "landscape_graphic_badges": False, "landscape_info_pos": "auto",
@@ -2819,6 +2823,9 @@ def build_request_config(params: dict) -> RequestConfig:
         # Only the number hangs under the notch; the ribbon takes the left
         # corner, so the request shares that composite.
         cfg.trending_side = "left"
+    _talign_raw = (params.get("trending_align") or "").strip().lower()
+    if _talign_raw in ("center", "edge") and cfg.trending_side == "center":
+        cfg.trending_align = _talign_raw
     _tsash_raw = (params.get("trending_sash") or "").strip().lower()
     if _tsash_raw in ("keep", "hide", "opposite"):
         cfg.trending_sash = _tsash_raw
@@ -5431,18 +5438,24 @@ def _draw_trending_rank(image: Image.Image, cfg: "RequestConfig", rank: int,
                                               top_inset=top_inset), footprint
     if _rank_centered(cfg):
         # Under the notch (*notch_box*, what it drew), centred on it a small
-        # gap below; with no notch drawn (a sash, an edge notch, none) at the
+        # gap below, or with trending_align=edge lined up with a side chip's
+        # outer edge; with no notch drawn (a sash, an edge notch, none) at the
         # top centre, at the corner numeral's height.
         w = image.width
         top = round(trending_rank.number_box(w, cfg.trending_scale)[0])
-        center_x = None
+        center_x, align = None, "center"
         if notch_box is not None:
             top = max(top, round(notch_box[3] + 0.025 * w))
             center_x = (notch_box[0] + notch_box[2]) / 2
+            # A chip is told from a centred notch by where it was drawn, so
+            # an Auto notch that moved aside on this poster counts too.
+            if cfg.trending_align == "edge" and abs(center_x - w / 2) > 0.05 * w:
+                align = "left" if center_x < w / 2 else "right"
+                center_x = notch_box[0] if align == "left" else notch_box[2]
         footprint = trending_rank.number_footprint(w, rank, scale=cfg.trending_scale,
-                                                   top=top, center_x=center_x)
+                                                   top=top, center_x=center_x, align=align)
         return trending_rank.draw_rank_number(image, rank, scale=cfg.trending_scale,
-                                              top=top, center_x=center_x), footprint
+                                              top=top, center_x=center_x, align=align), footprint
     max_w = None
     if before is not None:
         w = image.width

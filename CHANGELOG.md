@@ -113,6 +113,9 @@
   notch wherever it is drawn: centred, a left or right chip, or where an
   Auto notch moved it on that poster. The ribbon hangs from the top edge, so
   it isn't offered Under Notch (a URL asking for it gets the left corner).
+  `trending_align=edge` (Number under Side Notch → Outer Edge) lines the
+  numeral up with a side chip's outer edge instead of centring it on the
+  chip; under a centred notch it stays centred.
 - Share settings leaves out what is at its default, like every other copied
   URL. It spelled every parameter out, so even an untouched configuration
   was about 2100 characters, too long for a Discord message; it is now

@@ -101,9 +101,9 @@ class CentredRankTests(unittest.TestCase):
                                       font_size_ratio=cfg.sash_badge_font_ratio)
         return main._changed_box(before, np.asarray(drawn.convert("RGB")))
 
-    def _rank_body(self, notch_box):
+    def _rank_body(self, notch_box, **params):
         cfg = main.build_request_config({"trending_style": "number", "trending_side": "center",
-                                         "sash_mode": "notch"})
+                                         "sash_mode": "notch", **params})
         image = Image.new("RGBA", (500, 750), (20, 20, 20, 255))
         _, (body, _extent) = main._draw_trending_rank(image, cfg, 2, None, notch_box=notch_box)
         return body
@@ -118,6 +118,26 @@ class CentredRankTests(unittest.TestCase):
                 self.assertGreater(body[1] + shade, box[3])
                 self.assertAlmostEqual((body[0] + body[2]) / 2, (box[0] + box[2]) / 2, delta=4)
         self.assertLess(self._notch_box("left")[2], 250)
+
+    def test_edge_lines_up_with_a_side_chips_outer_edge(self):
+        shade = round(trending_rank._SHADE * 500)
+        left, right = self._notch_box("left"), self._notch_box("right")
+        body = self._rank_body(left, trending_align="edge")
+        self.assertAlmostEqual(body[0] + shade, left[0], delta=2)
+        body = self._rank_body(right, trending_align="edge")
+        self.assertAlmostEqual(body[2] - shade, right[2], delta=2)
+        # A centred notch keeps the numeral centred on it.
+        centre = self._notch_box("center")
+        body = self._rank_body(centre, trending_align="edge")
+        self.assertAlmostEqual((body[0] + body[2]) / 2, (centre[0] + centre[2]) / 2, delta=4)
+
+    def test_edge_parses_only_under_the_notch(self):
+        cfg = main.build_request_config({"trending_style": "number", "trending_side": "center",
+                                         "trending_align": "edge"})
+        self.assertEqual(cfg.trending_align, "edge")
+        cfg = main.build_request_config({"trending_style": "number", "trending_align": "edge"})
+        self.assertEqual(cfg.trending_align, "center")
+        self.assertNotIn("trending_align", main._render_config_signature(cfg))
 
     def test_without_a_notch_it_sits_at_the_top_centre(self):
         body = self._rank_body(None)
