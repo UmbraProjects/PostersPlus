@@ -434,10 +434,10 @@ class PosterSourceParsingTests(unittest.TestCase):
             with self.subTest(enabled=enabled), \
                     mock.patch.object(main.tvdb, "poster_source_enabled", lambda: enabled):
                 self.assertEqual(
-                    main.build_request_config({"poster_source": "tvdb"}).poster_source, want)
+                    main.build_request_config({"poster_source": "tvdb"}).poster_source_tv, want)
         with mock.patch.object(main.tvdb, "poster_source_enabled", lambda: True):
             self.assertEqual(main.build_request_config(
-                {"poster_source": "tvdb", "shape": "landscape"}).poster_source, "tmdb")
+                {"poster_source": "tvdb", "shape": "landscape"}).poster_source_tv, "tmdb")
 
 
 if __name__ == "__main__":

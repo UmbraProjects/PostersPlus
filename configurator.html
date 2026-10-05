@@ -3218,13 +3218,30 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="top_rated">Top-rated</option>
               </select>
             </div>
-            <!-- Poster source and pick; each shown only when the operator allows it -->
-            <div class="field portrait-only" id="poster-source-field" hidden>
-              <label class="field-label" data-tip="Where posters come from. Fanart art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. Titles without Fanart art keep their TMDB poster. The anime option uses Fanart only for anime (Japanese animation) and TMDB for everything else. TVDB posters with no language are textless; with Original Art on, TVDB gives a poster in your logo language. Titles TVDB has nothing for keep their TMDB poster. Cinemeta is the poster Stremio shows by default: the official poster with the title on it, so it's shown as-is with no logo added, whatever Original Art is set to. Titles without an IMDb id or a Cinemeta poster keep their TMDB poster.">Poster Source</label>
-              <select id="cfg-poster-source" onchange="build(); queuePreviewReload()">
+            <!-- Poster source per media type, and pick; each shown only when the operator allows it -->
+            <div class="field portrait-only poster-source-field" hidden>
+              <label class="field-label" data-tip="Where film posters come from. Anime films follow the Anime Poster Source. Fanart art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. TVDB posters with no language are textless; with Original Art on, TVDB gives a poster in your logo language. Cinemeta is the poster Stremio shows by default: the official English poster with the title on it, so it's shown as-is with no logo added, whatever Original Art is set to. Titles the source has nothing for keep their TMDB poster.">Movie Poster Source</label>
+              <select id="cfg-poster-source-movie" onchange="build(); queuePreviewReload()">
                 <option value="tmdb" selected>TMDB</option>
                 <option value="fanart">Fanart</option>
-                <option value="fanart_anime">TMDB, with Fanart for anime</option>
+                <option value="tvdb">TVDB</option>
+                <option value="cinemeta">Cinemeta</option>
+              </select>
+            </div>
+            <div class="field portrait-only poster-source-field" hidden>
+              <label class="field-label" data-tip="Where series posters come from. Anime series follow the Anime Poster Source. Fanart art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. TVDB posters with no language are textless; with Original Art on, TVDB gives a poster in your logo language. Cinemeta is the poster Stremio shows by default: the official English poster with the title on it, so it's shown as-is with no logo added, whatever Original Art is set to. Titles the source has nothing for keep their TMDB poster.">Series Poster Source</label>
+              <select id="cfg-poster-source-tv" onchange="build(); queuePreviewReload()">
+                <option value="tmdb" selected>TMDB</option>
+                <option value="fanart">Fanart</option>
+                <option value="tvdb">TVDB</option>
+                <option value="cinemeta">Cinemeta</option>
+              </select>
+            </div>
+            <div class="field portrait-only poster-source-field" hidden>
+              <label class="field-label" data-tip="Where anime posters come from: Japanese animation, or a title requested by an AniList, Kitsu or MAL id when that provider has no art. Fanart art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. TVDB posters with no language are textless; with Original Art on, TVDB gives a poster in your logo language. Cinemeta is the poster Stremio shows by default: the official English poster with the title on it, so it's shown as-is with no logo added, whatever Original Art is set to. Titles the source has nothing for keep their TMDB poster.">Anime Poster Source</label>
+              <select id="cfg-poster-source-anime" onchange="build(); queuePreviewReload()">
+                <option value="tmdb" selected>TMDB</option>
+                <option value="fanart">Fanart</option>
                 <option value="tvdb">TVDB</option>
                 <option value="cinemeta">Cinemeta</option>
               </select>
@@ -4413,6 +4430,9 @@ let mediaType = 'movie', resolvedImdbId = '', resolvedTmdbId = '';
 let resolvedAnimeId = '';
 let serverCaps = { tmdb_key_set: false, mdblist_key_set: false, aiostreams_configured: false, quality_configured: false, imdb_dataset_enabled: false, imdb_dataset_titles: 0 };
 let serverCapsLoaded = false;
+// Poster source is picked per media type (poster_source_movie / _tv / _anime).
+const POSTER_SOURCE_KINDS = ['movie', 'tv', 'anime'];
+const POSTER_SOURCE_IDS = POSTER_SOURCE_KINDS.map(k => `cfg-poster-source-${k}`);
 let searchDebounce = null, previewDebounce = null, previewLoading = false, imdbResolvePending = false;
 
 const previewPanel = document.querySelector('.preview-panel');
@@ -4753,11 +4773,12 @@ async function fetchServerCaps() {
     updateImdbSourceAvailability();
     updateResolutionAvailability();
     syncCustomFonts(Array.isArray(serverCaps.custom_fonts) ? serverCaps.custom_fonts : []);
-    document.getElementById('poster-source-field').hidden = !(serverCaps.fanart_posters || serverCaps.tvdb_posters || serverCaps.cinemeta_posters);
+    for (const f of document.querySelectorAll('.poster-source-field'))
+      f.hidden = !(serverCaps.fanart_posters || serverCaps.tvdb_posters || serverCaps.cinemeta_posters);
     document.getElementById('landscape-art-source-field').hidden = !(serverCaps.fanart_posters || serverCaps.tvdb_posters);
     // Only the sources this instance offers; a restored choice it doesn't
     // offer falls back to TMDB.
-    for (const id of ['cfg-poster-source', 'cfg-landscape-art-source']) {
+    for (const id of [...POSTER_SOURCE_IDS, 'cfg-landscape-art-source']) {
       for (const opt of document.querySelectorAll(`#${id} option`)) {
         opt.hidden = opt.value === 'tvdb' ? !serverCaps.tvdb_posters
           : opt.value === 'cinemeta' ? !serverCaps.cinemeta_posters
@@ -4768,7 +4789,7 @@ async function fetchServerCaps() {
     }
     document.getElementById('poster-pick-field').hidden = !serverCaps.random_posters;
     // Restored before the caps answered, so the URL left them out.
-    if (vEl('cfg-poster-source') !== 'tmdb' || vEl('cfg-poster-pick') !== 'top'
+    if (POSTER_SOURCE_IDS.some(id => vEl(id) !== 'tmdb') || vEl('cfg-poster-pick') !== 'top'
         || vEl('cfg-landscape-art-source') !== 'tmdb') build();
     document.getElementById('header-admin').hidden = !serverCaps.admin_link;
     
@@ -6818,7 +6839,12 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   if (emitAll) {
     params.set('use_original_art',    c('tog-original-art') ? 'true' : 'false');
     params.set('original_art_source', vEl('cfg-original-art-source') || 'primary');
-    if ((serverCaps.fanart_posters || serverCaps.tvdb_posters || serverCaps.cinemeta_posters) && vEl('cfg-poster-source') !== 'tmdb') params.set('poster_source', vEl('cfg-poster-source'));
+    if (serverCaps.fanart_posters || serverCaps.tvdb_posters || serverCaps.cinemeta_posters) {
+      for (const kind of POSTER_SOURCE_KINDS) {
+        const src = vEl(`cfg-poster-source-${kind}`);
+        if (src && src !== 'tmdb') params.set(`poster_source_${kind}`, src);
+      }
+    }
     if (serverCaps.random_posters && vEl('cfg-poster-pick') !== 'top') params.set('poster_pick', vEl('cfg-poster-pick'));
   }
   params.set('logo_language',         logoLanguage);
@@ -9726,7 +9752,12 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('textless'))             _setEl('tog-textless',            p.get('textless'));
   if (p.has('use_original_art'))   _setEl('tog-original-art', p.get('use_original_art'));
   if (p.has('original_art_source')) _setEl('cfg-original-art-source', p.get('original_art_source'));
-  _setEl('cfg-poster-source', p.get('poster_source') || 'tmdb');
+  // The single legacy poster_source sets all three; a per-type param beats it.
+  const _legacySrc = p.get('poster_source') || 'tmdb';
+  for (const kind of POSTER_SOURCE_KINDS) {
+    const legacy = _legacySrc === 'fanart_anime' ? (kind === 'anime' ? 'fanart' : 'tmdb') : _legacySrc;
+    _setEl(`cfg-poster-source-${kind}`, p.get(`poster_source_${kind}`) || legacy);
+  }
   _setEl('cfg-poster-pick', p.get('poster_pick') || 'top');
 
   // ── Quality badges ──────────────────────────────────────────────────────

@@ -10,6 +10,12 @@ import textless_report
 import tmdb
 
 
+def _source(cfg):
+    """The one source a config's three share, else all three."""
+    per_type = (cfg.poster_source_movie, cfg.poster_source_tv, cfg.poster_source_anime)
+    return per_type[0] if len(set(per_type)) == 1 else per_type
+
+
 class PosterSourceParsingTests(unittest.TestCase):
     """Both settings parse to the defaults unless the operator allows them."""
 
@@ -24,7 +30,7 @@ class PosterSourceParsingTests(unittest.TestCase):
             RANDOM_POSTERS=random_on,
         ):
             cfg = self._cfg(**params)
-        return cfg.poster_source, cfg.poster_pick
+        return _source(cfg), cfg.poster_pick
 
     def test_operator_switches_gate_each_setting(self):
         self.assertEqual(self._parsed(True, True), ("fanart", "random"))
@@ -42,7 +48,7 @@ class PosterSourceParsingTests(unittest.TestCase):
             )
 
     def test_fanart_for_anime_is_gated_like_fanart(self):
-        self.assertEqual(self._parsed(True, False, poster_source="fanart_anime"), ("fanart_anime", "top"))
+        self.assertEqual(self._parsed(True, False, poster_source="fanart_anime"), (("tmdb", "tmdb", "fanart"), "top"))
         self.assertEqual(self._parsed(False, False, poster_source="fanart_anime"), ("tmdb", "top"))
 
     def test_landscape_ignores_both(self):
@@ -144,17 +150,13 @@ class FakeTextlessReportTests(unittest.TestCase):
         path.assert_not_called()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class CinemetaPosterSourceParsingTests(unittest.TestCase):
     """poster_source=cinemeta is offered whenever Cinemeta is enabled."""
 
     def _source(self, enabled, **params):
         with mock.patch.object(main._cfg, "CINEMETA_ENABLED", enabled):
             return main.build_request_config(
-                {"poster_source": "cinemeta", **params}).poster_source
+                {"poster_source": "cinemeta", **params}).poster_source_movie
 
     def test_gated_on_cinemeta_enabled(self):
         self.assertEqual(self._source(True), "cinemeta")
@@ -170,3 +172,59 @@ class CinemetaPosterSourceParsingTests(unittest.TestCase):
                     main.build_request_config({"poster_source": "cinemeta"})),
                 main._render_config_signature(main.build_request_config({})),
             )
+
+
+class PerTypePosterSourceTests(unittest.TestCase):
+    """poster_source_movie / _tv / _anime, and the legacy poster_source."""
+
+    def _cfg(self, **params):
+        with mock.patch.multiple(main._cfg, FANART_POSTERS=True, FANART_API_KEY="k",
+                                 CINEMETA_ENABLED=True),                 mock.patch.object(main.tvdb, "poster_source_enabled", lambda: True):
+            return main.build_request_config(params)
+
+    def test_each_type_parses_on_its_own(self):
+        cfg = self._cfg(poster_source_movie="cinemeta", poster_source_tv="tvdb",
+                        poster_source_anime="fanart")
+        self.assertEqual(_source(cfg), ("cinemeta", "tvdb", "fanart"))
+
+    def test_a_per_type_param_beats_the_legacy_one(self):
+        self.assertEqual(_source(self._cfg(poster_source="tvdb", poster_source_anime="fanart")),
+                         ("tvdb", "tvdb", "fanart"))
+        self.assertEqual(_source(self._cfg(poster_source="fanart_anime", poster_source_movie="cinemeta")),
+                         ("cinemeta", "tmdb", "fanart"))
+
+    def test_unknown_or_unoffered_sources_parse_as_tmdb(self):
+        self.assertEqual(_source(self._cfg(poster_source_movie="bogus")), "tmdb")
+        with mock.patch.object(main._cfg, "CINEMETA_ENABLED", False):
+            self.assertEqual(main.build_request_config(
+                {"poster_source_tv": "cinemeta"}).poster_source_tv, "tmdb")
+
+    def test_landscape_resets_all_three(self):
+        self.assertEqual(_source(self._cfg(poster_source_movie="fanart", poster_source_tv="tvdb",
+                                           poster_source_anime="cinemeta", shape="landscape")),
+                         "tmdb")
+
+    def test_source_for_a_title(self):
+        cfg = self._cfg(poster_source_movie="cinemeta", poster_source_tv="tvdb",
+                        poster_source_anime="fanart")
+        self.assertEqual(main._poster_source_for(cfg, "movie", False), "cinemeta")
+        self.assertEqual(main._poster_source_for(cfg, "tv", False), "tvdb")
+        self.assertEqual(main._poster_source_for(cfg, "series", False), "tvdb")
+        self.assertEqual(main._poster_source_for(cfg, "movie", True), "fanart")
+        self.assertEqual(main._poster_source_for(cfg, "tv", True), "fanart")
+
+    def test_splits_the_old_field_could_express_keep_their_cache_key(self):
+        import json
+        sig = lambda **p: json.loads(main._render_config_signature(self._cfg(**p)))
+        self.assertEqual(sig()["poster_source"], "tmdb")
+        self.assertEqual(sig(poster_source="tvdb")["poster_source"], "tvdb")
+        self.assertEqual(sig(poster_source_movie="tvdb", poster_source_tv="tvdb",
+                             poster_source_anime="tvdb")["poster_source"], "tvdb")
+        self.assertEqual(sig(poster_source="fanart_anime")["poster_source"], "fanart_anime")
+        self.assertEqual(sig(poster_source_anime="fanart")["poster_source"], "fanart_anime")
+        self.assertNotIn("poster_source_movie", sig())
+        self.assertNotEqual(sig(poster_source_movie="cinemeta"), sig(poster_source_tv="cinemeta"))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Poster source per media type, and Cinemeta as a source
+
+- Poster Source is now three dropdowns: Movie, Series and Anime. Each picks
+  TMDB, Fanart, TVDB or Cinemeta (`poster_source_movie`, `poster_source_tv`,
+  `poster_source_anime`), and a title the source has nothing for keeps its
+  TMDB poster. Anime is Japanese animation, or a title requested by an
+  AniList, Kitsu or MAL id whose provider had no art. The old
+  `poster_source` still works and sets all three (`fanart_anime` sets Fanart
+  for anime only), so existing URLs render, and cache, as before.
+- Cinemeta is the Metahub poster Stremio shows by default (#45, thanks
+  @alpinezx). Its posters carry the title, in English, so they're shown
+  as-is with no logo, whatever Original Art says. Needs no key; offered
+  while `CINEMETA_ENABLED` is on. An OA Poster override in Admin > Artwork
+  can be ticked for Cinemeta to replace a wrong Metahub poster.
+- A Metahub image that 404s after its existence check now clears that check
+  for the title's IMDb id even when the request only carried a TMDB id, so
+  the next render re-checks instead of failing until the cache runs out.
+
 ### TMDB Read Access Tokens work as a key
 
 - TMDB's settings page lists two credentials, and pasting the longer "API
