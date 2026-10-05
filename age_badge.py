@@ -467,11 +467,12 @@ def draw_quality_corner_bookmark(
     *,
     bookmark_size: int = 16,
     side: str = "left",
+    bottom: bool = False,
 ) -> None:
     """Render a small tier-coloured fold attached to a poster top corner.
 
     ``side="right"`` mirrors it into the top-right corner, for when a diagonal
-    sash has taken the top-left.
+    sash has taken the top-left; ``bottom`` flips it into a bottom corner.
     """
     W, H = image.size
     if W < 2 or H < 2:
@@ -528,7 +529,8 @@ def draw_quality_corner_bookmark(
 
     composite = Image.alpha_composite(Image.alpha_composite(below, shadow), mark)
     if side == "right":
-        image.alpha_composite(composite.transpose(Image.Transpose.FLIP_LEFT_RIGHT),
-                              dest=(W - canvas, 0))
-    else:
-        image.alpha_composite(composite, dest=(0, 0))
+        composite = composite.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+    if bottom:
+        composite = composite.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+    image.alpha_composite(composite, dest=(W - canvas if side == "right" else 0,
+                                           H - canvas if bottom else 0))

@@ -952,7 +952,8 @@ def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: li
     away from its corner until it clears what is already drawn."""
     import graphic_badges
     from graphic_badges import DEFAULT_SIZE
-    from main import _draw_custom_group, _draw_logo_group, _occupied_cols, _score_points
+    from main import (_draw_custom_group, _draw_legacy_bookmark, _draw_logo_group,
+                      _occupied_cols, _score_points)
 
     width, height = image.size
     left_margin, right_margin = int(width * _SIDE_PAD), int(width * _RIGHT_PAD)
@@ -962,7 +963,10 @@ def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: li
     pill_h = int(height * _BADGE_FONT * scale) + 2 * round(_BADGE_PAD_Y * scale)
     top_line = int(height * _BADGE_TOP) + pill_h / 2
 
-    for group in graphic_badges.cfg_groups(cfg):
+    groups = _draw_legacy_bookmark(image, cfg, graphic_badges.cfg_groups(cfg), tokens,
+                                   lambda g: max(8, round(height * _GB_UNIT * g.size / DEFAULT_SIZE)),
+                                   chip_right=badge_position != "top_right")
+    for group in groups:
         unit = max(8, round(height * _GB_UNIT * group.size / DEFAULT_SIZE))
         # Spacing is a fraction of a portrait width; keyed to height here, as
         # every size on this canvas is.  At the default it is the portrait gap.
@@ -1215,8 +1219,10 @@ def _build_landscape(
             from awards import dominant_frost_rgb, _frosted_tint
             tint = _frosted_tint(*(badge_source or dominant_frost_rgb(art)),
                                  saturation=cfg.sash_badge_frost_saturation, reference=cfg.frost_reference)
+        from main import _legacy_badge
         badge_logos = (*badge_logos[:2], graphic_badges.cinema_ink(cfg.badge_cinema_style, cinema_run, tint,
-                                                                     cfg.sash_badge_frost_opacity))
+                                                                     cfg.sash_badge_frost_opacity),
+                       _legacy_badge(cfg, quality_tokens or [], age_rating))
         _draw_graphic_badges(image, before, cfg, quality_tokens or [], certification, age_rating,
                              badge_logos, logo_box, badge_position,
                              graphic_badges.quality_look(cfg.badge_quality_style, tint,

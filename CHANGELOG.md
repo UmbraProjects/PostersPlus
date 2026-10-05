@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Extras tab: Graphic Badges only, the old badges as a Legacy slot
+
+- The configurator's Quality tab is now Extras, and Graphic Badges are its
+  only mode, behind a Show Badges switch. The older modes (Quality Notch,
+  Bookmark, Badge Row, Combined Badge, Quality Age Rating, Age Rating Only)
+  are the styles of a new Legacy badge (`legacy` slot,
+  `badge_legacy_style`), placed by the four groups like any other badge.
+- The Legacy bookmark hangs from its group's corner, a bottom one included,
+  and the groups lay out around it.
+- Importing a URL with an old `badge_display_mode` converts it to its
+  Legacy style, alone in group 1 at the spot it was drawn. Old URLs still
+  render as before on the server.
+
 ### Art source per media type, for posters and landscape, and Cinemeta
 
 - The art source is now three dropdowns, Movie, Series and Anime, in both

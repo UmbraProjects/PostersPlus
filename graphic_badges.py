@@ -1032,10 +1032,17 @@ def _logo_mark(logo: Logo, h: int, scale: float = 1.0) -> Image.Image | None:
 ANCHORS = ("chip", "tl", "tr", "bl", "br", "above_logo", "below_logo")
 # Centred on the title logo (or fallback title text), wherever it landed.
 LOGO_ANCHORS = ("above_logo", "below_logo")
-SLOTS = ("video", "audio", "res", "cert", "network", "studio", "cinema")
+SLOTS = ("video", "audio", "res", "cert", "network", "studio", "cinema", "legacy")
 # The slots that show stream quality; the rest come from TMDB alone, so a
-# layout without any of these needs no quality source at all.
+# layout without any of these needs no quality source at all.  "legacy" shows
+# quality in every style but "age" (legacy_uses_quality).
 QUALITY_SLOTS = ("video", "audio", "res")
+# The "legacy" slot draws one of the badges the old display modes drew, picked
+# by badge_legacy_style; the value is the badge_display_mode it came from.
+# "bookmark" isn't a row item: it hangs in its group's corner (main.
+# _draw_legacy_bookmark) and the rest of the group lays out around it.
+LEGACY_STYLES = {"notch": 4, "bookmark": 6, "row": 2, "combined": 5, "quality_age": 1, "age": 3}
+DEFAULT_LEGACY_STYLE = "notch"
 MAX_ITEMS = 4
 DEFAULT_GROUP1 = "chip:4:video,audio,res,cert"
 # The request parameters holding the groups, in drawing order.
@@ -1127,9 +1134,21 @@ def format_group(group: Group | None) -> str:
     return spec if group.size == DEFAULT_SIZE else f"{spec}:{group.size}"
 
 
+def legacy_style(value: str | None) -> str | None:
+    """A badge_legacy_style value, or None when unknown."""
+    value = (value or "").strip().lower()
+    return value if value in LEGACY_STYLES else None
+
+
+def legacy_uses_quality(style: str) -> bool:
+    return style != "age"
+
+
 def groups_use_quality(cfg) -> bool:
     """Whether any of a request config's groups shows a quality badge."""
-    return any(slot in QUALITY_SLOTS for g in cfg_groups(cfg) for slot in g.slots)
+    legacy = legacy_uses_quality(getattr(cfg, "badge_legacy_style", DEFAULT_LEGACY_STYLE))
+    return any(slot in QUALITY_SLOTS or (slot == "legacy" and legacy)
+               for g in cfg_groups(cfg) for slot in g.slots)
 
 
 def cfg_groups(cfg) -> list[Group]:
@@ -1172,6 +1191,7 @@ def row_items(tokens: list[str], certification: str | None, age_rating: int | No
               show_quality: bool = True,
               network: Logo | None = None, studio: Logo | None = None,
               cinema: str | None = None,
+              legacy=None,
               quality_look: str | None = None,
               logo_scale: float = LOGO_SCALE_DEFAULT) -> list[tuple[str, Image.Image]]:
     """(slot, image) for each of ``slots`` this title has, in that order.
@@ -1179,8 +1199,10 @@ def row_items(tokens: list[str], certification: str | None, age_rating: int | No
     certificate always.  ``cinema`` is the cinema badge's key (cinema_ink), None
     for a title that is out at home.  ``quality_look`` (quality_look) puts the
     quality marks on frosted chips, and ``logo_scale`` (badge_logo_scale)
-    multiplies the network and studio logos' size.  Dolby Vision and Atmos in the same group
-    share the combined mark, in the video slot's place."""
+    multiplies the network and studio logos' size.  ``legacy`` makes the
+    legacy slot's badge at a row height (main._legacy_badge), None when it
+    draws nothing; it does its own quality gating.  Dolby Vision and Atmos in
+    the same group share the combined mark, in the video slot's place."""
     t = set(tokens) if show_quality else set()
     dolby_h = unit_h
     combined = ("video" in slots and "audio" in slots and "DV" in t and "ATMOS" in t
@@ -1236,7 +1258,8 @@ def row_items(tokens: list[str], certification: str | None, age_rating: int | No
     build = {"video": video, "audio": audio, "res": res, "cert": cert,
              "network": lambda: _logo_mark(network, unit_h, logo_scale) if network else None,
              "studio": lambda: _logo_mark(studio, unit_h, logo_scale) if studio else None,
-             "cinema": lambda: _cinema_mark(cinema, unit_h) if cinema else None}
+             "cinema": lambda: _cinema_mark(cinema, unit_h) if cinema else None,
+             "legacy": lambda: legacy(unit_h) if legacy else None}
     items = [(slot, build[slot]()) for slot in slots]
     return [(slot, im) for slot, im in items if im is not None]
 
@@ -1313,6 +1336,11 @@ def draw_row(image: Image.Image, items: list[tuple[str, Image.Image]], *,
             im = _resolve_disc(image, im, round(x), int(round(center_y - im.height / 2)))
         elif "frost_chip" in im.info:
             im = _resolve_chip(image, im, round(x), int(round(center_y - im.height / 2)))
+        if "legacy" in im.info:
+            # Carries its own glow and shadow.
+            image.alpha_composite(im, (round(x), int(round(center_y - im.height / 2))))
+            x += pxr(im.width) + gap
+            continue
         shadow, pad = _shadowed(im)
         sx, sy = round(x) - pad, int(round(center_y - im.height / 2)) - pad
         cl, ct = max(0, -sx), max(0, -sy)

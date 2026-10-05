@@ -2348,9 +2348,9 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><circle cx="12" cy="9" r="5"/><path d="M9 13.5L7 21l5-3 5 3-2-7.5"/></svg>
             <span class="tab-btn-label">Sash</span>
           </div>
-          <div class="tab-btn" data-tab="quality" onclick="showTab('quality')" title="Quality Badges">
+          <div class="tab-btn" data-tab="quality" onclick="showTab('quality')" title="Extras">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z"/></svg>
-            <span class="tab-btn-label">Quality</span>
+            <span class="tab-btn-label">Extras</span>
           </div>
           <div class="tab-btn" data-tab="weights" onclick="showTab('weights')" title="Rating Weights">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="4" x2="12" y2="20"/><line x1="7" y1="20" x2="17" y2="20"/><line x1="5" y1="8" x2="19" y2="8"/><path d="M5 8l-2.5 5a3 3 0 0 0 5 0z"/><path d="M19 8l-2.5 5a3 3 0 0 0 5 0z"/></svg>
@@ -3363,7 +3363,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
             </div>
             <div class="field portrait-only" id="sash-badge-pos-field" style="display:none;">
-              <label class="field-label" data-tip="Moves the notch off centre, leaving the middle of the top edge free. Left/Right float a rounded chip in from that corner. On the left, the quality and age badges move to the top right. Auto (with Graphic Badges) decides per poster: beside the badges when a title has some along the top, centred when it has none. Auto spreads a Beside Chip group across to the corner; Auto, Beside Notch keeps it against the chip, leaving the corner clear for the watched and watchlist marks some clients draw there. Left/Right Edge hang the notch off that side of the poster instead of the top, its label running along the edge; Edge Position moves it up and down.">Position</label>
+              <label class="field-label" data-tip="Moves the notch off centre, leaving the middle of the top edge free. Left/Right float a rounded chip in from that corner. On the left, a Legacy bookmark beside the chip takes the top right. Auto (with Graphic Badges) decides per poster: beside the badges when a title has some along the top, centred when it has none. Auto spreads a Beside Chip group across to the corner; Auto, Beside Notch keeps it against the chip, leaving the corner clear for the watched and watchlist marks some clients draw there. Left/Right Edge hang the notch off that side of the poster instead of the top, its label running along the edge; Edge Position moves it up and down.">Position</label>
               <select id="cfg-sash-badge-pos" onchange="updateBadgeStyleFields(); build(); queuePreviewReload()">
                 <option value="center" selected>Centre</option>
                 <option value="left">Left</option>
@@ -3604,7 +3604,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             <div class="cfg-sep portrait-only" id="sash-size-fields" style="display:none;">
               <span class="group-title">Sash Size</span>
               <div class="field">
-                <label class="field-label" data-tip="Which top corner the diagonal sash crosses. On the left, a Corner Bookmark quality badge moves to the top right to make room.">Corner</label>
+                <label class="field-label" data-tip="Which top corner the diagonal sash crosses. On the left, a Legacy bookmark beside the chip moves to the top right to make room.">Corner</label>
                 <select class="segmented-source" id="cfg-sash-side" onchange="build(); queuePreviewReload()">
                   <option value="left">Left</option>
                   <option value="right" selected>Right</option>
@@ -3682,7 +3682,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </label>
               </div>
               <div class="toggle-row">
-                <span class="toggle-label" data-tip="Greyscales the art while a film is still in cinemas or not out yet, so it reads as not available to watch at home. Unlike on a portrait it doesn't need the Release Status sash. Consider Available if Source Found (Quality tab) applies here too.">Greyscale Poster if Unavailable</span>
+                <span class="toggle-label" data-tip="Greyscales the art while a film is still in cinemas or not out yet, so it reads as not available to watch at home. Unlike on a portrait it doesn't need the Release Status sash. Consider Available if Source Found (Extras tab) applies here too.">Greyscale Poster if Unavailable</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-landscape-greyscale" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
@@ -3695,24 +3695,23 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             </div>
           </div>        </div>
 
-        <!-- 5. QUALITY BADGES -->
+        <!-- 5. EXTRAS (graphic badges) -->
         <div class="section" data-tab="quality">
           <div class="section-body">
-            <span class="group-title">Mode</span>
-            <div class="field">
-              <!-- data-tip is rewritten per mode by updateBadgeModeHint(). -->
-              <label class="field-label" id="badge-mode-label">Display Mode</label>
-              <select id="cfg-badge-display-mode" onchange="applyBadgeModeDefaults(); updateBadgeModeHint(); build(); queuePreviewReload()">
-                <option value="0">Hidden</option>
-                <option value="4" selected>Quality Notch</option>
-                <option value="6">Quality Bookmark</option>
-                <option value="2">Quality Badge Row</option>
-                <option value="7">Graphic Badges</option>
-                <option value="5">Combined Badge</option>
-                <option value="1">Quality Age Rating</option>
-                <option value="3">Age Rating Only</option>
-              </select>
+            <span class="group-title">Badges</span>
+            <div class="toggle-row">
+              <span class="toggle-label" data-tip="Dolby Vision, Atmos, DTS:X, HDR and resolution marks, the certificate, network and studio logos, the cinema disc and the legacy quality badges, in up to four groups you place below. Pairs well with the Left/Right notch position.">Show Badges</span>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tog-badges" checked onchange="setBadgesShown(this.checked)">
+                <div class="toggle-track"><div class="toggle-thumb"></div></div>
+              </label>
             </div>
+            <!-- The mode itself (badge_display_mode): Graphic Badges or nothing.
+                 Kept as the per-shape control the toggle drives. -->
+            <select id="cfg-badge-display-mode" style="display:none" onchange="updateBadgeModeHint(); build(); queuePreviewReload()">
+              <option value="0">Hidden</option>
+              <option value="7" selected>Graphic Badges</option>
+            </select>
             <div class="field" id="badge-min-score-field" style="display:none">
               <label class="field-label">Minimum Quality to Display</label>
               <select id="cfg-badge-min-score" onchange="this.dataset.userSet='true'; build(); queuePreviewReload()">
@@ -3730,13 +3729,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
             <div class="cfg-sep" id="quality-behaviour-group">
               <span class="group-title">Behaviour</span>
-              <div class="toggle-row" id="badge-stacked-field" style="display:none">
-                <span class="toggle-label" data-tip="Renders resolution above visual tag, separated by a horizontal rule — useful for the notch where horizontal space is tight.">Stacked Layout</span>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-badge-stacked" onchange="build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
               <div id="wait-quality-field" style="display:none;">
                 <div class="toggle-row">
                   <span class="toggle-label" data-tip="Quality is fetched in the background when uncached. This holds the poster back until it is ready.">Wait for Quality</span>
@@ -3904,6 +3896,24 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <span class="range-val" id="rng-gbls">1.00</span>
                 </div>
               </div>
+              <div class="field" id="gb-legacy-style-field" style="display:none">
+                <label class="field-label" data-tip="The badge the Legacy slot draws: the quality badges from before Graphic Badges, now placed by the groups. Quality Notch: a small pill in the quality tier's medal colour. Quality Bookmark: a fold in the same colour hanging from its group's corner (Beside Chip and the logo anchors take the top corner the notch or sash leaves free); the rest of the group lays out beside it. Quality Badge Row: the resolution, source and HDR marks as one row. Combined Badge: resolution · visual tag, the pip coloured by source. Quality Age Rating: the age rating in the tier's colour. Age Rating Only: the age rating in silver, with no quality lookup.">Legacy Badge</label>
+                <select id="cfg-badge-legacy-style" onchange="updateBadgeModeHint(); build(); queuePreviewReload()">
+                  <option value="notch" selected>Quality Notch</option>
+                  <option value="bookmark">Quality Bookmark</option>
+                  <option value="row">Quality Badge Row</option>
+                  <option value="combined">Combined Badge</option>
+                  <option value="quality_age">Quality Age Rating</option>
+                  <option value="age">Age Rating Only</option>
+                </select>
+              </div>
+              <div class="toggle-row" id="badge-stacked-field" style="display:none">
+                <span class="toggle-label" data-tip="Renders resolution above visual tag, separated by a horizontal rule, where horizontal space is tight.">Stacked Layout</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-badge-stacked" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
               <div class="field" id="gb-quality-style-field" style="display:none">
                 <label class="field-label" data-tip="How the quality badges (Video, Audio and Resolution) are drawn. Solid: filled boxes for 4K, HD and HDR, and the bare Dolby and DTS marks. Frosted: each on a chip of the frosted notch's glass, the poster blurred under its tint at the notch's frost opacity, with the mark or label in the tint's ink.">Quality Badge Style</label>
                 <select id="cfg-badge-quality-style" onchange="build(); queuePreviewReload()">
@@ -3913,7 +3923,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
             </div>
 
-            <!-- Sliders (hidden entirely when Display Mode = Hidden) -->
+            <!-- Per-group size and spacing (hidden with the badges) -->
             <div id="badge-layout-fields" class="cfg-sep">
               <span class="group-title">Layout</span>
               <div class="gb-layout-group" id="gb-layout-1" style="display:none">
@@ -3978,34 +3988,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                     <input type="range" id="gb-gap-4" min="0" max="0.08" step="0.002" value="0.028" oninput="updateRange(this,'rng-gbgap4'); gbFromControls()">
                     <span class="range-val" id="rng-gbgap4">0.028</span>
                   </div>
-                </div>
-              </div>
-              <div class="field portrait-only" id="badge-size-field">
-                <label class="field-label">Badge Size</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-badge-h" min="16" max="80" step="1" value="20" oninput="updateRange(this,'rng-bh'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-bh">20</span>
-                </div>
-              </div>
-              <div class="field portrait-only" id="badge-gap-field" style="display:none">
-                <label class="field-label">Badge Gap</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-badge-gap" min="0" max="32" step="1" value="8" oninput="updateRange(this,'rng-bg'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-bg">8</span>
-                </div>
-              </div>
-              <div class="field portrait-only" id="badge-x-field">
-                <label class="field-label">Badge Horizontal Position</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-badge-x" min="0.01" max="1" step="0.01" value="0.050" oninput="updateRange(this,'rng-bx'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-bx">0.050</span>
-                </div>
-              </div>
-              <div class="field portrait-only" id="badge-y-field">
-                <label class="field-label">Badge Vertical Position</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-badge-y" min="0.01" max="0.95" step="0.005" value="0.050" oninput="updateRange(this,'rng-by'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-by">0.050</span>
                 </div>
               </div>
             </div>
@@ -4926,10 +4908,11 @@ function updateImdbSourceAvailability() {
 // certificate, network and studio come from TMDB alone.
 function badgeUsesQuality(mode = parseInt(vEl('cfg-badge-display-mode')),
                           groups = GB_GROUPS.map(g => vEl(`cfg-badge-group${g}`))) {
-  if ([1, 2, 4, 5, 6].includes(mode)) return true;
   if (mode !== 7) return false;
+  // graphic_badges.legacy_uses_quality: every legacy style but Age Rating Only.
+  const legacy = vEl('cfg-badge-legacy-style') !== 'age';
   return groups.some(raw => (gbParse(raw)?.slots || [])
-    .some(id => ['video', 'audio', 'res'].includes(id)));
+    .some(id => ['video', 'audio', 'res'].includes(id) || (id === 'legacy' && legacy)));
 }
 
 function gbHasSlot(raw, id) {
@@ -4970,16 +4953,42 @@ function updateWaitQualityRows() {
   document.getElementById('greyscale-noquality-row').style.display = on ? '' : 'none';
 }
 
-// Only the modes that had something to explain get a tooltip; the rest clear
-// the attribute so the label drops its dotted underline rather than promising
-// an explanation that isn't there.
-const BADGE_MODE_TIPS = {
-  1: 'The font colour reflects stream quality, following medal tiers.',
-  4: 'A medal-coloured marker based on stream quality.',
-  5: 'Minimalist text badge: resolution · visual tag, pip coloured by source. Needs both resolution and source; visual tag defaults to SDR if absent.',
-  6: 'A small corner bookmark coloured by the same quality tier as Quality Notch. Clients render posters at different scales, so Badge Size usually needs adjusting to suit yours.',
-  7: 'Dolby Vision, Atmos, DTS:X, HDR and resolution marks and the US certificate, in up to four groups you place below. Pairs well with the Left/Right notch position.',
-};
+// The old display modes are the Legacy badge's styles now
+// (graphic_badges.LEGACY_STYLES), and each style's old default badge_height
+// (main._LEGACY_HEIGHTS), which a group at the default size draws it at.
+const LEGACY_MODE_STYLE = { 1: 'quality_age', 2: 'row', 3: 'age', 4: 'notch', 5: 'combined', 6: 'bookmark' };
+const LEGACY_HEIGHTS = { notch: 20, bookmark: 30, row: 32, combined: 28, quality_age: 36, age: 36 };
+
+// An old URL's display mode (1-6) becomes Graphic Badges with its badge in the
+// Legacy slot, alone in group 1 at the spot the mode drew it: a custom
+// position from badge_anchor_x/y (the row's centre line, so half the badge
+// lower; mirrored where a left notch moved it to the right), sized from
+// badge_height.  The bookmark takes the corner the notch or sash leaves free,
+// as it did.  A URL without a mode had the server's default, Quality Notch.
+function migrateLegacyBadgeMode(p) {
+  const style = LEGACY_MODE_STYLE[p.has('badge_display_mode') ? p.get('badge_display_mode') : '4'];
+  if (!style) return;
+  const h = parseFloat(p.get('badge_height')) || 20;   // config.BADGE_HEIGHT
+  const size = Math.min(60, Math.max(10, Math.round(GB_SIZE * h / LEGACY_HEIGHTS[style])));
+  let anchor = 'chip';
+  if (style !== 'bookmark') {
+    const clamp = v => Math.min(1, Math.max(0, +v.toFixed(3)));
+    const x = parseFloat(p.get('badge_anchor_x') ?? '0.05');
+    const y = parseFloat(p.get('badge_anchor_y') ?? '0.05') + h / 2 / 750;
+    const mirrored = p.get('sash_mode') === 'notch' && p.get('sash_badge_pos') === 'left';
+    anchor = mirrored ? `${clamp(1 - x)},${clamp(y)},r` : `${clamp(x)},${clamp(y)},l`;
+  }
+  p.set('badge_display_mode', '7');
+  p.set('badge_group1', `${anchor}:1:legacy${size !== GB_SIZE ? ':' + size : ''}`);
+  ['badge_group2', 'badge_group3', 'badge_group4'].forEach(k => p.set(k, ''));
+  p.set('badge_legacy_style', style);
+}
+
+// The Show Badges toggle is the mode: Graphic Badges or nothing.
+function setBadgesShown(on) {
+  _setEl('cfg-badge-display-mode', on ? '7' : '0');
+  updateBadgeModeHint(); build(); queuePreviewReload();
+}
 
 // ── Graphic badge groups ────────────────────────────────────────────────────
 // Hidden inputs cfg-badge-group1..4 hold "anchor:max:slot,slot"
@@ -4995,6 +5004,7 @@ const GB_SLOTS = [
   { id: 'network', label: 'Network' },
   { id: 'studio',  label: 'Studio' },
   { id: 'cinema',  label: 'In Cinemas (Release Date)' },
+  { id: 'legacy',  label: 'Legacy' },
 ];
 const GB_ANCHORS = ['chip', 'tl', 'tr', 'bl', 'br', 'above_logo', 'below_logo'];
 const GB_SIZE = 22, GB_SPACING = 0.028;   // graphic_badges.DEFAULT_SIZE / DEFAULT_SPACING
@@ -5123,6 +5133,9 @@ function gbRender() {
       `<span class="${v === grp.align ? 'active' : ''}" onclick="gbSetAlign(${g}, '${v}')">${t}</span>`).join('');
   });
   document.getElementById('gb-cinema-style-field').style.display = st.assign.cinema ? '' : 'none';
+  document.getElementById('gb-legacy-style-field').style.display = st.assign.legacy ? '' : 'none';
+  document.getElementById('badge-stacked-field').style.display =
+    st.assign.legacy && vEl('cfg-badge-legacy-style') === 'combined' ? '' : 'none';
   document.getElementById('gb-quality-style-field').style.display =
     (st.assign.video || st.assign.audio || st.assign.res) ? '' : 'none';
   document.getElementById('gb-logo-scale-field').style.display =
@@ -5148,24 +5161,11 @@ function gbRender() {
 
 function updateBadgeModeHint() {
   const mode = parseInt(document.getElementById('cfg-badge-display-mode').value);
-  const hidden = mode === 0;
-  const modeLabel = document.getElementById('badge-mode-label');
-  if (BADGE_MODE_TIPS[mode]) modeLabel.dataset.tip = BADGE_MODE_TIPS[mode];
-  else modeLabel.removeAttribute('data-tip');
-  document.getElementById('badge-gap-field').style.display         = mode === 2 ? '' : 'none';
+  document.getElementById('tog-badges').checked = mode === 7;
   document.getElementById('badge-min-score-field').style.display   = badgeUsesQuality(mode) ? '' : 'none';
-  document.getElementById('badge-stacked-field').style.display     = mode === 5 ? '' : 'none';
   updateScraperHint();
-  // Hide the whole height / horizontal / vertical block when badges are off —
-  // those knobs only mean anything when there's a badge being placed.  Gap is
-  // already mode-2-only and stays nested under this wrapper, so it follows.
-  document.getElementById('badge-layout-fields').style.display     = hidden ? 'none' : '';
-  // The bookmark and the graphic groups place themselves.
-  document.getElementById('badge-x-field').style.display           = (mode === 6 || mode === 7) ? 'none' : '';
-  document.getElementById('badge-y-field').style.display           = (mode === 6 || mode === 7) ? 'none' : '';
+  document.getElementById('badge-layout-fields').style.display     = mode === 7 ? '' : 'none';
   document.getElementById('badge-groups-fields').style.display     = mode === 7 ? '' : 'none';
-  // Graphic badges size each group separately (in the Layout sliders gbRender shows).
-  document.getElementById('badge-size-field').style.display        = mode === 7 ? 'none' : '';
   gbRender();   // also hides the per-group Layout sliders outside this mode
 }
 
@@ -5177,45 +5177,6 @@ function updateLandscapeLogoFields() {
   document.getElementById('landscape-logo-pos-field').style.display = noLogo ? 'none' : '';
   document.getElementById('landscape-info-col-field').style.display =
     vEl('cfg-landscape-info-row') === 'auto' ? 'none' : '';
-}
-
-// Landscape draws Graphic Badges and nothing else, so in its view the mode
-// list is just Hidden and Graphic Badges.  Its mode is its own (kept per
-// shape, see _SHARED_PARAM), and off unless chosen.
-// The options are taken out rather than hidden: iOS Safari ignores hidden
-// on an <option>.
-let _badgeModeOptions = null;
-// A select's options, including any the landscape view has taken out.
-function _allOptions(el) {
-  return el.id === 'cfg-badge-display-mode' && _badgeModeOptions ? _badgeModeOptions : [...el.options];
-}
-function _updateBadgeModeOptions() {
-  const landscape = c('tog-landscape');
-  const sel = document.getElementById('cfg-badge-display-mode');
-  _badgeModeOptions ??= [...sel.options];
-  const value = sel.value;
-  sel.replaceChildren(..._badgeModeOptions.filter(o => !landscape || ['0', '7'].includes(o.value)));
-  sel.value = [...sel.options].some(o => o.value === value) ? value : '0';
-}
-
-// Seeds the new mode's own defaults. Kept out of updateBadgeModeHint, which
-// also runs to repaint after a restore or a preset: seeding there overwrote the
-// restored Badge Size on every page load. So this runs only where the mode
-// actually changes, and an import applies its own values after it.
-function applyBadgeModeDefaults() {
-  const mode = parseInt(document.getElementById('cfg-badge-display-mode').value);
-  if (mode === 0) return;
-  const h = document.getElementById('cfg-badge-h');
-  h.value = mode === 6 ? 30 : mode === 4 ? 20 : mode === 2 ? 32 : mode === 5 ? 28 : mode === 7 ? 20 : 36;
-  updateRange(h, 'rng-bh');
-  if ([1,2,4,5,6,7].includes(mode)) {
-    // The mode's default only seeds an untouched field.  Unlike badge height,
-    // a minimum quality means the same thing in every mode, so once the user
-    // (or an imported URL) has picked one, switching modes must not throw it
-    // away.  Cleared by Reset to Defaults, which re-arms the seeding.
-    const _minScore = document.getElementById('cfg-badge-min-score');
-    if (!_minScore.dataset.userSet) _minScore.value = mode === 1 ? '2' : '5';
-  }
 }
 
 function buildWeightSection(containerId, sources, defaults) {
@@ -6958,27 +6919,14 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     params.set('sash_priority', getSashPriorityParam());
   }
 
-  // ── Quality Badges ─────────────────────────────────────────────────────────
+  // ── Extras (graphic badges) ────────────────────────────────────────────────
   // Portrait's mode goes out under the plain names; landscape's (Graphic
   // Badges or nothing, see _uses_quality) under landscape_ ones below.
   if (emitAll) params.set('badge_display_mode', badgeMode);
-  if (emitAll && badgeMode !== 0) {
-    if (badgeMode !== 7) params.set('badge_height', ni('cfg-badge-h'));
-    if (badgeMode === 7) {
-      pGroups.forEach((g, i) => params.set(`badge_group${i + 1}`, g));
-    } else if (badgeMode !== 6) {
-      params.set('badge_anchor_x', n('cfg-badge-x').toFixed(3));
-      params.set('badge_anchor_y', n('cfg-badge-y').toFixed(3));
-    }
-    if (badgeMode === 2) {
-      // badge_gap only applies to Quality Badge Row mode
-      params.set('badge_gap', ni('cfg-badge-gap'));
-    }
+  if (emitAll && badgeMode === 7) {
+    pGroups.forEach((g, i) => params.set(`badge_group${i + 1}`, g));
     if (badgeUsesQuality(badgeMode, pGroups)) {
       params.set('badge_min_score', ni('cfg-badge-min-score'));
-    }
-    if (badgeMode === 5) {
-      if (c('tog-badge-stacked')) params.set('combined_badge_stacked', 'true');
     }
   }
   if (emitLandscape && lBadgeMode === 7) {
@@ -6999,6 +6947,12 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   const _gbQualityShown = (emitAll && badgeMode === 7 && badgeUsesQuality(7, pGroups))
     || (emitLandscape && lBadgeMode === 7 && badgeUsesQuality(7, lGroups));
   if (_gbQualityShown && vEl('cfg-badge-quality-style') === 'frosted') params.set('badge_quality_style', 'frosted');
+  // And the Legacy badge's style.
+  const _legacyShown = (emitAll && badgeMode === 7 && pGroups.some(g => gbHasSlot(g, 'legacy')))
+    || (emitLandscape && lBadgeMode === 7 && lGroups.some(g => gbHasSlot(g, 'legacy')));
+  const _legacyStyle = vEl('cfg-badge-legacy-style');
+  if (_legacyShown && _legacyStyle !== 'notch') params.set('badge_legacy_style', _legacyStyle);
+  if (_legacyShown && _legacyStyle === 'combined' && c('tog-badge-stacked')) params.set('combined_badge_stacked', 'true');
   // And the network and studio logos' size.
   const _gbLogoShown = (emitAll && badgeMode === 7 && pGroups.some(g => gbHasSlot(g, 'network') || gbHasSlot(g, 'studio')))
     || (emitLandscape && lBadgeMode === 7 && lGroups.some(g => gbHasSlot(g, 'network') || gbHasSlot(g, 'studio')));
@@ -7607,10 +7561,8 @@ function _resetControl(el) {
   // every write; one that needs a real default carries it in data-default.
   if (el.type === 'hidden')   el.value   = el.dataset.default ?? (el.defaultValue || '');
   if (el.tagName === 'SELECT') {
-    // The badge mode list is cut down in landscape; its default may be one of
-    // the options taken out (see _updateBadgeModeOptions).
-    const def = _allOptions(el).find(o => o.defaultSelected);
-    if (def && [...el.options].includes(def)) { for (const opt of el.options) opt.selected = opt === def; }
+    const def = [...el.options].find(o => o.defaultSelected);
+    if (def) { for (const opt of el.options) opt.selected = opt === def; }
     else if (el.options.length) el.selectedIndex = 0;
   }
   // Forget "the user chose this themselves" marks, so the mode-driven
@@ -7726,7 +7678,6 @@ function resetScopeToImport(roots, name) {
 
   for (const [id, v] of Object.entries(keep)) _setEl(id, typeof v === 'boolean' ? String(v) : v);
   if (landscape && imp.dual && importedLandscape) {
-    _updateBadgeModeOptions();
     for (const id of _SHAPE_SHARED) {
       if (inSet.has(id) && id in importedLandscape) {
         const v = importedLandscape[id];
@@ -8246,9 +8197,19 @@ function _readShared() {
   return out;
 }
 function _writeShared(values) {
-  // The mode list follows the shape (see _updateBadgeModeOptions); it has to
-  // be the incoming shape's before its mode is written into it.
-  _updateBadgeModeOptions();
+  // A shape stashed before the old display modes went keeps one of them:
+  // converted as an imported URL's is, so its badges aren't lost to Hidden.
+  const _oldMode = values['cfg-badge-display-mode'];
+  if (LEGACY_MODE_STYLE[_oldMode]) {
+    // Its height wasn't stashed; the old mode's own default stands in.
+    const p = new URLSearchParams({ badge_display_mode: _oldMode,
+                                    badge_height: LEGACY_HEIGHTS[LEGACY_MODE_STYLE[_oldMode]],
+                                    sash_mode: values['cfg-sash-mode'] ?? vEl('cfg-sash-mode'), sash_badge_pos: vEl('cfg-sash-badge-pos') });
+    migrateLegacyBadgeMode(p);
+    values = { ...values, 'cfg-badge-display-mode': '7' };
+    GB_GROUPS.forEach(g => { values[`cfg-badge-group${g}`] = p.get(`badge_group${g}`); });
+    _setEl('cfg-badge-legacy-style', p.get('badge_legacy_style'));
+  }
   for (const id of _SHAPE_SHARED) {
     if (!(id in values)) continue;
     const v = values[id];
@@ -8262,7 +8223,7 @@ function _sharedDefaults(shape) {
     const el = document.getElementById(id);
     if (!el) continue;
     out[id] = el.type === 'checkbox' ? el.defaultChecked
-            : el.tagName === 'SELECT' ? _allOptions(el).find(o => o.defaultSelected)?.value ?? el.value
+            : el.tagName === 'SELECT' ? [...el.options].find(o => o.defaultSelected)?.value ?? el.value
             : el.defaultValue;
   }
   return out;
@@ -8281,7 +8242,7 @@ function _sharedFromParams(p, shape) {
     if (el.type === 'checkbox') {
       out[id] = !['0', 'false', 'no'].includes(raw.trim().toLowerCase());
     } else if (el.tagName === 'SELECT') {
-      out[id] = _allOptions(el).some(o => o.value === raw) ? raw : defaults[id];
+      out[id] = [...el.options].some(o => o.value === raw) ? raw : defaults[id];
     } else if (el.type === 'hidden') {
       out[id] = raw;
     } else {
@@ -8391,7 +8352,6 @@ function updateShapeFields() {
   else if (tl) tl.style.display = '';
   updateOriginalArt();   // Textless is per shape and the stash writes it silently
   updateLandscapeLogoFields();
-  _updateBadgeModeOptions();
   updateBadgeModeHint();   // the mode and groups are per shape, written silently
   updateGradientFields();
 }
@@ -8748,7 +8708,7 @@ const _INFO_TITLES = {
   rating:  'Rating / Genre Label',
   logo:    'Logo',
   sash:    'Info Sash',
-  badges:  'Quality Badges',
+  badges:  'Extras',
   weights: 'Rating Weights',
 };
 
@@ -9442,6 +9402,9 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   // (and presets) still use.  A dual URL keeps the plain names for the
   // portrait controls and has its landscape set picked out at the end.
   const _landscapeShared = _dualShape ? _sharedFromParams(p, 'landscape') : null;
+  // Picked out above first: a dual URL's landscape groups fall back to the
+  // plain ones as the URL had them, not to the converted portrait mode.
+  if ((p.get('shape') || '').toLowerCase() !== 'landscape') migrateLegacyBadgeMode(p);
   if ((p.get('shape') || '').toLowerCase() === 'landscape') {
     // A portrait stash saved before a setting became per shape (the badge mode
     // and groups) has no value for it, and the plain parameter about to be
@@ -9826,16 +9789,9 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   _setEl('cfg-badge-cinema-style', p.get('badge_cinema_style') === 'frosted' ? 'frosted' : 'auto');
   _setEl('cfg-badge-quality-style', p.get('badge_quality_style') === 'frosted' ? 'frosted' : 'solid');
   _setEl('cfg-badge-logo-scale', p.get('badge_logo_scale') || '1.00');
+  _setEl('cfg-badge-legacy-style', LEGACY_HEIGHTS[p.get('badge_legacy_style')] ? p.get('badge_legacy_style') : 'notch');
   gbRender();
-  // Seed the mode's defaults BEFORE applying the saved values, so a URL that
-  // omits badge_height (/server-caps not answered yet) still gets a size that
-  // suits its mode, and an explicit badge_height below takes precedence.
-  applyBadgeModeDefaults();
   updateBadgeModeHint();
-  if (p.has('badge_height'))            _setEl('cfg-badge-h',         p.get('badge_height'));
-  if (p.has('badge_gap'))               _setEl('cfg-badge-gap',        p.get('badge_gap'));
-  if (p.has('badge_anchor_x'))          _setEl('cfg-badge-x',          p.get('badge_anchor_x'));
-  if (p.has('badge_anchor_y'))          _setEl('cfg-badge-y',          p.get('badge_anchor_y'));
   if (p.has('badge_min_score'))         _setEl('cfg-badge-min-score',  p.get('badge_min_score'));
   else if (p.has('combined_badge_min_score')) _setEl('cfg-badge-min-score', p.get('combined_badge_min_score'));
   // An imported minimum is as deliberate as a clicked one, so it gets the same

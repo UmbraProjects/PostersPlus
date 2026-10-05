@@ -1919,6 +1919,9 @@ class RequestConfig:
     # set by the group's row height and each logo's shape and ink — see
     # graphic_badges.logo_size.  One setting for both shapes.
     badge_logo_scale:         float = graphic_badges.LOGO_SCALE_DEFAULT
+    # Which old badge the "legacy" slot draws — graphic_badges.LEGACY_STYLES.
+    # One setting for both shapes.
+    badge_legacy_style:       str  = graphic_badges.DEFAULT_LEGACY_STYLE
 
     movie_weights: dict | None = None
     tv_weights:    dict | None = None
@@ -2548,6 +2551,7 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "landscape_logo_scale": 1.0, "landscape_rating_badges": False,
                               "badge_quality_style": graphic_badges.DEFAULT_QUALITY_STYLE,
                               "badge_logo_scale": graphic_badges.LOGO_SCALE_DEFAULT,
+                              "badge_legacy_style": graphic_badges.DEFAULT_LEGACY_STYLE,
                               "landscape_poster_crop": False}
 
 
@@ -2925,6 +2929,9 @@ def build_request_config(params: dict) -> RequestConfig:
     if _quality_style:
         cfg.badge_quality_style = _quality_style
     cfg.badge_logo_scale = _f("badge_logo_scale", cfg.badge_logo_scale, *graphic_badges.LOGO_SCALE_RANGE)
+    _legacy_style = graphic_badges.legacy_style(params.get("badge_legacy_style"))
+    if _legacy_style:
+        cfg.badge_legacy_style = _legacy_style
 
     all_sources = list(_cfg.MOVIE_WEIGHTS.keys())
     cfg.movie_weights = _parse_weights(params.get("movie_weights"), all_sources)
@@ -4036,6 +4043,108 @@ def _draw_combined_text_badge(
         draw.text((cx, y), fmt, font=font, fill=ink)
 
 
+# Each legacy style's height (badge_height) at a graphic group's default size,
+# so a group left at its default draws the badge at the old mode's default.
+_LEGACY_HEIGHTS = {"notch": 20, "bookmark": 30, "row": 32, "combined": 28, "quality_age": 36, "age": 36}
+# Faint glow below this alpha is left outside the badge's box, so the row
+# spaces it by what reads rather than by its halo.
+_LEGACY_INK_ALPHA = 24
+
+
+def _legacy_height(style: str, unit_h: int) -> int:
+    """The old badge_height a legacy badge draws at in a row ``unit_h`` tall."""
+    return max(6, round(_LEGACY_HEIGHTS[style] * unit_h / (graphic_badges.DEFAULT_SIZE * 1.5)))
+
+
+def _legacy_shows(style: str, tokens: list[str], min_score: int) -> bool:
+    """The old modes' own gates: the notch and bookmark draw (silver) with no
+    quality found, but not under the minimum; the age styles always."""
+    if style in ("age", "quality_age", "combined"):
+        return True
+    if style == "row":
+        return bool(tokens) and _score_points(tokens) >= min_score
+    return not tokens or _score_points(tokens) >= min_score
+
+
+def _legacy_badge(cfg: "RequestConfig", tokens: list[str], age_rating: int | None):
+    """The legacy slot's maker for graphic_badges.row_items: the badge the
+    old display mode drew, at a row height, cropped to what it drew.  The
+    bookmark isn't a row item (see _draw_legacy_bookmark)."""
+    style = cfg.badge_legacy_style
+    if style == "bookmark" or not _legacy_shows(style, tokens, cfg.badge_min_score):
+        return None
+
+    def make(unit_h: int) -> Image.Image | None:
+        h = _legacy_height(style, unit_h)
+        canvas = Image.new("RGBA", (h * 24, h * 5), (0, 0, 0, 0))
+        x, y = h, h
+        rx, ry = x / canvas.width, y / canvas.height
+        if style in ("quality_age", "age"):
+            if age_rating is None:
+                return None
+            shown = (tokens if not tokens or _score_points(tokens) >= cfg.badge_min_score else [])
+            draw_quality_age_badge(canvas, age_rating, [] if style == "age" else shown,
+                                   anchor_x_ratio=rx, anchor_y_ratio=ry, badge_height=h,
+                                   always_silver=style == "age")
+        elif style == "notch":
+            # The pill's width was a share of the poster's; kept in step with its height.
+            bar_w = max(3, round(h * 0.2))
+            draw_tier_bar(canvas, tokens, anchor_x_ratio=rx, anchor_y_ratio=ry,
+                          bar_w_ratio=(bar_w + 0.5) / canvas.width, bar_height=h)
+        elif style == "row":
+            allowed = ("4K", "1080P", "REMUX", "WEBDL", "DV", "HDR10+", "HDR10")
+            items: list[BadgeItem] = [
+                (get_resized_badge(t, h), _cfg.QUALITY_LABELS.get(t, t))
+                for t in tokens if t in allowed]
+            if not items:
+                return None
+            render_badges_left(canvas, items, x_start=x, y_top=y, badge_height=h,
+                               badge_gap=max(1, round(_cfg.BADGE_GAP * h / _LEGACY_HEIGHTS["row"])))
+        elif style == "combined":
+            _draw_combined_text_badge(canvas, tokens, x=x, y=y, font_size=h,
+                                      min_score=cfg.badge_min_score,
+                                      stacked=cfg.combined_badge_stacked)
+        box = canvas.getchannel("A").point(lambda v: 255 if v >= _LEGACY_INK_ALPHA else 0).getbbox()
+        if box is None:
+            return None
+        im = canvas.crop(box)
+        im.info["legacy"] = True
+        return im
+
+    return make
+
+
+def _legacy_bookmark_corner(group: "graphic_badges.Group", chip_right: bool) -> tuple[str, bool]:
+    """(side, bottom) of the corner a bookmark in ``group`` hangs from: its
+    anchor's corner; beside the chip or the logo, the top corner the notch or
+    sash leaves free (``chip_right``); at a custom spot, the nearest corner."""
+    if group.xy is not None:
+        return ("right" if group.xy[0] >= 0.5 else "left"), group.xy[1] > 0.5
+    if group.anchor in ("tl", "tr", "bl", "br"):
+        return ("right" if group.anchor[1] == "r" else "left"), group.anchor[0] == "b"
+    return ("right" if chip_right else "left"), False
+
+
+def _draw_legacy_bookmark(image: Image.Image, cfg: "RequestConfig", groups: list,
+                          tokens: list[str], unit_of, chip_right: bool) -> list:
+    """Hang a bookmark-style legacy badge in its group's corner, before the
+    groups are laid out so they keep clear of it, and return the groups
+    without it.  ``unit_of(group)`` is the group's row height."""
+    out = []
+    for group in groups:
+        if "legacy" in group.slots and cfg.badge_legacy_style == "bookmark":
+            if _legacy_shows("bookmark", tokens, cfg.badge_min_score):
+                side, bottom = _legacy_bookmark_corner(group, chip_right)
+                draw_quality_corner_bookmark(image, tokens, side=side, bottom=bottom,
+                                             bookmark_size=_legacy_height("bookmark", unit_of(group)))
+            slots = tuple(s for s in group.slots if s != "legacy")
+            if not slots:
+                continue
+            group = dataclasses.replace(group, slots=slots)
+        out.append(group)
+    return out
+
+
 def build_poster(image: Image.Image, score: int | str, genre: str, cfg: "RequestConfig",
                  *args, **kwargs) -> Image.Image:
     """Composite the overlays onto *image*.  Sizes are floored in 500-wide units
@@ -4070,7 +4179,8 @@ def _build_poster(
     # The cinema disc rides with the logos into row_items.  A frosted one
     # takes the frost colour, which isn't sampled yet: it is laid out as the
     # plain disc, the same size, until it is.
-    badge_logos = (*badge_logos[:2], graphic_badges.cinema_ink(cfg.badge_cinema_style, cinema_run))
+    badge_logos = (*badge_logos[:2], graphic_badges.cinema_ink(cfg.badge_cinema_style, cinema_run),
+                   _legacy_badge(cfg, quality_tokens or [], age_rating))
 
     # An "auto" notch takes its side from where the graphic badges go, so
     # resolve it before anything reads the position.
@@ -5231,7 +5341,7 @@ def _build_poster(
             badge_logos = (*badge_logos[:2], graphic_badges.cinema_ink(
                 cfg.badge_cinema_style, cinema_run,
                 _frosted_tint(*_frost_tint, saturation=_frost_sat, reference=_frost_ref),
-                cfg.sash_badge_frost_opacity))
+                cfg.sash_badge_frost_opacity), *badge_logos[3:])
         # Frosted chips take the frosted notch's opacity, so the two read as one glass.
         _qlook = graphic_badges.quality_look(
             cfg.badge_quality_style,
@@ -5431,6 +5541,17 @@ def _auto_notch_pos(cfg: "RequestConfig", tokens: list[str], certification: str 
     show_quality = bool(tokens) and _score_points(tokens) >= cfg.badge_min_score
     left = right = beside = False
     for group in graphic_badges.cfg_groups(cfg):
+        if ("legacy" in group.slots and cfg.badge_legacy_style == "bookmark"
+                and _legacy_shows("bookmark", tokens, cfg.badge_min_score)):
+            # It hangs in a top corner, as a top group there would sit.
+            side, bottom = _legacy_bookmark_corner(group, True)
+            if not bottom:
+                if group.xy is None and group.anchor not in ("tl", "tr"):
+                    beside = True
+                elif side == "left":
+                    left = True
+                else:
+                    right = True
         # Whether it draws anything is all that matters here; any size will do.
         if not graphic_badges.row_items(tokens, certification, age_rating, 20,
                                         group.slots, show_quality, *logos)[:group.max_items]:
@@ -5495,7 +5616,9 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
         notch_y = max(-badge_h, px(height * cfg.sash_badge_inset))
         top_line = (max(0, notch_y) + notch_y + badge_h) / 2
 
-    groups = graphic_badges.cfg_groups(cfg)
+    groups = _draw_legacy_bookmark(image, cfg, graphic_badges.cfg_groups(cfg), tokens,
+                                   lambda g: max(8, round(g.size * 1.5 * height / 750)),
+                                   chip_right=_sash_holds_left(cfg))
     for group in groups:
         g_unit = max(8, round(group.size * 1.5 * height / 750))
         g_gap = px(width * group.spacing)

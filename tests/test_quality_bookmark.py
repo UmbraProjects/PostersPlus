@@ -94,19 +94,16 @@ class QualityBookmarkConfigurationTests(unittest.TestCase):
         self.assertEqual(cfg.badge_height, 18)
         self.assertEqual(cfg.badge_min_score, 5)
 
-    def test_configurator_exposes_fixed_corner_bookmark(self):
+    def test_configurator_exposes_bookmark_as_legacy_style(self):
         path = os.path.join(os.path.dirname(main.__file__), "configurator.html")
         with open(path, encoding="utf-8") as source:
             html = source.read()
-        self.assertIn("Quality Bookmark", html)
-        # 30, not the 16 this shipped with: at 16 the mark is barely visible on
-        # the poster sizes most clients render at. The right value still varies
-        # by client, which the mode tooltip now says.
-        self.assertIn("mode === 6 ? 30", html)
-        self.assertIn("badge-x-field", html)
-        self.assertIn("badge-y-field", html)
-        self.assertGreaterEqual(html.count("mode === 6"), 3)
-        self.assertIn("[1,2,4,5,6,7]", html)
+        # The old display modes are the Legacy badge's styles, and an old URL's
+        # mode 6 imports as the bookmark at its old default height of 30.
+        self.assertIn('<option value="bookmark">Quality Bookmark</option>', html)
+        self.assertIn("6: 'bookmark'", html)
+        self.assertIn("bookmark: 30", html)
+        self.assertEqual(main._LEGACY_HEIGHTS["bookmark"], 30)
 
 
 if __name__ == "__main__":

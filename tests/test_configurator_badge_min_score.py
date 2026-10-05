@@ -5,8 +5,8 @@ import unittest
 
 # Switching quality display mode used to overwrite "Minimum Quality to Display"
 # with that mode's default, throwing away a choice the user had already made.
-# Badge *height* is still re-seeded on purpose — a bar and a badge want
-# different heights — but a minimum quality means the same thing in every mode.
+# The modes have since become Graphic Badges alone (the old ones are the Legacy
+# badge's styles), so nothing seeds it any more; these keep the restore honest.
 #
 # These are source-shape assertions, not behavioural ones: the repo has no JS
 # runtime, so they pin the four parts that have to agree rather than driving the
@@ -20,22 +20,6 @@ class BadgeMinScoreStickinessTests(unittest.TestCase):
         match = re.search(rf"function {name}\(\)\s*\{{(.*?)\n\}}", self.html, re.S)
         self.assertIsNotNone(match, f"{name}() not found")
         return match.group(1)
-
-    def test_mode_default_only_seeds_an_untouched_field(self):
-        body = self._fn("applyBadgeModeDefaults")
-        # The assignment must be guarded, not unconditional.
-        self.assertNotRegex(
-            body,
-            r"getElementById\('cfg-badge-min-score'\)\.value\s*=",
-            "the minimum is still assigned unconditionally on mode change",
-        )
-        self.assertRegex(body, r"if\s*\(!\s*_?\w*[Mm]inScore\.dataset\.userSet\)\s*_?\w*[Mm]inScore\.value\s*=")
-
-    def test_badge_height_is_still_reseeded_per_mode(self):
-        # Guard against "fixing" this one too — the per-mode heights are wanted.
-        self.assertRegex(self._fn("applyBadgeModeDefaults"),
-                         r"cfg-badge-h'\)")
-        self.assertIn('onchange="applyBadgeModeDefaults();', self.html)
 
     def test_repaint_does_not_seed(self):
         # updateBadgeModeHint also runs after the startup restore and after a
