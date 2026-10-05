@@ -13,7 +13,7 @@ Layout, all fractions of the canvas:
     |  [badge]                              [badge]    |   top_left / top_right
     |                                                  |
     |                                                  |
-    |......................vignette....................|   band, _BAND_RATIO h
+    |......................vignette....................|   band, _BOTTOM_LEVELS
     |  LOGO  (or title)              Genre | Yr | 87   |
     +--------------------------------------------------+
 
@@ -99,11 +99,29 @@ _LOGO_SHADOW_DY    = 5
 _INFO_SHADOW_ALPHA = 170
 _INFO_SHADOW_BLUR  = 5.0
 
-# Optional top band (landscape_vignette_top): the bottom band's colour, faded
-# down from the top edge.  Shallower and lighter than the bottom one — it backs
-# a corner badge at most, not a row of text.
+# Optional top band, faded down from the top edge.  Shallower and lighter than
+# the bottom one — it backs a corner badge or a top logo, not a row of text.
 _TOP_BAND_RATIO  = 0.30
 _TOP_BAND_ALPHA  = 170
+
+# The portrait vignette levels (top_gradient / bottom_gradient, read here from
+# their landscape_ twins), as (height ratio, peak alpha) on this canvas.
+# "high" is the band this layout was tuned with, so it is the bottom default;
+# the top defaults to "off" (see main._LANDSCAPE_DEFAULTS).  Shallower than the
+# portrait levels throughout: a 16:9 frame is 40% shorter and its subjects sit
+# lower, so the portrait fractions would cover them.
+_TOP_LEVELS: dict[str, tuple[float, int] | None] = {
+    "off":    None,
+    "low":    (0.20, 120),
+    "medium": (0.25, 145),
+    "high":   (_TOP_BAND_RATIO, _TOP_BAND_ALPHA),
+}
+_BOTTOM_LEVELS: dict[str, tuple[float, int] | None] = {
+    "off":    None,
+    "low":    (0.30, 160),
+    "medium": (0.38, 190),
+    "high":   (_BAND_RATIO, _BAND_ALPHA),
+}
 
 # Centred logo: the gap between its bottom and the top of the info line under it.
 _STACK_GAP       = 0.035
@@ -179,7 +197,7 @@ _DROP_SUB        = 0.28
 _LANDSCAPE_FROST_MODE: bool | str = "match"
 
 
-def _band_ramp(band_h: int) -> np.ndarray:
+def _band_ramp(band_h: int, peak: int = _BAND_ALPHA) -> np.ndarray:
     """Per-row alpha of the bottom band, top row first.
 
     The portrait band's ``1 - (1 - t) ** k`` starts at full slope: the first
@@ -197,22 +215,43 @@ def _band_ramp(band_h: int) -> np.ndarray:
     """
     t = np.linspace(0.0, 1.0, band_h, dtype=np.float32)
     smooth = t * t * (3.0 - 2.0 * t)
-    return (smooth ** _BAND_GAMMA * _BAND_ALPHA).astype(np.uint8)
+    return (smooth ** _BAND_GAMMA * peak).astype(np.uint8)
+
+
+def _band_level(cfg, top: bool) -> tuple[float, int] | None:
+    """(height ratio, peak alpha) of one band, or None when it is off.
+
+    Read as the portrait reads top_gradient / bottom_gradient: a named level,
+    or "custom" with its own height and opacity; anything unknown is "high",
+    so a typo can't silently take away the band the text relies on."""
+    from main import _gradient_alpha
+    levels = _TOP_LEVELS if top else _BOTTOM_LEVELS
+    side = "top" if top else "bottom"
+    level = getattr(cfg, f"{side}_gradient", "high")
+    opacity = getattr(cfg, f"{side}_gradient_opacity", None)
+    ratio = getattr(cfg, f"{side}_gradient_height", None)
+    if level == "custom" and opacity is not None and ratio is not None:
+        return (ratio, _gradient_alpha(opacity)) if ratio > 0 else None
+    return levels.get(level, levels["high"])
 
 
 def _draw_vignette(image: Image.Image, art: Image.Image, cfg,
                    source: tuple[float, float, float] | None = None,
+                   sash_shown: bool = True,
                    ) -> tuple[float, float, float] | None:
-    """Paint the bottom band, tinted from the art when the user asked for it,
-    and the tinted top band when landscape_vignette_top asks for one.
+    """Paint the top and bottom bands at the levels asked for, each tinted
+    from the art when the user asked for it and black otherwise.
 
     ``art`` is the pre-vignette snapshot: sampling ``image`` would just return
     the darkness a previous pass painted.
 
-    ``source`` overrides the band's own colour choice with a colour decided
+    ``source`` overrides the bands' own colour choice with a colour decided
     elsewhere (the badge's, under "vignette follows badge").  Returns the tint
-    the band was painted from, or None when it was left plain black, so the
+    a band was painted from, or None when both were left plain black, so the
     badge can follow it the other way round.
+
+    ``sash_shown`` is whether the sash badge is drawn, for "Vignette Only On
+    Sash" (top_vignette_sash_only) to drop the top band without one.
     """
     from main import (
         _fog_pick, _fog_faces, _vignette_tint_band, _vignette_frost_band, _vignette_level_band,
@@ -221,21 +260,36 @@ def _draw_vignette(image: Image.Image, art: Image.Image, cfg,
     )
 
     width, height = image.size
-    band_h = max(1, int(height * _BAND_RATIO))
-    band_y = height - band_h
+    top_level = _band_level(cfg, top=True)
+    bottom_level = _band_level(cfg, top=False)
+    if getattr(cfg, "top_vignette_sash_only", False) and not sash_shown:
+        top_level = None
 
-    ramp = Image.fromarray(
-        np.broadcast_to(_band_ramp(band_h)[:, np.newaxis], (band_h, width)).copy(),
-    )
+    want_top = top_level is not None
+    want_bottom = bottom_level is not None
+    top_tinted = want_top and bool(getattr(cfg, "vignette_poster_color_top", False))
+    bottom_tinted = want_bottom and bool(cfg.vignette_poster_color_bottom)
+    if want_top:
+        top_h = max(1, int(height * top_level[0]))
+        # The fog's smoothstep, tinted or not: a straight linear fade has the
+        # same kink at its edge _band_ramp exists to avoid.
+        top_alpha = _vignette_fog_ramp(top_h, top_level[1], rising=False)
+        top_ramp = Image.fromarray(np.broadcast_to(
+            np.round(top_alpha).astype(np.uint8)[:, np.newaxis], (top_h, width)).copy())
+        top_box = (0, 0, width, top_h)
+    if want_bottom:
+        band_h = max(1, int(height * bottom_level[0]))
+        band_y = height - band_h
+        band_alpha = _band_ramp(band_h, bottom_level[1])
+        ramp = Image.fromarray(
+            np.broadcast_to(band_alpha[:, np.newaxis], (band_h, width)).copy(),
+        )
+        box = (0, band_y, width, height)
 
-    box = (0, band_y, width, height)
-    top_h = max(1, int(height * _TOP_BAND_RATIO))
-    want_top = bool(getattr(cfg, "landscape_vignette_top", False))
-    tinted = None
     painted = None
     cover = None
     tint = None
-    if cfg.vignette_poster_color_bottom or want_top:
+    if top_tinted or bottom_tinted:
         if source is not None:
             # Handed a colour: paint with it outright.  Confidence is the
             # badge's business, and it has already committed to this hue.
@@ -247,54 +301,54 @@ def _draw_vignette(image: Image.Image, art: Image.Image, cfg,
             # both bands, as portrait does: the bottom band's when it is
             # tinted, else the top band's own.
             cover_box = ((0, max(0, band_y - int(height * _VIGNETTE_SEAM_H)), width, height)
-                         if cfg.vignette_poster_color_bottom
+                         if bottom_tinted
                          else (0, 0, width, min(height, top_h + int(height * _VIGNETTE_SEAM_H))))
             tint, conf, second, cover = _fog_pick(
                 art, cover_box, cfg.vignette_color_local, cfg.vignette_color_ramp, _fog_faces(art),
             )
-    if tint is not None:
+    if tint is None:
+        top_tinted = bottom_tinted = False
+    else:
         # Same derivation the portrait bands use: levelling follows
         # whichever of saturation / blur is asking for more of it.
         slider = min(1.0, max(0.0, cfg.vignette_color_saturation) / _VIGNETTE_SAT_FULL)
         level = max(slider, min(1.0, max(0.0, cfg.vignette_color_blur)))
-        if want_top:
-            # Painted first: the two bands never overlap (0.30 + 0.45 < 1).
-            top_alpha = _vignette_fog_ramp(top_h, _TOP_BAND_ALPHA, rising=False)
-            top_ramp = Image.fromarray(np.broadcast_to(
-                np.round(top_alpha).astype(np.uint8)[:, np.newaxis], (top_h, width)).copy())
-            top_box = (0, 0, width, top_h)
-            _vignette_frost_band(image, top_box, top_ramp, cfg.vignette_color_blur)
-            _vignette_level_band(image, top_box, top_ramp, level)
-            _vignette_composite(image, 0, _vignette_tint_band(
-                art, top_box, tint, conf,
-                cfg.vignette_color_saturation, cfg.vignette_color_blur,
-                second, cfg.vignette_color_lightness,
-                columns=_TINT_COLUMNS, ramp_columns=_RAMP_COLUMNS,
-                cover_lightness=cover, style=cfg.vignette_color_style,
-            ), top_alpha)
-        if cfg.vignette_poster_color_bottom:
-            # Only a colour the band actually shows is one the badge may
-            # follow — the same bar the portrait notch's match uses.  A band
-            # that came out near black, or at saturation 0, is black.
-            if conf >= _VIGNETTE_MATCH_MIN_CONF and slider > 0:
-                painted = tint
-            _vignette_frost_band(image, box, ramp, cfg.vignette_color_blur)
-            _vignette_level_band(image, box, ramp, level)
-            tinted = _vignette_tint_band(
-                art, box, tint, conf,
+        # Only a colour a band actually shows is one the badge may follow —
+        # the same bar the portrait notch's match uses.  A band that came out
+        # near black, or at saturation 0, is black.
+        if conf >= _VIGNETTE_MATCH_MIN_CONF and slider > 0:
+            painted = tint
+
+        def _tint_field(band_box):
+            return _vignette_tint_band(
+                art, band_box, tint, conf,
                 cfg.vignette_color_saturation, cfg.vignette_color_blur,
                 second, cfg.vignette_color_lightness,
                 columns=_TINT_COLUMNS, ramp_columns=_RAMP_COLUMNS,
                 cover_lightness=cover, style=cfg.vignette_color_style,
             )
 
-    if tinted is None:
-        tinted = Image.new("RGBA", (width, band_h), (0, 0, 0, 0))
-        tinted.putalpha(ramp)
-        image.paste(tinted, (0, band_y), mask=tinted)
-    else:
-        # Dithered, like the portrait bands — see _vignette_composite.
-        _vignette_composite(image, band_y, tinted, _band_ramp(band_h).astype(np.float32))
+    # Top first; at custom heights the two bands may overlap, and the bottom
+    # one, under the text, is the one that should end up on top.
+    if want_top:
+        if top_tinted:
+            _vignette_frost_band(image, top_box, top_ramp, cfg.vignette_color_blur)
+            _vignette_level_band(image, top_box, top_ramp, level)
+            _vignette_composite(image, 0, _tint_field(top_box), top_alpha)
+        else:
+            band = Image.new("RGBA", (width, top_h), (0, 0, 0, 0))
+            band.putalpha(top_ramp)
+            image.paste(band, (0, 0), mask=band)
+    if want_bottom:
+        if bottom_tinted:
+            _vignette_frost_band(image, box, ramp, cfg.vignette_color_blur)
+            _vignette_level_band(image, box, ramp, level)
+            # Dithered, like the portrait bands — see _vignette_composite.
+            _vignette_composite(image, band_y, _tint_field(box), band_alpha.astype(np.float32))
+        else:
+            band = Image.new("RGBA", (width, band_h), (0, 0, 0, 0))
+            band.putalpha(ramp)
+            image.paste(band, (0, band_y), mask=band)
     return painted
 
 
@@ -355,12 +409,20 @@ def _drop_shadow(image: Image.Image, mask: Image.Image, x: int, y: int,
 # silver or gold rim, and a light label.
 _DARK_INK   = {"black": (210, 210, 218), "silver": (255, 255, 255), "gold": (255, 255, 255)}
 _TRIM       = {"silver": (192, 192, 200), "gold": (212, 175, 55)}
+# What landscape_badge_opacity calls the dark bodies' own opacity, as the
+# portrait notch's 0.90 does: at it they keep the alphas they were tuned with.
+_DARK_OPACITY = 0.90
 
 
 def _dark_pill(image: Image.Image, box: tuple[int, int, int, int], style: str,
-               ink: tuple[int, int, int] | None = None) -> tuple[int, int, int]:
+               ink: tuple[int, int, int] | None = None,
+               opacity: float = _DARK_OPACITY) -> tuple[int, int, int]:
     """A black / silver / gold pill at ``box``.  Returns its ink colour:
-    ``ink`` (landscape_badge_text_color) when given, else the style's own."""
+    ``ink`` (landscape_badge_text_color) when given, else the style's own.
+
+    ``opacity`` (landscape_badge_opacity) is the body's, ``_DARK_OPACITY``
+    being the style's usual look; the rim, like the portrait notch's trim,
+    stays as it is."""
     from ratings import _cairo_pill_mask
 
     x0, y0, x1, y1 = box
@@ -368,9 +430,10 @@ def _dark_pill(image: Image.Image, box: tuple[int, int, int, int], style: str,
     if w <= 0 or h <= 0:
         return ink or _DARK_INK.get(style, (255, 255, 255))
     mask = _cairo_pill_mask(w, h, h // 2)
+    k = max(0.0, opacity) / _DARK_OPACITY
     if style == "black":
         body = Image.new("RGBA", (w, h), (10, 10, 12, 0))
-        body.putalpha(mask.point(lambda a: a * 230 // 255))
+        body.putalpha(mask.point(lambda a: min(255, int(a * 230 * k) // 255)))
     else:
         t = np.linspace(0, 1, h, dtype=np.float32)
         dark = (4 + 10 * np.sin(t * np.pi))
@@ -378,7 +441,7 @@ def _dark_pill(image: Image.Image, box: tuple[int, int, int, int], style: str,
         arr[:, :, 0] = arr[:, :, 1] = dark.astype(np.uint8)[:, None]
         arr[:, :, 2] = np.minimum(255, dark * 1.3).astype(np.uint8)[:, None]
         body = Image.fromarray(arr)
-        body.putalpha(mask.point(lambda a: a * 235 // 255))
+        body.putalpha(mask.point(lambda a: min(255, int(a * 235 * k) // 255)))
         bw = max(1, round(h * 0.06))
         inner = Image.new("L", (w, h), 0)
         inner.paste(_cairo_pill_mask(max(1, w - 2 * bw), max(1, h - 2 * bw), max(1, (h - 2 * bw) // 2)),
@@ -441,8 +504,9 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
         # too dark or too washed to carry a hue, borrowing the frame's instead.
         backing = np.asarray(blurred.convert("RGB"), dtype=np.float32)
         base = source if source is not None else dominant_frost_rgb(image.crop(box), fallback=art)
+        base = _resaturate(base, getattr(cfg, "landscape_badge_saturation", 1.0))
         tint = _lift(base, _luma(backing.reshape(-1, 3).mean(axis=0)))
-        opacity = _LIFT_OPACITY
+        opacity = getattr(cfg, "landscape_badge_glass_opacity", _LIFT_OPACITY)
 
     # Cairo rasterises at ANTIALIAS_BEST; PIL's rounded_rectangle has no
     # antialiasing at all, which on a hairline border is the difference between
@@ -474,6 +538,34 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
     return _frost_ink(*tint)
 
 
+def _resaturate(rgb, amount: float) -> tuple[float, float, float]:
+    """``rgb`` with its HLS saturation scaled by ``amount`` (landscape_badge_saturation):
+    0 is grey glass, 1 the colour as sampled."""
+    if amount == 1.0:
+        return rgb
+    h, l, s = colorsys.rgb_to_hls(*(c / 255.0 for c in rgb))
+    return tuple(c * 255.0 for c in colorsys.hls_to_rgb(h, l, min(1.0, s * max(0.0, amount))))
+
+
+def _badge_metrics(cfg, height: int) -> tuple[float, int, int, int, int]:
+    """(scale, text size, padding across, padding down, pill height) of the
+    info pill.  Badge Size scales the lot; Width and Height then set the
+    padding across and the pill's height around text of a fixed size, and
+    Font Size the text inside it — the portrait notch's Width / Height /
+    Font Size Ratio, for a pill whose width follows its label."""
+    # User scale on top of the tuned size: a pill legible on a monitor is
+    # not necessarily legible from a sofa.  Padding scales with the type so
+    # the pill keeps its proportions rather than growing a thick rim.
+    scale = max(0.1, float(getattr(cfg, "landscape_badge_scale", 1.0) or 1.0))
+    # Height is taken around the label as drawn, so a bigger font grows the
+    # pill rather than eating its padding.
+    th = max(1, int(height * _BADGE_FONT * scale * getattr(cfg, "landscape_badge_font", 1.0)))
+    pill_h = th + 2 * round(_BADGE_PAD_Y * scale)
+    bh = max(th, round(pill_h * getattr(cfg, "landscape_badge_height", 1.0)))
+    pad_x = round(_BADGE_PAD_X * scale * getattr(cfg, "landscape_badge_width", 1.0))
+    return scale, th, pad_x, (bh - th) // 2, bh
+
+
 def _draw_badge(image: Image.Image, text: str, position: str, art: Image.Image,
                 cfg, logo_height: int = 0, plain: bool = False,
                 source: tuple[float, float, float] | None = None,
@@ -483,10 +575,7 @@ def _draw_badge(image: Image.Image, text: str, position: str, art: Image.Image,
                 obstacles: tuple = ()) -> None:
     width, height = image.size
     draw = ImageDraw.Draw(image)
-    # User scale on top of the tuned size: a pill legible on a monitor is
-    # not necessarily legible from a sofa.  Padding scales with the type so
-    # the pill keeps its proportions rather than growing a thick rim.
-    scale = max(0.1, float(getattr(cfg, "landscape_badge_scale", 1.0) or 1.0))
+    scale, th, pad_x, pad_y, bh = _badge_metrics(cfg, height)
     text = visual(text)
 
     if plain:
@@ -500,11 +589,9 @@ def _draw_badge(image: Image.Image, text: str, position: str, art: Image.Image,
                   font=_plain_font, fill=(255, 255, 255, 242), anchor="ls")
         return
 
-    font = fonts.label_font(max(1, int(height * _BADGE_FONT * scale)))
+    font = fonts.label_font(th)
     tw = draw.textlength(text, font=font)
-    th = int(height * _BADGE_FONT * scale)
-    pad_x, pad_y = round(_BADGE_PAD_X * scale), round(_BADGE_PAD_Y * scale)
-    bw, bh = int(tw + pad_x * 2), int(th + pad_y * 2)
+    bw = int(tw + pad_x * 2)
 
     gap = int(height * _BADGE_LOGO_GAP)
     if position == "logo" and logo_top_row:
@@ -528,6 +615,13 @@ def _draw_badge(image: Image.Image, text: str, position: str, art: Image.Image,
             y -= logo_height + int(height * 0.045)
     else:  # top_left
         x, y = int(width * _SIDE_PAD), int(height * _BADGE_TOP)
+    # Horizontal / Vertical Position: in from the side it is anchored to (none
+    # for a centred logo's) and away from its edge, as the portrait side chip.
+    side = (1 if position in ("top_left", "bottom_left") or (position == "logo" and logo_align == "left")
+            else -1 if position in ("top_right", "bottom_right") or (position == "logo" and logo_align == "right")
+            else 0)
+    x += side * int(width * getattr(cfg, "landscape_badge_x", 0.0))
+    y += (1 if y < height / 2 else -1) * int(height * getattr(cfg, "landscape_badge_y", 0.0))
     # Whatever it lands on — a logo or the info line in its corner — it moves
     # off, away from its edge: down past it at the top, up over it at the
     # bottom.  A few passes, since clearing one can land it on the next.
@@ -542,7 +636,8 @@ def _draw_badge(image: Image.Image, text: str, position: str, art: Image.Image,
     style = getattr(cfg, "landscape_badge_style", "glass")
     if style in _DARK_INK:
         ink = _dark_pill(image, (x, y, x + bw, y + bh), style,
-                         getattr(cfg, "landscape_badge_text_color", None))
+                         getattr(cfg, "landscape_badge_text_color", None),
+                         getattr(cfg, "landscape_badge_opacity", _DARK_OPACITY))
     else:
         ink = _glass_pill(image, (x, y, x + bw, y + bh), art, cfg, source=source)
     draw.text((x + pad_x, y + pad_y - round(2 * scale)), text, font=font,
@@ -959,9 +1054,11 @@ def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: li
     left_margin, right_margin = int(width * _SIDE_PAD), int(width * _RIGHT_PAD)
     clear = int(width * 0.02)
     show_quality = bool(tokens) and _score_points(tokens) >= cfg.badge_min_score
-    scale = max(0.1, float(getattr(cfg, "landscape_badge_scale", 1.0) or 1.0))
-    pill_h = int(height * _BADGE_FONT * scale) + 2 * round(_BADGE_PAD_Y * scale)
+    pill_h = _badge_metrics(cfg, height)[4]
     top_line = int(height * _BADGE_TOP) + pill_h / 2
+    if badge_position in ("top_left", "top_right"):
+        # The rows share the pill's line wherever Vertical Position puts it.
+        top_line += int(height * getattr(cfg, "landscape_badge_y", 0.0))
 
     groups = _draw_legacy_bookmark(image, cfg, graphic_badges.cfg_groups(cfg), tokens,
                                    lambda g: max(8, round(height * _GB_UNIT * g.size / DEFAULT_SIZE)),
@@ -1053,14 +1150,13 @@ def _build_landscape(
     # samples the art, so the band and the pill take their colour from the
     # greyed art too and nothing on the poster says "in colour".
     # The bands go black, as a greyscaled portrait's do: grey art has no
-    # colour to give them, and the colourless fallback is a deep blue.  The
-    # bottom one is the plain band; a top band, which is only ever tinted, is
-    # tinted black.
+    # colour to give them, and the colourless fallback is a deep blue.
     greyed = _greyscale_wanted(cfg, discovery_meta, quality_tokens,
                                getattr(cfg, "landscape_greyscale", False))
     if greyed:
         image = image.convert("L").convert("RGBA")
-        cfg = dataclasses.replace(cfg, vignette_poster_color_bottom=False)
+        cfg = dataclasses.replace(cfg, vignette_poster_color_bottom=False,
+                                  vignette_poster_color_top=False)
     art = image.copy()          # pre-vignette snapshot for tint sampling
 
     # Colour link between the band and the badge.  Left alone, each samples
@@ -1072,10 +1168,15 @@ def _build_landscape(
     # lifts it.  Nothing to link when the band is plain black.
     link = getattr(cfg, "landscape_color_link", "off")
     shared = None
-    if link == "vignette_follows_badge" and cfg.vignette_poster_color_bottom:
+    if link == "vignette_follows_badge" and (cfg.vignette_poster_color_bottom
+                                             or cfg.vignette_poster_color_top):
         from awards import dominant_frost_rgb
         shared = tuple(float(c) for c in dominant_frost_rgb(art))
-    band_tint = _draw_vignette(image, art, cfg, source=(0.0, 0.0, 0.0) if greyed else shared)
+    # Picked again where the badge is drawn; here only for "Vignette Only On Sash".
+    sash_shown = not cfg.top_vignette_sash_only or (
+        cfg.sash_mode != "hidden" and discovery_meta is not None
+        and pick_sash(discovery_meta, cfg.sash_priority) is not None)
+    band_tint = _draw_vignette(image, art, cfg, source=shared, sash_shown=sash_shown)
     badge_source = band_tint if link == "badge_follows_vignette" else shared
     # What the overlays are measured against, for the graphic badges to lay
     # themselves out around them.

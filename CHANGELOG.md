@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Landscape vignette levels, as on a poster
+
+- The landscape poster's Vignette settings are now the portrait's: Top and
+  Bottom levels (None, Low, Medium, High, Custom), Top and Bottom Colour
+  from Poster, and Vignette Only On Sash, kept per shape. The bottom band
+  can now be turned off or lightened, and either band can be plain black
+  rather than tinted. Defaults render as before: bottom High and tinted,
+  top off (tinted when turned on).
+- New `landscape_top_gradient`, `landscape_bottom_gradient` (and their
+  custom height and opacity), `landscape_vignette_poster_color_top` and
+  `landscape_top_vignette_sash_only`. A landscape render reads only these,
+  never the portrait's plain names, so existing landscape URLs are
+  unchanged. `landscape_vignette_top=true` still works as a tinted High top.
+
+### Landscape Badge Settings
+
+- The landscape badge gets the portrait notch's settings that fit a pill, in
+  a Badge Settings group with Badge Size: Width, Height, Font Size, Opacity
+  and Colour Saturation for the glass, Opacity for the dark styles, and
+  Horizontal / Vertical Position (`landscape_badge_width`, `_height`,
+  `_font`, `_glass_opacity`, `_saturation`, `_opacity`, `_x`, `_y`). The
+  defaults draw the badge as before.
+
 ### Extras tab: Graphic Badges only, the old badges as a Legacy slot
 
 - The configurator's Quality tab is now Extras, and Graphic Badges are its

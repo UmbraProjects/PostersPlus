@@ -247,16 +247,68 @@ class LandscapeLogoAndBadgeTests(unittest.TestCase):
     def test_top_band_only_when_asked(self):
         art = Image.new("RGBA", (1000, 563), (60, 140, 220, 255))
 
-        def top_mean(on):
-            cfg = main.RequestConfig(shape="landscape", landscape_vignette_top=on, sash_mode="hidden")
-            main._apply_landscape_defaults(cfg)
+        def top_mean(params):
+            cfg = main.build_request_config({"shape": "landscape", "sash_mode": "hidden", **params})
             out = landscape.build_landscape(art.copy(), 87, "Drama", cfg)
             return np.asarray(out.convert("RGB"))[:20].mean()
-        self.assertLess(top_mean(True), top_mean(False) - 20)
+        off = top_mean({})
+        self.assertLess(top_mean({"landscape_top_gradient": "high"}), off - 20)
+        # The pre-levels toggle is the tinted "high" band.
+        self.assertEqual(top_mean({"landscape_vignette_top": "true"}),
+                         top_mean({"landscape_top_gradient": "high"}))
         # New settings stay out of the cache key at their defaults.
         base = main._render_config_signature(main.build_request_config({}))
         self.assertEqual(base, main._render_config_signature(main.build_request_config(
-            {"landscape_logo_pos": "left", "landscape_vignette_top": "false"})))
+            {"landscape_logo_pos": "left"})))
+
+    def test_landscape_reads_only_its_own_levels(self):
+        # Landscape URLs written before the levels carry the portrait's under
+        # the plain names; those must not reach the landscape bands.
+        cfg = main.build_request_config({"shape": "landscape", "top_gradient": "medium",
+                                         "bottom_gradient": "low", "vignette_poster_color_top": "false",
+                                         "top_vignette_sash_only": "true"})
+        self.assertEqual((cfg.top_gradient, cfg.bottom_gradient), ("off", "high"))
+        self.assertTrue(cfg.vignette_poster_color_top)
+        self.assertFalse(cfg.top_vignette_sash_only)
+        cfg = main.build_request_config({"shape": "landscape", "top_gradient": "medium",
+                                         "landscape_top_gradient": "custom",
+                                         "landscape_top_gradient_height": "0.4",
+                                         "landscape_top_gradient_opacity": "0.5",
+                                         "landscape_bottom_gradient": "off"})
+        self.assertEqual((cfg.top_gradient, cfg.top_gradient_height, cfg.top_gradient_opacity),
+                         ("custom", 0.4, 0.5))
+        self.assertEqual(cfg.bottom_gradient, "off")
+        # And portrait never reads the landscape ones.
+        self.assertEqual(main.build_request_config({"landscape_top_gradient": "off"}).top_gradient,
+                         main.RequestConfig().top_gradient)
+
+    def test_bands_follow_levels_and_tint_toggles(self):
+        art = _art()
+
+        def drawn(**over):
+            cfg = main.RequestConfig(shape="landscape", **{"top_gradient": "off", **over})
+            out = art.copy(); landscape._draw_vignette(out, art, cfg)
+            return np.asarray(out.convert("RGB")).astype(int)
+        src = np.asarray(art.convert("RGB")).astype(int)
+        # Bottom off: nothing drawn at all.
+        self.assertTrue((drawn(bottom_gradient="off") == src).all())
+        # Lower levels are shallower and lighter.
+        high, low = drawn(bottom_gradient="high"), drawn(bottom_gradient="low")
+        self.assertLess(high[-1].sum(), low[-1].sum())
+        self.assertTrue((low[int(563 * 0.6)] == src[int(563 * 0.6)]).all())
+        # A black top band, now the top need not be tinted.
+        top = drawn(top_gradient="high", vignette_poster_color_top=False, bottom_gradient="off")
+        r, g, b = top[0, 500]
+        self.assertLess(b, src[0, 500, 2]); self.assertGreater(b, r)
+
+    def test_top_band_waits_for_sash_when_asked(self):
+        art = _art()
+        cfg = main.RequestConfig(shape="landscape", top_gradient="high", bottom_gradient="off",
+                                 top_vignette_sash_only=True)
+        out = art.copy(); landscape._draw_vignette(out, art, cfg, sash_shown=False)
+        self.assertEqual(out.getpixel((500, 0)), art.getpixel((500, 0)))
+        out = art.copy(); landscape._draw_vignette(out, art, cfg, sash_shown=True)
+        self.assertNotEqual(out.getpixel((500, 0)), art.getpixel((500, 0)))
 
     def test_info_strip_score_can_read_out_of_10(self):
         # Same formatting as portrait's out-of-10 switches: one decimal, and a
@@ -488,14 +540,84 @@ class ConfiguratorLandscapeTests(unittest.TestCase):
         self.assertIn("_portraitOnlyControlIds()", self.html)
         self.assertIn("const _LANDSCAPE_ONLY_CONTROLS", self.html)
 
-    def test_portrait_only_vignette_controls_are_wrapped(self):
-        start = self.html.index('id="vignette-portrait-fields"')
-        end = self.html.index("/vignette-portrait-fields")
-        inside = self.html[start:end]
-        for ctl in ("cfg-top-gradient", "cfg-bottom-gradient",
+    def test_vignette_levels_are_kept_per_shape(self):
+        # Landscape mirrors the portrait's vignette controls: no longer hidden
+        # behind a portrait-only wrapper, and each shape keeps its own values.
+        self.assertNotIn("vignette-portrait-fields", self.html)
+        self.assertNotIn("tog-landscape-vignette-top", self.html)
+        block = self.html[self.html.index("const _SHARED_PARAM = {"):self.html.index("const _SHARED_NO_FALLBACK")]
+        for ctl in ("cfg-top-gradient", "cfg-bottom-gradient", "cfg-tg-op", "cfg-bg-ht",
                     "tog-top-vignette-sash-only", "tog-vignette-color-top"):
-            self.assertIn(ctl, inside)
-        self.assertNotIn("tog-vignette-color-bottom", inside)
+            self.assertIn(f"'{ctl}'", block)
+
+
+class LandscapeBadgeSettingsTests(unittest.TestCase):
+    """Portrait's Notch Settings, as the landscape pill's Badge Settings."""
+
+    def _pill(self, **params):
+        # The pill's box: where a plain render and one with the badge differ.
+        art = Image.new("RGBA", (1000, 563), (60, 140, 220, 255))
+        cfg = main.build_request_config({"shape": "landscape", **params})
+        out = art.copy()
+        landscape._draw_badge(out, "NEW", cfg.landscape_badge_pos, art, cfg)
+        return ImageChops.difference(out.convert("RGB"), art.convert("RGB")).point(
+            lambda v: 255 if v > 40 else 0).getbbox()
+
+    def test_defaults_render_as_before(self):
+        cfg = main.RequestConfig()
+        self.assertEqual(cfg.landscape_badge_glass_opacity, landscape._LIFT_OPACITY)
+        self.assertEqual(cfg.landscape_badge_opacity, landscape._DARK_OPACITY)
+        scale, th, pad_x, pad_y, bh = landscape._badge_metrics(cfg, 563)
+        self.assertEqual((th, pad_x, pad_y), (int(563 * landscape._BADGE_FONT),
+                                              landscape._BADGE_PAD_X, landscape._BADGE_PAD_Y))
+        # And they stay out of the cache key.
+        self.assertEqual(main._render_config_signature(main.build_request_config({})),
+                         main._render_config_signature(main.build_request_config(
+                             {"landscape_badge_width": "1.0", "landscape_badge_y": "0"})))
+
+    def test_width_and_height_resize_the_pill(self):
+        base = self._pill()
+        wide = self._pill(landscape_badge_width="2")
+        tall = self._pill(landscape_badge_height="1.5")
+        self.assertGreater(wide[2] - wide[0], base[2] - base[0])
+        self.assertGreater(tall[3] - tall[1], base[3] - base[1])
+        self.assertAlmostEqual(tall[2] - tall[0], base[2] - base[0], delta=2)
+        # A bigger label grows the pill instead of eating its padding.
+        cfg = main.build_request_config({"shape": "landscape", "landscape_badge_font": "1.4"})
+        _, th, _, pad_y, bh = landscape._badge_metrics(cfg, 563)
+        self.assertEqual(pad_y, landscape._BADGE_PAD_Y)
+        self.assertGreater(bh, landscape._badge_metrics(main.RequestConfig(), 563)[4])
+
+    def test_position_moves_it_in_from_its_corner(self):
+        base = self._pill()
+        moved = self._pill(landscape_badge_x="0.1", landscape_badge_y="0.1")
+        self.assertAlmostEqual(moved[0] - base[0], 100, delta=2)
+        self.assertAlmostEqual(moved[1] - base[1], 56, delta=2)
+        right = self._pill(badge_pos="top_right")
+        right_moved = self._pill(badge_pos="top_right", landscape_badge_x="0.1")
+        self.assertAlmostEqual(right[0] - right_moved[0], 100, delta=2)
+        bottom = self._pill(badge_pos="bottom_left")
+        bottom_moved = self._pill(badge_pos="bottom_left", landscape_badge_y="0.1")
+        self.assertAlmostEqual(bottom[1] - bottom_moved[1], 56, delta=2)
+
+    def test_opacity_and_saturation(self):
+        art = Image.new("RGBA", (1000, 563), (200, 60, 40, 255))
+
+        def centre(**params):
+            cfg = main.build_request_config({"shape": "landscape", **params})
+            out = art.copy()
+            landscape._draw_badge(out, "N", "top_left", art, cfg)
+            return out.getpixel((int(1000 * landscape._SIDE_PAD) + 8, int(563 * landscape._BADGE_TOP) + 20))[:3]
+        clear = centre(landscape_badge_glass_opacity="0")
+        self.assertNotEqual(centre(), clear)
+        grey = centre(landscape_badge_saturation="0")
+        self.assertLess(max(grey) - min(grey), max(centre()) - min(centre()))
+        self.assertNotEqual(centre(landscape_badge_style="black", landscape_badge_opacity="0.3"),
+                            centre(landscape_badge_style="black"))
+
+    def test_ranges_are_clamped(self):
+        cfg = main.build_request_config({"landscape_badge_width": "99", "landscape_badge_x": "-5"})
+        self.assertEqual((cfg.landscape_badge_width, cfg.landscape_badge_x), (2.0, -0.05))
 
 
 if __name__ == "__main__":

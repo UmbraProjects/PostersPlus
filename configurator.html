@@ -2601,7 +2601,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
 
             <div class="cfg-sep">
               <span class="group-title">Vignette</span>
-              <div class="portrait-only" id="vignette-portrait-fields">
               <div class="field">
                 <label class="field-label" data-tip="How strongly the top of the poster is darkened, above the logo.">Top</label>
                 <select class="segmented-source" id="cfg-top-gradient" onchange="updateGradientFields(); build(); queuePreviewReload()">
@@ -2664,22 +2663,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </label>
               </div>
               <div class="toggle-row">
-                <span class="toggle-label" data-tip="Fades the top to a dark shade of the poster's own colour instead of to black. Stays black whenever a sash or notch is shown, so its label keeps its contrast.">Top Colour from Poster</span>
+                <span class="toggle-label" data-tip="Fades the top to a dark shade of the poster's own colour instead of to black. On portrait it stays black whenever a sash or notch is shown, so its label keeps its contrast.">Top Colour from Poster</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-vignette-color-top" onchange="updateGradientFields(); build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
-              </div><!-- /vignette-portrait-fields -->
-              <div class="toggle-row landscape-only" id="landscape-vignette-top-row" style="display:none;">
-                <span class="toggle-label" data-tip="Adds a band across the top, faded from the same poster colour as the bottom one, behind the top-corner badge. Uses the colour settings below.">Top Colour from Poster</span>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-landscape-vignette-top" onchange="updateGradientFields(); build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
               <div class="toggle-row">
-                <span class="toggle-label" data-tip="Fades the bottom into a fog of a colour the poster already has, instead of into black. Faces are left out of the choice, and art with no real colour of its own gets a deep blue. Greyscaled posters (still in cinemas) keep the plain black fade. Also tints the landscape poster's bottom band.">Bottom Colour from Poster</span>
+                <span class="toggle-label" data-tip="Fades the bottom into a fog of a colour the poster already has, instead of into black. Faces are left out of the choice, and art with no real colour of its own gets a deep blue. Greyscaled posters (still in cinemas) keep the plain black fade.">Bottom Colour from Poster</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-vignette-color-bottom" onchange="updateGradientFields(); build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
@@ -3649,15 +3640,8 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <option value="logo">With Logo</option>
                 </select>
               </div>
-              <div class="field">
-                <label class="field-label" data-tip="Size of the info badge, 1.00 being the tuned size. Text and padding scale together. Go up for a TV watched from across the room.">Badge Size</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-landscape-badge-scale" min="0.60" max="2.00" step="0.05" value="1.00" oninput="updateRange(this,'rng-lbs'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-lbs">1.00</span>
-                </div>
-              </div>
               <div class="field" id="landscape-color-link-field" style="display:none;">
-                <label class="field-label" data-tip="The band picks its colour from the art it covers and the badge samples the patch under it, so on some art they land a hue apart. Badge Follows Vignette gives the badge the band's colour; Vignette Follows Badge tints the band from the whole-frame colour the badge uses. Only the hue is shared — the band still darkens it and the badge still lifts it to stay readable. Needs Bottom Colour from Poster.">Colour Link</label>
+                <label class="field-label" data-tip="The band picks its colour from the art it covers and the badge samples the patch under it, so on some art they land a hue apart. Badge Follows Vignette gives the badge the band's colour; Vignette Follows Badge tints the band from the whole-frame colour the badge uses. Only the hue is shared — the band still darkens it and the badge still lifts it to stay readable. Needs Top or Bottom Colour from Poster.">Colour Link</label>
                 <select id="cfg-landscape-color-link" onchange="build(); queuePreviewReload()">
                   <option value="off">Independent</option>
                   <option value="badge_follows_vignette" selected>Badge Follows Vignette</option>
@@ -3695,6 +3679,73 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <input type="checkbox" id="tog-landscape-greyscale" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
+              </div>
+            </div>
+            <!-- The pill's sizing and placement, after portrait's Notch Settings. -->
+            <div class="cfg-sep landscape-only" id="landscape-badge-settings" style="display:none;">
+              <span class="group-title">Badge Settings</span>
+              <div class="field">
+                <label class="field-label" data-tip="Size of the info badge, 1.00 being the tuned size. Text and padding scale together. Go up for a TV watched from across the room.">Badge Size</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-landscape-badge-scale" min="0.60" max="2.00" step="0.05" value="1.00" oninput="updateRange(this,'rng-lbs'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-lbs">1.00</span>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label" data-tip="Padding either side of the label. The badge's width follows its label, so this widens or narrows the space around it.">Width</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-landscape-badge-width" min="0.50" max="2.00" step="0.05" value="1.00" oninput="updateRange(this,'rng-lbw'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-lbw">1.00</span>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label" data-tip="Height of the badge around a label of the same size.">Height</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-landscape-badge-height" min="0.50" max="2.00" step="0.05" value="1.00" oninput="updateRange(this,'rng-lbh'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-lbh">1.00</span>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label" data-tip="Size of the label inside the badge. The badge grows with it.">Font Size</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-landscape-badge-font" min="0.50" max="1.50" step="0.05" value="1.00" oninput="updateRange(this,'rng-lbf'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-lbf">1.00</span>
+                </div>
+              </div>
+              <div class="field" id="landscape-badge-glass-opacity-field">
+                <label class="field-label" data-tip="How strongly the frosted glass is coloured over the blurred art.">Opacity</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-landscape-badge-glass-opacity" min="0.00" max="1.00" step="0.01" value="0.86" oninput="updateRange(this,'rng-lbgo'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-lbgo">0.86</span>
+                </div>
+              </div>
+              <div class="field" id="landscape-badge-saturation-field">
+                <label class="field-label" data-tip="How much of the poster's colour the glass carries. 0 is grey glass.">Colour Saturation</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-landscape-badge-saturation" min="0.00" max="2.00" step="0.05" value="1.00" oninput="updateRange(this,'rng-lbsat'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-lbsat">1.00</span>
+                </div>
+              </div>
+              <div class="field" id="landscape-badge-opacity-field" style="display:none;">
+                <label class="field-label" data-tip="How solid the badge's dark body is. The label and trim stay as they are. 0.90 is the style's usual look.">Opacity</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-landscape-badge-opacity" min="0.00" max="1.00" step="0.01" value="0.90" oninput="updateRange(this,'rng-lbo'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-lbo">0.90</span>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label" data-tip="Moves the badge in from the side it sits on, as a share of the poster's width; below zero pulls it out to the edge. A badge with a centred logo stays centred.">Horizontal Position</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-landscape-badge-x" min="-0.040" max="0.250" step="0.005" value="0.000" oninput="updateRange(this,'rng-lbx'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-lbx">0.000</span>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label" data-tip="Moves the badge away from the top or bottom edge, as a share of the poster's height; below zero pulls it towards the edge. Top badge groups beside it follow.">Vertical Position</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-landscape-badge-y" min="-0.060" max="0.250" step="0.005" value="0.000" oninput="updateRange(this,'rng-lby'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-lby">0.000</span>
+                </div>
               </div>
             </div>
             <div class="cfg-sep">
@@ -6572,39 +6623,36 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   if (userTmdbKey)    params.set('tmdb_key',     keyHolders ? keyHolder('tmdb_key')    : userTmdbKey);
   if (userMdblistKey) params.set('mdblist_key',  keyHolders ? keyHolder('mdblist_key') : userMdblistKey);
   if (emitAll) {
-    params.set('top_gradient',    vEl('cfg-top-gradient')    || 'high');
-    if (vEl('cfg-top-gradient') === 'custom') {
-      params.set('top_gradient_opacity', document.getElementById('cfg-tg-op').value);
-      params.set('top_gradient_height', document.getElementById('cfg-tg-ht').value);
-    }
-    params.set('bottom_gradient', vEl('cfg-bottom-gradient') || 'high');
-    if (vEl('cfg-bottom-gradient') === 'custom') {
-      params.set('bottom_gradient_opacity', document.getElementById('cfg-bg-op').value);
-      params.set('bottom_gradient_height', document.getElementById('cfg-bg-ht').value);
-    }
-    if (c('tog-top-vignette-sash-only')) params.set('top_vignette_sash_only', 'true');
   }
   // Both toggles are written in both states.  Writing only "true" and
   // leaving "off" as an absent parameter means "the server's default", and
   // for landscape that default is ON — so the switch could be turned off and
   // change nothing.  omitServerDefaults() still drops whichever state is the
   // default for the URL's shape, so a default URL stays as short as before.
-  // Sliders only ride along when a tint is on.  The landscape top band has its
-  // own toggle, emitted with the landscape layout choices below.
+  // Sliders only ride along when a tint is on.
   //
   // Everything here is kept per shape, so it is written once per shape the URL
   // renders: plain for portrait, "landscape_"-prefixed for landscape.  A
   // "{shape}" URL carries both, which is the only way one URL can give the 16:9
   // slot its tinted band while the 2:3 slot keeps its own vignette.
-  function emitShared(v, prefix, withTop) {
+  function emitShared(v, prefix) {
     const on  = id => v[id] === true || v[id] === 'true';
     const num = id => Number(v[id]).toFixed(2);
     const set = (key, value) => params.set(prefix + key, value);
-    // Landscape's top band has a toggle of its own (landscape_vignette_top,
-    // written with the other landscape choices), but it needs the sliders too.
-    const _vgTop = withTop ? c('tog-vignette-color-top') : c('tog-landscape-vignette-top');
+    // Band levels.  A landscape render reads these from the landscape_ names
+    // alone (_SHARED_NO_FALLBACK), so the custom pair needs no "off" twin.
+    for (const [side, op, ht] of [['top', 'cfg-tg-op', 'cfg-tg-ht'], ['bottom', 'cfg-bg-op', 'cfg-bg-ht']]) {
+      const level = v[`cfg-${side}-gradient`] || 'high';
+      set(`${side}_gradient`, level);
+      if (level === 'custom') {
+        set(`${side}_gradient_opacity`, v[op]);
+        set(`${side}_gradient_height`,  v[ht]);
+      }
+    }
+    if (on('tog-top-vignette-sash-only')) set('top_vignette_sash_only', 'true');
+    const _vgTop = on('tog-vignette-color-top');
     const _vgBot = on('tog-vignette-color-bottom');
-    if (withTop) params.set('vignette_poster_color_top', _vgTop ? 'true' : 'false');
+    set('vignette_poster_color_top',    _vgTop ? 'true' : 'false');
     set('vignette_poster_color_bottom', _vgBot ? 'true' : 'false');
     if (_vgTop || _vgBot) {
       set('vignette_color_saturation', num('cfg-vignette-sat'));
@@ -6628,8 +6676,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     set('textless',    on('tog-textless')    ? 'true' : 'false');
     set('sash_mode',   v['cfg-sash-mode'] || 'sash');
   }
-  if (emitAll)       emitShared(pShared, '', true);
-  if (emitLandscape) emitShared(lShared, 'landscape_', false);
+  if (emitAll)       emitShared(pShared, '');
+  if (emitLandscape) emitShared(lShared, 'landscape_');
   // Landscape is a view of the same settings, not a setting of its own: the
   // whole URL is what the preview shows, so a landscape preview copies (and
   // saves) a landscape URL and its two layout choices ride along with it.
@@ -6664,7 +6712,6 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     if (_llp !== 'left') params.set('landscape_logo_pos', _llp);
     const _lir = vEl('cfg-landscape-info-row') || 'auto';
     if (_lir !== 'auto') params.set('landscape_info_pos', `${_lir}_${vEl('cfg-landscape-info-col') || 'right'}`);
-    if (c('tog-landscape-vignette-top')) params.set('landscape_vignette_top', 'true');
     if (c('tog-landscape-poster-crop')) params.set('landscape_poster_crop', 'true');
     params.set('landscape_score_out_of_10', c('tog-landscape-score-10') ? 'true' : 'false');
     params.set('landscape_score_star', c('tog-landscape-score-star') ? 'true' : 'false');
@@ -6677,6 +6724,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       if (/^[0-9a-fA-F]{6}$/.test(_lbtc)) params.set('landscape_badge_text_color', _lbtc);
     }
     if (c('tog-landscape-winner-star')) params.set('landscape_winner_star', 'true');
+    for (const [id, [param, def, dec]] of Object.entries(LANDSCAPE_BADGE_TUNING)) {
+      const v = n(id);
+      if (Math.abs(v - def) > 1e-6) params.set(param, v.toFixed(dec));
+    }
     const _lls = n('cfg-landscape-logo-scale');
     if (Math.abs(_lls - 1) > 1e-6) params.set('landscape_logo_scale', _lls.toFixed(2));
     // The sites are the portrait's list, sent here too for a landscape-only URL.
@@ -6690,7 +6741,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       if (vEl('cfg-rating-badge-style') === 'mono') params.set('rating_badge_style', 'mono');
     }
     // Only meaningful with a tinted band — there is nothing to link otherwise.
-    if (lShared['tog-vignette-color-bottom'] === true || lShared['tog-vignette-color-bottom'] === 'true')
+    if (['tog-vignette-color-top', 'tog-vignette-color-bottom'].some(id => lShared[id] === true || lShared[id] === 'true'))
       params.set('landscape_color_link', vEl('cfg-landscape-color-link') || 'off');
   }
   // Portrait only (the server ignores it for landscape), and left out at the
@@ -7020,6 +7071,7 @@ function omitServerDefaults(params) {
   if (!pDefaults || !lDefaults) return params;
   const keep  = new Set(serverCaps.never_omitted_params || []);
   const split = new Set(serverCaps.landscape_split_params || []);
+  const own   = new Set(serverCaps.landscape_own_params || []);
   const twinOf = key => key.startsWith('landscape_') && split.has(key.slice(10)) ? key.slice(10) : null;
 
   const defaultSetsFor = key =>
@@ -7035,7 +7087,7 @@ function omitServerDefaults(params) {
   for (const [key, value] of params) {
     const base = twinOf(key);
     if (!base || keep.has(key)) continue;
-    const fallback = params.has(base) && !omit.has(base) ? params.get(base) : lDefaults[base];
+    const fallback = params.has(base) && !omit.has(base) && !own.has(base) ? params.get(base) : lDefaults[base];
     if (matchesDefault(value, fallback)) omit.add(key);
   }
 
@@ -7929,9 +7981,26 @@ function updateRatingBadgeRows() {
 
 // The text colour is the dark pills'; the glass picks its own ink.
 function updateLandscapeBadgeFields() {
-  document.getElementById('landscape-badge-text-color-field').style.display =
-    (vEl('cfg-landscape-badge-style') || 'glass') !== 'glass' ? '' : 'none';
+  const glass = (vEl('cfg-landscape-badge-style') || 'glass') === 'glass';
+  document.getElementById('landscape-badge-text-color-field').style.display = glass ? 'none' : '';
+  // The glass's two sliders, or the dark body's opacity: as on the portrait notch.
+  document.getElementById('landscape-badge-glass-opacity-field').style.display = glass ? '' : 'none';
+  document.getElementById('landscape-badge-saturation-field').style.display    = glass ? '' : 'none';
+  document.getElementById('landscape-badge-opacity-field').style.display       = glass ? 'none' : '';
 }
+
+// The landscape Badge Settings: control id -> [parameter, default, decimals].
+// Each is left out of the URL at its default (main._LANDSCAPE_BADGE_TUNING).
+const LANDSCAPE_BADGE_TUNING = {
+  'cfg-landscape-badge-width':         ['landscape_badge_width',         1.00, 2],
+  'cfg-landscape-badge-height':        ['landscape_badge_height',        1.00, 2],
+  'cfg-landscape-badge-font':          ['landscape_badge_font',          1.00, 2],
+  'cfg-landscape-badge-glass-opacity': ['landscape_badge_glass_opacity', 0.86, 2],
+  'cfg-landscape-badge-saturation':    ['landscape_badge_saturation',    1.00, 2],
+  'cfg-landscape-badge-opacity':       ['landscape_badge_opacity',       0.90, 2],
+  'cfg-landscape-badge-x':             ['landscape_badge_x',             0.00, 3],
+  'cfg-landscape-badge-y':             ['landscape_badge_y',             0.00, 3],
+};
 
 function _syncLandscapeBadgeColorPicker() {
   const hex = document.getElementById('cfg-landscape-badge-text-color').value.trim();
@@ -8131,20 +8200,15 @@ function updateCustomPaletteFields() {
 function updateGradientFields() {
   document.getElementById('top-gradient-custom-fields').style.display = document.getElementById('cfg-top-gradient').value === 'custom' ? 'block' : 'none';
   document.getElementById('bottom-gradient-custom-fields').style.display = document.getElementById('cfg-bottom-gradient').value === 'custom' ? 'block' : 'none';
-  // Landscape has its own top-band toggle (the portrait one hides there), so
-  // it is whichever of the two is showing that reveals the colour sliders.
-  const landscape = c('tog-landscape');
-  document.getElementById('landscape-vignette-top-row').style.display = landscape ? '' : 'none';
-  const _topTint = landscape ? c('tog-landscape-vignette-top') : c('tog-vignette-color-top');
-  document.getElementById('vignette-color-fields').style.display =
-    (_topTint || document.getElementById('tog-vignette-color-bottom').checked) ? 'block' : 'none';
+  const _anyTint = c('tog-vignette-color-top') || c('tog-vignette-color-bottom');
+  document.getElementById('vignette-color-fields').style.display = _anyTint ? 'block' : 'none';
   // Muted and Exact set the fog's colour and depth themselves, so the two
   // sliders that shape Shade's darker tone have nothing to do there.
   const shade = document.getElementById('cfg-vignette-style').value === 'shade';
   document.getElementById('vignette-sat-field').style.display   = shade ? '' : 'none';
   document.getElementById('vignette-light-field').style.display = shade ? '' : 'none';
   const link = document.getElementById('landscape-color-link-field');
-  if (link) link.style.display = document.getElementById('tog-vignette-color-bottom').checked ? '' : 'none';
+  if (link) link.style.display = _anyTint ? '' : 'none';
   syncSegmented();
 }
 
@@ -8165,6 +8229,18 @@ function updateGradientFields() {
 // main.py), so a URL can carry both shapes' values at once — which a "{shape}"
 // URL has to, being resolved to either layout.
 const _SHARED_PARAM = {
+  // Band levels and the top band's switches.  Landscape reads these from the
+  // landscape_ names only (_SHARED_NO_FALLBACK, _LANDSCAPE_OWN_PARAMS in
+  // main.py): they were portrait-only before, so older landscape URLs carry
+  // the portrait's values under the plain names.
+  'cfg-top-gradient':          'top_gradient',
+  'cfg-tg-op':                 'top_gradient_opacity',
+  'cfg-tg-ht':                 'top_gradient_height',
+  'cfg-bottom-gradient':       'bottom_gradient',
+  'cfg-bg-op':                 'bottom_gradient_opacity',
+  'cfg-bg-ht':                 'bottom_gradient_height',
+  'tog-top-vignette-sash-only':'top_vignette_sash_only',
+  'tog-vignette-color-top':    'vignette_poster_color_top',
   'tog-vignette-color-bottom': 'vignette_poster_color_bottom',
   'tog-vignette-ramp':         'vignette_color_ramp',
   'tog-vignette-local':        'vignette_color_local',
@@ -8186,9 +8262,16 @@ const _SHARED_PARAM = {
   'cfg-badge-group3':          'badge_group3',
   'cfg-badge-group4':          'badge_group4',
 };
-const _SHARED_NO_FALLBACK = new Set(['badge_display_mode']);
+const _SHARED_NO_FALLBACK = new Set(['badge_display_mode',
+  'top_gradient', 'top_gradient_opacity', 'top_gradient_height',
+  'bottom_gradient', 'bottom_gradient_opacity', 'bottom_gradient_height',
+  'top_vignette_sash_only', 'vignette_poster_color_top']);
 const _SHAPE_SHARED = Object.keys(_SHARED_PARAM);
+const _SHARED_ID = Object.fromEntries(Object.entries(_SHARED_PARAM).map(([id, param]) => [param, id]));
 const _LANDSCAPE_SHARED_DEFAULTS = {
+  'cfg-top-gradient': 'off', 'cfg-tg-op': '1.0', 'cfg-tg-ht': '0.25',
+  'cfg-bottom-gradient': 'high', 'cfg-bg-op': '1.0', 'cfg-bg-ht': '0.25',
+  'tog-top-vignette-sash-only': false, 'tog-vignette-color-top': true,
   'tog-vignette-color-bottom': true, 'tog-vignette-ramp': true, 'tog-vignette-local': false,
   'cfg-vignette-style': 'shade',
   'cfg-vignette-sat': '2.00', 'cfg-vignette-light': '1.30', 'cfg-vignette-blur': '1.00',
@@ -8316,9 +8399,7 @@ function updateShapeFields() {
   if (dim) dim.textContent = landscape ? '1000 × 563' : '1000 × 1500';
   document.body.classList.toggle('shape-landscape', landscape);
   document.getElementById('landscape-sash-fields').style.display = landscape ? '' : 'none';
-  // The bands' depth and strength are fixed in landscape, so the level
-  // pickers and the portrait top toggles hide (landscape has its own).
-  document.getElementById('vignette-portrait-fields').style.display = landscape ? 'none' : '';
+  document.getElementById('landscape-badge-settings').style.display = landscape ? '' : 'none';
   // The landscape canvas is 16:9; the photoreal set is 2:3 and never drawn on it.
   document.getElementById('fallback-bg-style-field').style.display = landscape ? 'none' : '';
   // Sash tab: the mode (drawn or not), the release-status filters and the
@@ -9152,9 +9233,10 @@ const _LANDSCAPE_ONLY_CONTROLS = ['cfg-landscape-art', ...LANDSCAPE_SOURCE_IDS, 
                                   'cfg-landscape-color-link', 'tog-landscape-score-10',
                                   'tog-landscape-score-star', 'cfg-landscape-logo-pos', 'cfg-landscape-logo-row',
                                   'cfg-landscape-info-row', 'cfg-landscape-info-col',
-                                  'tog-landscape-vignette-top', 'tog-landscape-greyscale',
+                                  'tog-landscape-greyscale',
                                   'cfg-landscape-badge-style', 'cfg-landscape-badge-text-color',
                                   'tog-landscape-winner-star', 'cfg-landscape-logo-scale',
+                                  ...Object.keys(LANDSCAPE_BADGE_TUNING),
                                   'tog-landscape-rating-badges', 'tog-landscape-poster-crop'];
 // Everything both shapes read, or that a preset never carries (identity and
 // keys — settingsOnly leaves them alone in any case).
@@ -9407,6 +9489,13 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   }
 
   const p = parsed.searchParams;
+  // landscape_vignette_top, from before landscape had band levels, drew the
+  // tinted "high" top band.
+  if (/^(1|true|yes|on)$/i.test(p.get('landscape_vignette_top') || '') && !p.has('landscape_top_gradient')) {
+    p.set('landscape_top_gradient', 'high');
+    p.set('landscape_vignette_poster_color_top', 'true');
+  }
+  p.delete('landscape_vignette_top');
   const _keptKeys = [];   // API keys the URL carried but the fields already had
   // A landscape URL is read the way the server reads it: each "landscape_"
   // per-shape value stands in for the plain one, which older landscape URLs
@@ -9431,8 +9520,8 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     }
     for (const param of Object.values(_SHARED_PARAM)) {
       if (p.has('landscape_' + param)) p.set(param, p.get('landscape_' + param));
-      // Off unless the landscape itself asked for it.
-      else if (_SHARED_NO_FALLBACK.has(param)) p.set(param, '0');
+      // The landscape default unless the landscape itself asked otherwise.
+      else if (_SHARED_NO_FALLBACK.has(param)) p.set(param, String(_LANDSCAPE_SHARED_DEFAULTS[_SHARED_ID[param]]));
     }
   }
 
@@ -9584,7 +9673,6 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
       const _okInfo = ['bottom', 'top'].includes(_lir) && ['left', 'center', 'right'].includes(_lic);
       _setEl('cfg-landscape-info-row', _okInfo ? _lir : 'auto');
       _setEl('cfg-landscape-info-col', _okInfo ? _lic : 'right'); }
-    _setEl('tog-landscape-vignette-top', p.get('landscape_vignette_top') || 'false');
     _setEl('tog-landscape-poster-crop', p.get('landscape_poster_crop') || 'false');
     _setEl('tog-landscape-greyscale',   p.get('landscape_greyscale') || 'false');
     _setEl('cfg-landscape-badge-style', ['black', 'silver', 'gold'].includes(p.get('landscape_badge_style'))
@@ -9593,6 +9681,8 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
       document.getElementById('cfg-landscape-badge-text-color').value = _lbtc;
       _syncLandscapeBadgeColorPicker(); }
     _setEl('tog-landscape-winner-star', p.get('landscape_winner_star') || 'false');
+    for (const [id, [param, def, dec]] of Object.entries(LANDSCAPE_BADGE_TUNING))
+      _setEl(id, p.get(param) || def.toFixed(dec));
     _setEl('cfg-landscape-logo-scale',  p.get('landscape_logo_scale') || '1.00');
     _setEl('tog-landscape-rating-badges', p.get('landscape_rating_badges') || 'false');
   }

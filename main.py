@@ -2095,10 +2095,6 @@ class RequestConfig:
     # against the logo, see landscape.build_landscape) or a slot of its own,
     # "bottom_left" ... "top_right".
     landscape_info_pos: str = "auto"
-    # A tinted top band as well, in the bottom band's colour.  Landscape only:
-    # not a split parameter, so a portrait vignette_poster_color_top on a
-    # "{shape}" URL never adds one.
-    landscape_vignette_top: bool = False
     # Colour link between the landscape band and its badge, when the band is
     # tinted: "off" | "badge_follows_vignette" | "vignette_follows_badge".
     landscape_color_link: str = "off"
@@ -2127,6 +2123,25 @@ class RequestConfig:
     landscape_winner_star: bool = False
     landscape_logo_scale: float = 1.0
     landscape_rating_badges: bool = False
+    # The info pill's Badge Settings, after portrait's Notch Settings (see
+    # _LANDSCAPE_BADGE_TUNING for their ranges).  Landscape's own rather than
+    # landscape_ twins of the sash_badge_* ones: those size and place a notch,
+    # and a "{shape}" URL's notch values would reshape every landscape pill.
+    #   width / height — the pill's padding across / its height, with the text
+    #                    size left alone; font — the text inside it
+    #   glass_opacity  — the glass style's frost layer (landscape._LIFT_OPACITY)
+    #   opacity        — the dark styles' body, 0.90 being their usual look
+    #   saturation     — how much of the poster's colour the glass carries
+    #   x / y          — moved in from its corner, as a share of the width /
+    #                    height; below zero pulls it out towards the edge
+    landscape_badge_width: float = 1.0
+    landscape_badge_height: float = 1.0
+    landscape_badge_font: float = 1.0
+    landscape_badge_glass_opacity: float = 0.86
+    landscape_badge_opacity: float = 0.90
+    landscape_badge_saturation: float = 1.0
+    landscape_badge_x: float = 0.0
+    landscape_badge_y: float = 0.0
     score_color_mode: int = 2
     score_custom_palette: CustomScorePalette | None = None
     sash_badge: bool = False              # legacy; superseded by sash_mode (kept for back-compat parsing)
@@ -2204,6 +2219,11 @@ _LANDSCAPE_DEFAULTS: dict[str, object] = {
     "vignette_color_lightness":     1.3,
     "vignette_color_blur":          1.0,
     "landscape_color_link":         "badge_follows_vignette",
+    # The band this layout was tuned with is the bottom's "high" (see
+    # landscape._BOTTOM_LEVELS), the RequestConfig default already; the top
+    # band is opt-in, and tinted like the bottom one when it is turned on.
+    "top_gradient":                 "off",
+    "vignette_poster_color_top":    True,
     "landscape_art":                "textless",
     "landscape_badge_pos":          "top_left",
 }
@@ -2243,15 +2263,42 @@ _LANDSCAPE_SPLIT_PARAMS: tuple[str, ...] = (
 )
 
 
+# Kept per shape like the above, but a landscape render reads only the
+# landscape_<name> form and never falls back to <name>.  These vignette levels
+# were portrait-only until landscape mirrored them, so every landscape URL
+# written before carries the portrait's values (top_gradient=medium, ...) under
+# the plain names — read as landscape ones, they would redraw those posters.
+_LANDSCAPE_OWN_PARAMS: tuple[str, ...] = (
+    "top_gradient",
+    "top_gradient_opacity",
+    "top_gradient_height",
+    "bottom_gradient",
+    "bottom_gradient_opacity",
+    "bottom_gradient_height",
+    "top_vignette_sash_only",
+    "vignette_poster_color_top",
+)
+
+
 def _landscape_view(params: dict) -> dict:
     """*params* as a landscape render reads them: each landscape_<name> in
-    _LANDSCAPE_SPLIT_PARAMS stands in for <name>."""
-    overrides = {
-        name: params[f"landscape_{name}"]
-        for name in _LANDSCAPE_SPLIT_PARAMS
-        if f"landscape_{name}" in params
-    }
-    return {**params, **overrides} if overrides else params
+    _LANDSCAPE_SPLIT_PARAMS stands in for <name>, and each <name> in
+    _LANDSCAPE_OWN_PARAMS is read from landscape_<name> alone."""
+    out = {k: v for k, v in params.items() if k not in _LANDSCAPE_OWN_PARAMS}
+    # The legacy vignette_poster_color seeds the top band too (see
+    # build_request_config), which landscape never read it for.
+    if "vignette_poster_color" in out:
+        out["vignette_poster_color_top"] = str(_LANDSCAPE_DEFAULTS["vignette_poster_color_top"]).lower()
+    # landscape_vignette_top=true, from before landscape had levels: the
+    # tinted top band it drew is the "high" level.
+    if (_parse_bool(params.get("landscape_vignette_top"), False)
+            and "landscape_top_gradient" not in params):
+        out["top_gradient"] = "high"
+        out["vignette_poster_color_top"] = "true"
+    for name in (*_LANDSCAPE_SPLIT_PARAMS, *_LANDSCAPE_OWN_PARAMS):
+        if f"landscape_{name}" in params:
+            out[name] = params[f"landscape_{name}"]
+    return out
 
 
 def _unreleased_for_rating(status: str | None, media_type: str, tmdb_data: dict) -> bool:
@@ -2535,6 +2582,19 @@ def _render_config_signature(cfg: "RequestConfig") -> str:
     return json.dumps(fields, sort_keys=True, default=_stable)
 
 
+# The landscape Badge Settings (RequestConfig.landscape_badge_*): each one's
+# accepted range.  A little wider than the configurator's sliders, as elsewhere.
+_LANDSCAPE_BADGE_TUNING: dict[str, tuple[float, float]] = {
+    "landscape_badge_width":         (0.5, 2.0),
+    "landscape_badge_height":        (0.5, 2.0),
+    "landscape_badge_font":          (0.5, 1.5),
+    "landscape_badge_glass_opacity": (0.0, 1.0),
+    "landscape_badge_opacity":       (0.0, 1.0),
+    "landscape_badge_saturation":    (0.0, 2.0),
+    "landscape_badge_x":             (-0.05, 0.30),
+    "landscape_badge_y":             (-0.07, 0.30),
+}
+
 _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_badge_scale": "native",
                               "rating_badge_style": "color",
                               "cinema_greyscale_without_sash": False, "trending_style": "sash",
@@ -2544,7 +2604,7 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "trending_side": "left", "trending_sash": "keep",
                               "trending_align": "center",
                               "sash_badge_opacity": None,
-                              "landscape_logo_pos": "left", "landscape_vignette_top": False,
+                              "landscape_logo_pos": "left",
                               "landscape_graphic_badges": False, "landscape_info_pos": "auto",
                               "rating_badge_kinds": "", "rating_badge_max": 0,
                               "sash_chip_x": 0.0, "sash_edge_y": 0.5, "meta_order": "",
@@ -2556,7 +2616,9 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "badge_quality_style": graphic_badges.DEFAULT_QUALITY_STYLE,
                               "badge_logo_scale": graphic_badges.LOGO_SCALE_DEFAULT,
                               "badge_legacy_style": graphic_badges.DEFAULT_LEGACY_STYLE,
-                              "landscape_poster_crop": False}
+                              "landscape_poster_crop": False,
+                              **{name: RequestConfig.__dataclass_fields__[name].default
+                                 for name in _LANDSCAPE_BADGE_TUNING}}
 
 
 def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
@@ -2747,7 +2809,6 @@ def build_request_config(params: dict) -> RequestConfig:
     _ls_logo = (params.get("landscape_logo_pos") or "").strip().lower()
     if _ls_logo in ("left", "right", "center", "top_left", "top_center", "top_right"):
         cfg.landscape_logo_pos = _ls_logo
-    cfg.landscape_vignette_top = _b("landscape_vignette_top", cfg.landscape_vignette_top)
     _ls_info = (params.get("landscape_info_pos") or "").strip().lower()
     if _ls_info in ("bottom_left", "bottom_center", "bottom_right", "top_left", "top_center", "top_right"):
         cfg.landscape_info_pos = _ls_info
@@ -2767,6 +2828,8 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.landscape_badge_text_color = _parse_hex_color(params.get("landscape_badge_text_color"))
     cfg.landscape_winner_star     = _b("landscape_winner_star",     cfg.landscape_winner_star)
     cfg.landscape_logo_scale      = _f("landscape_logo_scale",      cfg.landscape_logo_scale, 0.5, 1.5)
+    for _name, (_lo, _hi) in _LANDSCAPE_BADGE_TUNING.items():
+        setattr(cfg, _name, _f(_name, getattr(cfg, _name), _lo, _hi))
     cfg.landscape_rating_badges   = _b("landscape_rating_badges",   cfg.landscape_rating_badges)
 
     cfg.sash_badge              = _b("sash_badge",              cfg.sash_badge)
@@ -7391,8 +7454,10 @@ async def server_caps(request: Request, access_key: str = ""):
         "param_defaults":        _render_param_defaults(),
         "param_defaults_landscape": _render_param_defaults("landscape"),
         "never_omitted_params":  sorted(_NEVER_OMITTED_PARAMS),
-        # Which settings also take a landscape_-prefixed per-shape value.
-        "landscape_split_params": list(_LANDSCAPE_SPLIT_PARAMS),
+        # Which settings also take a landscape_-prefixed per-shape value, and
+        # which of those a landscape render never reads from the plain name.
+        "landscape_split_params": [*_LANDSCAPE_SPLIT_PARAMS, *_LANDSCAPE_OWN_PARAMS],
+        "landscape_own_params":   list(_LANDSCAPE_OWN_PARAMS),
         "sash_priority_default": list(_cfg.SASH_PRIORITY),
         "sash_priority_diff_seed": _SASH_DIFF_SEED,
         "imdb_dataset_enabled":  imdb_dataset.is_enabled(),
