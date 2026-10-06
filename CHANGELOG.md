@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Anime Provider Source
+
+- New **Anime Provider Source** under Artwork (`anime_provider_art`), for
+  titles requested by an AniList, Kitsu or MAL id. **As Requested** (default)
+  keeps that provider's cover. **Kitsu** or **AniList** swaps in the other
+  provider's cover. **TMDB**, **Fanart** and **TVDB** draw the matching TMDB
+  title's art under the usual rules (textless pick, logo on top, operator
+  artwork overrides). The provider still supplies the title, genres, dates and
+  score. The title has to be in the anime id mapping database, or the request
+  has to carry a TMDB id; otherwise the requested provider's cover is used.
+  Portrait only, since landscape already uses TMDB backdrops.
+
 ### Landscape: centred info line
 
 - New **Centre info line** switch in the landscape Info Line group

@@ -1991,6 +1991,14 @@ class RequestConfig:
     poster_source_movie: str = "tmdb"
     poster_source_tv:    str = "tmdb"
     poster_source_anime: str = "tmdb"
+    # The poster for a title requested by an anime id (AniList, Kitsu, MAL):
+    #   "provider" (default) the requested provider's own cover;
+    #   "kitsu" / "anilist"  that provider's cover, through the id mapping;
+    #   "tmdb" / "fanart" / "tvdb"  the TMDB title's art, with that source's
+    #       usual rules (fanart/tvdb as offered, as for poster_source).
+    # The id needs a counterpart (the mapping, or the TMDB id the client
+    # sent or anime_resolve found); without one the provider's cover stays.
+    anime_provider_art: str = "provider"
     # "top" (default) or "random": one of the source's top five candidates,
     # re-rolled each time the poster renders.  Needs RANDOM_POSTERS.
     poster_pick: str = "top"
@@ -2620,6 +2628,7 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "badge_logo_scale": graphic_badges.LOGO_SCALE_DEFAULT,
                               "badge_legacy_style": graphic_badges.DEFAULT_LEGACY_STYLE,
                               "landscape_poster_crop": False,
+                              "anime_provider_art": "provider",
                               **{name: RequestConfig.__dataclass_fields__[name].default
                                  for name in _LANDSCAPE_BADGE_TUNING}}
 
@@ -2637,6 +2646,12 @@ def _scale_render_cfg(cfg: "RequestConfig") -> "RequestConfig":
         badge_gap=round(cfg.badge_gap * k),
         score_glow_blur=round(cfg.score_glow_blur * k),
     )
+
+
+# The TMDB metadata keys a poster pick reads, beyond the poster and backdrop
+# paths: what an anime-id request swaps in to draw TMDB's art.
+_TMDB_POSTER_ART_KEYS = ("text_backdrop_path", "alt_poster_path", "original_poster_path",
+                         "poster_langs", "poster_pools")
 
 
 # Art sources picked per media type: RequestConfig carries <name>_movie,
@@ -3050,12 +3065,18 @@ def build_request_config(params: dict) -> RequestConfig:
         cfg.original_art_source = _oas
     _parse_per_type_source(cfg, params, "poster_source",
                            _offered_art_sources(cinemeta_has_art=cfg.use_original_art))
+    _apa = (params.get("anime_provider_art") or "").strip().lower()
+    if _apa in anime.NAMESPACES or (
+            _apa in ("tmdb", "fanart", "tvdb")
+            and _offered_art_sources(cinemeta_has_art=False).get(_apa)):
+        cfg.anime_provider_art = _apa
     # Likewise "top" while the operator hasn't allowed random picks.  Landscape
     # draws from backdrops, which neither setting touches.
     if (params.get("poster_pick") or "").strip().lower() == "random" and _cfg.RANDOM_POSTERS:
         cfg.poster_pick = "random"
     if cfg.shape == "landscape":
         cfg.poster_source_movie = cfg.poster_source_tv = cfg.poster_source_anime = "tmdb"
+        cfg.anime_provider_art = "provider"
         cfg.poster_pick = "top"
         _parse_per_type_source(
             cfg, params, "landscape_art_source",
@@ -7486,6 +7507,8 @@ async def server_caps(request: Request, access_key: str = ""):
         "tvdb_posters":          tvdb.poster_source_enabled(),
         "cinemeta_posters":      bool(_cfg.CINEMETA_ENABLED),
         "random_posters":        bool(_cfg.RANDOM_POSTERS),
+        # Requests by AniList/Kitsu/MAL id, for Anime Provider Source.
+        "anime_sources":         bool(_cfg.ANIME_SOURCES_ENABLED),
         # The preview's "edit this title's artwork" shortcut into the dashboard.
         # Off unless the operator turns it on: on a public instance it would
         # only point visitors at a login they can't pass.
@@ -9608,6 +9631,11 @@ async def get_poster(
             [s for s in rcfg.sash_priority if s != "foreign"] + ["foreign"]
         )
 
+    # Anime Provider Source only touches titles requested by an anime id; on
+    # any other request it is the default, so those share one composite.
+    if not is_anime:
+        rcfg.anime_provider_art = "provider"
+
     # Operator force-refresh: ?nocache=1 skips the composite cache READ so a fresh
     # render is produced (and re-cached), letting an operator invalidate a single
     # title without flushing the whole cache.  Only honoured when an ACCESS_KEY is
@@ -10091,6 +10119,40 @@ async def get_poster(
                 # and the quality lookup go by, as for a mapped title.
                 if not tmdb_data.get("imdb_id") and _logo_meta[7].get("imdb_id"):
                     tmdb_data = {**tmdb_data, "imdb_id": _logo_meta[7]["imdb_id"]}
+            # The user's choice of poster for a title requested by an anime id
+            # (anime_provider_art; the parser keeps landscape on "provider",
+            # which draws TMDB's backdrops already).  Without a counterpart in
+            # the mapping the requested provider's cover stays.
+            _apa = rcfg.anime_provider_art
+            if (using_anime_art and _apa in ("tmdb", "fanart", "tvdb")
+                    and _logo_meta is not None and (_logo_meta[5] or _logo_meta[6])):
+                # TMDB's art under the ordinary rules from here on (textless
+                # pick, backdrop rescue, text scan, operator overrides, and
+                # the fanart/TVDB source below); the provider stays the
+                # metadata spine: title, genres, dates, score.
+                is_textless, poster_path, backdrop_path = (
+                    _logo_meta[1], _logo_meta[5], _logo_meta[6])
+                tmdb_data = {**tmdb_data,
+                             **{k: _logo_meta[7].get(k) for k in _TMDB_POSTER_ART_KEYS}}
+                using_anime_art = False
+                logger.info(f"{anime_key}: TMDB art for {tmdb_id} (anime_provider_art={_apa})")
+            elif using_anime_art and _apa in anime.NAMESPACES and _apa != anime_namespace:
+                if _apa == "kitsu":
+                    _other_id = anime_ids.kitsu_for_anilist(anime_id)
+                else:
+                    # Kitsu folds some entries AniList keeps apart; only an
+                    # unambiguous pair is taken.
+                    _candidates = anime_ids.anilist_for_kitsu(anime_id)
+                    _other_id = _candidates[0] if len(_candidates) == 1 else None
+                _other = (await anime.fetch_anime_metadata(client, _apa, _other_id)
+                          if _other_id is not None else None)
+                if _other is not None and _other[5]:
+                    poster_path = _other[5]
+                    logger.info(f"{anime_key}: {_apa} cover from {_apa}:{_other_id}")
+                elif _other_id is not None and not anime.known_miss(_apa, _other_id):
+                    # Throttled or unreachable: the requested provider's cover
+                    # for now, on a provisional render that asks again soon.
+                    _anime_art_missing = True
         elif use_cinemeta:
             # Cinemeta is the spine: art, title, genres, dates and status all
             # come from its one document, shaped like a TMDB title with no
@@ -10303,6 +10365,10 @@ async def get_poster(
         # Japanese-language original.
         _is_anime_title = is_anime or (16 in genre_ids and _original_lang == "ja")
         _poster_source = _source_for(rcfg, "poster_source", type, _is_anime_title)
+        if is_anime and rcfg.anime_provider_art in ("tmdb", "fanart", "tvdb"):
+            # A title requested by an anime id on TMDB art (by choice, or as
+            # the provider's fallback) takes the source picked for those.
+            _poster_source = rcfg.anime_provider_art
         _fanart_wanted = _poster_source == "fanart"
         if (_fanart_wanted and not using_anime_art
                 and not use_cinemeta):

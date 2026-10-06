@@ -648,6 +648,14 @@ def poster_cache_key(namespace: str, anime_id: int, url: str) -> str:
     return f"anime_{namespace}_{anime_id}_{digest}"
 
 
+def known_miss(namespace: str, anime_id: int) -> bool:
+    """True when the provider is known to have no entry for *anime_id* (the
+    negative cache), as against a ``fetch_anime_metadata`` None that was a
+    throttle or an outage and is worth asking again soon."""
+    cached = get_cached_tvdb_json(_cache_key(namespace, anime_id))
+    return bool(cached and cached.get("__miss__"))
+
+
 def empty_metadata(namespace: str) -> tuple:
     """The "provider has nothing for this id" metadata tuple.
 

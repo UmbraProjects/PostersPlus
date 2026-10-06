@@ -3254,12 +3254,23 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </select>
             </div>
             <div class="field portrait-only poster-source-field" hidden>
-              <label class="field-label" data-tip="Where anime posters come from: Japanese animation, or a title requested by an AniList, Kitsu or MAL id when that provider has no art. Fanart art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. TVDB posters with no language are textless; with Original Art on, TVDB gives a poster in your logo language. Cinemeta is the poster Stremio shows by default: the official English poster with the title on it, so it's offered with Original art only. Titles the source has nothing for keep their TMDB poster.">Anime Source</label>
+              <label class="field-label" data-tip="Where anime posters come from: Japanese animation, or a title requested by an AniList, Kitsu or MAL id when that provider has no art (unless Anime Provider Source picks TMDB, Fanart or TVDB, which then wins). Fanart art is community-uploaded, so it's often different from TMDB's: textless posters normally, or posters in your logo language with Original Art on. TVDB posters with no language are textless; with Original Art on, TVDB gives a poster in your logo language. Cinemeta is the poster Stremio shows by default: the official English poster with the title on it, so it's offered with Original art only. Titles the source has nothing for keep their TMDB poster.">Anime Source</label>
               <select id="cfg-poster-source-anime" onchange="build(); queuePreviewReload()">
                 <option value="tmdb" selected>TMDB</option>
                 <option value="fanart">Fanart</option>
                 <option value="tvdb">TVDB</option>
                 <option value="cinemeta">Cinemeta</option>
+              </select>
+            </div>
+            <div class="field portrait-only" id="anime-provider-art-field" hidden>
+              <label class="field-label" data-tip="The poster for a title your addon asks for by an AniList, Kitsu or MAL id (most anime catalogs). As Requested keeps that provider's own cover, title and all. Kitsu or AniList swaps in the other provider's cover. TMDB, Fanart and TVDB use the matching TMDB title's art like any other title, with your logo on top; Fanart and TVDB fall back to TMDB where they have nothing. Needs the title in the anime id mapping database (or a TMDB id sent with the request); if it isn't, the requested provider's cover is used.">Anime Provider Source</label>
+              <select id="cfg-anime-provider-art" onchange="build(); queuePreviewReload()">
+                <option value="provider" selected>As Requested</option>
+                <option value="kitsu">Kitsu</option>
+                <option value="anilist">AniList</option>
+                <option value="tmdb">TMDB</option>
+                <option value="fanart">Fanart</option>
+                <option value="tvdb">TVDB</option>
               </select>
             </div>
             <div class="field portrait-only" id="poster-pick-field" hidden>
@@ -6885,6 +6896,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       if (src && src !== 'tmdb') params.set(`poster_source_${kind}`, src);
     }
     if (serverCaps.random_posters && vEl('cfg-poster-pick') !== 'top') params.set('poster_pick', vEl('cfg-poster-pick'));
+    const _apa = vEl('cfg-anime-provider-art');
+    if (serverCaps.anime_sources && _apa && _apa !== 'provider') params.set('anime_provider_art', _apa);
   }
   params.set('logo_language',         logoLanguage);
   params.set('logo_priority',         vEl('cfg-logo-priority') || 'native_original');
@@ -8146,6 +8159,7 @@ function updateArtSourceOptions() {
     };
     for (const id of g.ids) {
       const sel = document.getElementById(id);
+      if (!sel) continue;
       for (const opt of sel.options) opt.hidden = !offered[opt.value];
       if (sel.selectedOptions[0] && sel.selectedOptions[0].hidden) {
         sel.value = 'tmdb';
@@ -8155,6 +8169,18 @@ function updateArtSourceOptions() {
     const any = Object.entries(offered).some(([s, on]) => on && s !== 'tmdb');
     for (const f of document.querySelectorAll(g.field)) f.hidden = !any;
   }
+  // Anime Provider Source: Fanart and TVDB as the instance offers them;
+  // the anime providers and TMDB always.
+  const apa = document.getElementById('cfg-anime-provider-art');
+  for (const opt of apa.options) {
+    opt.hidden = (opt.value === 'fanart' && !serverCaps.fanart_posters)
+              || (opt.value === 'tvdb' && !serverCaps.tvdb_posters);
+  }
+  if (apa.selectedOptions[0] && apa.selectedOptions[0].hidden) {
+    apa.value = 'provider';
+    reset = true;
+  }
+  document.getElementById('anime-provider-art-field').hidden = !serverCaps.anime_sources;
   return reset;
 }
 
@@ -9887,6 +9913,11 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('use_original_art'))   _setEl('cfg-art', ['true', '1'].includes(p.get('use_original_art')) ? 'original' : 'textless');
   if (p.has('original_art_source')) _setEl('cfg-original-art-source', p.get('original_art_source'));
   _restorePerTypeSource(p, 'poster_source', 'cfg-poster-source');
+  {
+    const apa = document.getElementById('cfg-anime-provider-art');
+    const v = p.get('anime_provider_art') || 'provider';
+    apa.value = [...apa.options].some(o => o.value === v) ? v : 'provider';
+  }
   // The call above ran before the art mode and sources were restored:
   // repaint the mode's fields and refilter the sources for it.
   updateOriginalArt();
