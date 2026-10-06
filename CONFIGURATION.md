@@ -124,6 +124,13 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `TRENDING_HIDE_GENRES` | - | Leave titles of these genres off the trending lists, the trending sashes' ranks and the trending catalogs alike. The remaining titles are ranked 1, 2, 3 without gaps, so catalog rows and the rank on every poster still agree. TV's merged genres count as both halves: Sci-Fi & Fantasy is Sci-Fi and Fantasy, Action & Adventure is Action and Adventure. Takes effect at the next trending refresh. Comma-separated, any of `Action`, `Adventure`, `Animation`, `Comedy`, `Crime`, `Documentary`, `Drama`, `Family`, `Fantasy`, `History`, `Horror`, `Kids`, `Music`, `Mystery`, `News`, `Reality`, `Rom-Com`, `Romance`, `Sci-Fi`, `Soap`, `Talk`, `Thriller`, `War`, `Western`. |
 | `TRENDING_HIDE_MIXED_GENRES` | `true` | On: any title with a hidden genre is left off, so hiding Romance also hides a Comedy + Romance film. Off: only titles whose genres are all hidden ones are, so that film stays. Hiding Rom-Com covers titles that are both Comedy and Romance. `true` or `false`. |
 
+#### Sashes
+
+| Variable | Default | Description |
+|---|---|---|
+| `BLOCKBUSTER_TOP_N` | `10` | A film gets the Blockbuster sash when it is among this many highest-grossing films of its release year (TMDB worldwide revenue). |
+| `BLOCKBUSTER_MIN_REVENUE` | `100000000` | A film must also have grossed at least this much in today's dollars (adjusted for US inflation to its release year: $100M is about $17M for 1975), so an early year TMDB has little box-office data for doesn't hand the sash to a small film. 0 turns the floor off. |
+
 #### Watchlist
 
 | Variable | Default | Description |

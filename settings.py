@@ -85,6 +85,7 @@ GROUP_ORDER = (
     "Quality source",
     "Output",
     "Trending",
+    "Sashes",
     "Watchlist",
     "Poster reports",
     "Ratings",

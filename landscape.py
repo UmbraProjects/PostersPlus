@@ -848,7 +848,8 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
                      order: str = "",
                      rating_items: list[tuple[str, float]] | None = None,
                      badge_scale: str = "native",
-                     badge_style: str = "color") -> tuple[int, int, int, int] | None:
+                     badge_style: str = "color",
+                     snug: bool = False) -> tuple[int, int, int, int] | None:
     """`Genre • Year • 87`, right-aligned on the shared baseline.
 
     ``order`` (meta_order) rearranges the three, "year,genre,rating" and so on.
@@ -886,6 +887,10 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
     ``badge_style`` (rating_badges.rating_run); the ★ goes, as the badges
     stand in for it.  Short of room they drop from the end, after the genre
     and the year, keeping the first.
+
+    ``snug`` (landscape_info_center) keeps a centred line on the canvas's
+    centre, moved only as far as ``bounds`` make it, rather than into the
+    middle of them.
     """
     width, height = image.size
     scale = max(0.1, float(scale or 1.0))
@@ -997,7 +1002,10 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
     elif align == "center":
         x = (width + total(parts)) / 2
         if bounds is not None and (x > bounds[1] or x - total(parts) < bounds[0]):
-            x = (bounds[0] + bounds[1] + total(parts)) / 2
+            if snug:
+                x = min(max(x, bounds[0] + total(parts)), bounds[1])
+            else:
+                x = (bounds[0] + bounds[1] + total(parts)) / 2
     else:
         x = width - int(width * _RIGHT_PAD)
     x_right = x
@@ -1211,6 +1219,17 @@ def _build_landscape(
         info_col = align if logo_row == "top" else {"left": "right", "right": "left"}.get(align, "center")
     else:
         info_row, info_col = info_pos.split("_")
+    # Centre (landscape_info_center): the line centred on the poster in its
+    # row, as a portrait's Minimalist "Centre under logo" centres it under the
+    # logo there.  Placement's Centre moves it into the middle of the room
+    # beside a side logo instead, and a landscape logo nearly always reaches
+    # the middle.  Sharing the bottom row with a side logo, the line keeps the
+    # centre and the logo, if the two would meet, stands above the line's row
+    # as a centred logo does; in the top row the line is pushed aside from the
+    # logo only as far as it has to be.
+    info_center = getattr(cfg, "landscape_info_center", False)
+    if info_center:
+        info_col = "center"
     stacked = (info_row, info_col) == (logo_row, align)
     top_row = logo_row == "top"
     edge_gap = width * 0.03
@@ -1228,7 +1247,7 @@ def _build_landscape(
             scale=getattr(cfg, "landscape_info_scale", 1.0),
             out_of_10=getattr(cfg, "landscape_score_out_of_10", False),
             star=getattr(cfg, "landscape_score_star", False),
-            align=info_col, order=getattr(cfg, "meta_order", ""),
+            align=info_col, order=getattr(cfg, "meta_order", ""), snug=info_center,
             rating_items=rating_items, badge_scale=getattr(cfg, "rating_badge_scale", "native"),
             badge_style=getattr(cfg, "rating_badge_style", "color"), **where)
 
@@ -1250,15 +1269,34 @@ def _build_landscape(
         info_box = _strip(bounds=full)
         if info_box:
             logo_baseline = info_box[1] - int(height * _STACK_GAP)
-    logo_height, logo_left, logo_right = 0, None, None
-    if logo is not None:
-        logo_height, logo_left, logo_right = _draw_logo(image, logo, align, logo_baseline, logo_top,
-                                                        logo_scale)
-    elif fallback_title:
-        # Height comes back for the same reason it does from the logo: a
-        # badge stacked above needs something to clear.
-        logo_height, logo_left, logo_right = _draw_title(image, fallback_title, align,
-                                                         logo_baseline, logo_top, logo_scale)
+
+    def _draw_logo_slot(target, baseline):
+        if logo is not None:
+            return _draw_logo(target, logo, align, baseline, logo_top, logo_scale)
+        if fallback_title:
+            # Height comes back for the same reason it does from the logo: a
+            # badge stacked above needs something to clear.
+            return _draw_title(target, fallback_title, align, baseline, logo_top, logo_scale)
+        return 0, None, None
+
+    # A centred line in a side logo's row is drawn first, on the centre, and
+    # the logo tried beside it on a copy: only a logo that would meet it is
+    # drawn again, standing above it.
+    centre_beside_logo = (info_center and not stacked and info_row == "bottom"
+                          and logo_row == "bottom" and (logo is not None or bool(fallback_title)))
+    if centre_beside_logo:
+        info_box = _strip(bounds=full)
+    if centre_beside_logo and info_box:
+        trial = image.copy()
+        logo_height, logo_left, logo_right = _draw_logo_slot(trial, logo_baseline)
+        if logo_height and (logo_right + edge_gap > info_box[0] if align == "left"
+                            else logo_left - edge_gap < info_box[2]):
+            logo_baseline = info_box[1] - int(height * _STACK_GAP)
+            logo_height, logo_left, logo_right = _draw_logo_slot(image, logo_baseline)
+        else:
+            image = trial
+    else:
+        logo_height, logo_left, logo_right = _draw_logo_slot(image, logo_baseline)
     logo_box = None
     if logo_height and top_row:
         logo_box = (logo_left, logo_top, logo_right, logo_top + logo_height)
@@ -1269,7 +1307,7 @@ def _build_landscape(
     if stacked and top_row:
         info_box = _strip(bounds=full, top=(logo_box[3] if logo_box else logo_top)
                           + (int(height * _STACK_GAP) if logo_box else 0))
-    elif not stacked:
+    elif not stacked and not centre_beside_logo:
         where = {"top": int(height * _BADGE_TOP)} if info_row == "top" else {}
         if info_row != logo_row:
             info_box = _strip(bounds=full, **where)

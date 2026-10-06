@@ -360,6 +360,13 @@ TRENDING_FETCH_TIMEZONE      = _env('TRENDING_FETCH_TIMEZONE', "UTC", group='Tre
 TRENDING_FETCH_COUNT         = int(_env('TRENDING_FETCH_COUNT', "40", group='Trending', kind='int', label='Trending count', help='Ranks 1 to this number get the Trending sash.', min=1, max=500))
 TRENDING_BROAD_FETCH_COUNT   = int(_env('TRENDING_BROAD_FETCH_COUNT', "100", group='Trending', kind='int', label='Broad trending count', help='Lower-ranked trending titles, from the trending count up to this rank, qualify for the lower-priority Trending (Broad) sash.', min=1, max=1000))
 
+# Blockbuster sash: a film among the top-grossing of its release year, by
+# TMDB's worldwide revenue (see box_office.py).  Ranking within the year rather
+# than against a flat figure keeps Jaws in and a mid-table 2020s sequel out; the
+# floor stops a thinly-recorded early year from crowning a $2M film.
+BLOCKBUSTER_TOP_N            = int(_env('BLOCKBUSTER_TOP_N', "10", group='Sashes', kind='int', label='Blockbuster: top N of its year', help="A film gets the Blockbuster sash when it is among this many highest-grossing films of its release year (TMDB worldwide revenue).", min=1, max=20))
+BLOCKBUSTER_MIN_REVENUE      = int(_env('BLOCKBUSTER_MIN_REVENUE', "100000000", group='Sashes', kind='int', label='Blockbuster: minimum gross (USD)', help="A film must also have grossed at least this much in today's dollars (adjusted for US inflation to its release year: $100M is about $17M for 1975), so an early year TMDB has little box-office data for doesn't hand the sash to a small film. 0 turns the floor off.", min=0, max=10000000000))
+
 # Where "trending" comes from.  Unset (the default) means TMDB's own global
 # trending endpoint, which is US-weighted and not configurable.  Point these at a
 # URL instead and that list becomes the trending set for its media type — both
@@ -1097,6 +1104,7 @@ SASH_PRIORITY: list[str] = [
     "director",
     "cast",
     # Static flavour — always true, never urgent.
+    "blockbuster",
     "cult",
     "foreign",
     "true_story",

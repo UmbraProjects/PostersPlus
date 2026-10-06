@@ -912,6 +912,7 @@ import anime_resolve
 import anime_search
 import anime_season
 import watchlist
+import box_office
 import admin as _admin
 from imdb_dataset import imdb_dataset_refresh_loop
 import config as _cfg
@@ -2104,6 +2105,7 @@ class RequestConfig:
     landscape_info_scale: float = 1.0   # size of the landscape "Genre • Year • Score" line
     landscape_score_out_of_10: bool = False   # "8.7" rather than "87" on that line
     landscape_score_star: bool = False        # "★ 87" as Clean labels it, in place of "• 87"
+    landscape_info_center: bool = False       # that line centred on the poster, in its row
     # Portrait settings brought to landscape.  Each is a landscape setting of
     # its own, off (or as it was) by default, so a "{shape}" URL's landscape
     # side is unchanged until it asks:
@@ -2613,6 +2615,7 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "landscape_greyscale": False, "landscape_badge_style": "glass",
                               "landscape_badge_text_color": None, "landscape_winner_star": False,
                               "landscape_logo_scale": 1.0, "landscape_rating_badges": False,
+                              "landscape_info_center": False,
                               "badge_quality_style": graphic_badges.DEFAULT_QUALITY_STYLE,
                               "badge_logo_scale": graphic_badges.LOGO_SCALE_DEFAULT,
                               "badge_legacy_style": graphic_badges.DEFAULT_LEGACY_STYLE,
@@ -2821,6 +2824,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.landscape_info_scale  = _f("landscape_info_scale",  cfg.landscape_info_scale,  0.5, 2.0)
     cfg.landscape_score_out_of_10 = _b("landscape_score_out_of_10", cfg.landscape_score_out_of_10)
     cfg.landscape_score_star      = _b("landscape_score_star",      cfg.landscape_score_star)
+    cfg.landscape_info_center     = _b("landscape_info_center",     cfg.landscape_info_center)
     cfg.landscape_greyscale       = _b("landscape_greyscale",       cfg.landscape_greyscale)
     _ls_style = (params.get("landscape_badge_style") or "").strip().lower()
     if _ls_style in ("glass", "black", "silver", "gold"):
@@ -7928,6 +7932,7 @@ def _load_configurator_html() -> str:
         content = content.replace("{{TRENDING_FETCH_COUNT}}", str(_cfg.TRENDING_FETCH_COUNT))
         content = content.replace("{{TRENDING_FETCH_COUNT_PLUS_ONE}}", str(_cfg.TRENDING_FETCH_COUNT + 1))
         content = content.replace("{{TRENDING_BROAD_FETCH_COUNT}}", str(_cfg.TRENDING_BROAD_FETCH_COUNT))
+        content = content.replace("{{BLOCKBUSTER_TOP_N}}", str(_cfg.BLOCKBUSTER_TOP_N))
 
         _configurator_etag = '"' + hashlib.md5(content.encode("utf-8")).hexdigest()[:16] + '"'
         return content
@@ -11586,6 +11591,17 @@ async def get_poster(
                 tmdb_data.get("tmdb_status"),
             )
 
+        # One cached top-grossing list per release year (box_office.py), so
+        # this is a TMDB call only for the first film of a year.
+        _is_blockbuster: bool | None = False
+        # A hidden sash never shows it, so it isn't worth a call (or a
+        # provisional render when the call fails).
+        if (type not in ("tv", "series") and "blockbuster" in rcfg.sash_priority
+                and rcfg.sash_mode != "hidden" and has_tmdb_id and effective_tmdb_key):
+            _is_blockbuster = await box_office.is_blockbuster(
+                client, tmdb_id, tmdb_data.get("tmdb_release_date") or rel, effective_tmdb_key,
+            )
+
         # ------------------------------------------------------------------
         # Build DiscoveryMeta
         # ------------------------------------------------------------------
@@ -11608,6 +11624,7 @@ async def get_poster(
             upcoming_release_window=_upcoming_release_window,
             recent_digital_release_date=_recent_digital_release_date,
             is_watchlisted=watchlist.is_listed(effective_imdb_id or imdb_id, tmdb_id, type),
+            is_blockbuster=bool(_is_blockbuster),
         )
 
         _sash_priority = rcfg.sash_priority
@@ -11651,6 +11668,7 @@ async def get_poster(
                 "festival_label":    discovery_meta.festival_label,
                 "sash":              {"label": _sash_result[0], "type": _sash_result[1]} if _sash_result else None,
                 "trending_mark":     {"style": rcfg.trending_style, "rank": _rank_mark} if _rank_mark else None,
+                "is_blockbuster":    discovery_meta.is_blockbuster,
                 "is_cult":           discovery_meta.is_cult,
                 "is_true_story":     discovery_meta.is_true_story,
                 "is_metacritic":     discovery_meta.is_metacritic_must_see,
@@ -11919,6 +11937,8 @@ async def get_poster(
         #                            on trust (see _imdb_id_under_tmdb_checked).
         #   genres_unsettled       — a TV show's Horror couldn't be told
         #                            (Cinemeta unreachable; tmdb._tv_is_horror).
+        #   _is_blockbuster None   — the year's box-office list couldn't be had
+        #                            (box_office.py), so the sash may be missing.
         #
         # The same flag decides what the *client* is told: a render we won't
         # keep must not be handed an ETag either (see _apply_poster_cache_headers).
@@ -11928,6 +11948,7 @@ async def get_poster(
             or _rating_badges_missing or _anime_scores_pending
             or _imdb_link_unverified or _detection_timed_out
             or bool(tmdb_data.get("genres_unsettled"))
+            or _is_blockbuster is None
         )
         _composite_expires_at: int | None = None
         if final_cache_key is not None and (not _render_provisional or _cfg.PROVISIONAL_CACHE_TTL > 0):

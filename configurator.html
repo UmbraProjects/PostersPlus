@@ -2778,6 +2778,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
+              <div class="toggle-row" id="landscape-info-center-row">
+                <span class="toggle-label" data-tip="Centre the whole line, rating badges included, on the poster in its row, as Minimalist's Centre under logo does on a portrait. A side logo in the same row that would reach it stands above it, as a centred logo does.">Centre info line</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-landscape-info-center" onchange="updateLandscapeLogoFields(); build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
             </div>
             <div class="portrait-only">
             <span class="group-title">Mode</span>
@@ -4453,6 +4460,7 @@ const SASH_SLOTS = [
   { id:'director',       label:'Notable Director Name',             color:'#9060cc' },
   { id:'cast',           label:'Notable Cast Name',                 color:'#4ab87a' },
   // Static flavour — always true, never urgent.
+  { id:'blockbuster',    label:'Blockbuster (Top {{BLOCKBUSTER_TOP_N}} Grossing of Its Year)', color:'#5aaaff' },
   { id:'cult',           label:'Cult Classic',                      color:'#5aaaff' },
   { id:'foreign',        label:'Foreign Language',                  color:'#3ab0a8' },
   { id:'true_story',     label:'True Story',                        color:'#3ab0a8' },
@@ -5234,8 +5242,9 @@ function updateBadgeModeHint() {
 function updateLandscapeLogoFields() {
   const noLogo = c('tog-textless') || vEl('cfg-landscape-art') === 'original';
   document.getElementById('landscape-logo-pos-field').style.display = noLogo ? 'none' : '';
+  // Centre sets the line's column itself; the row still comes from above.
   document.getElementById('landscape-info-col-field').style.display =
-    vEl('cfg-landscape-info-row') === 'auto' ? 'none' : '';
+    (vEl('cfg-landscape-info-row') === 'auto' || c('tog-landscape-info-center')) ? 'none' : '';
 }
 
 function buildWeightSection(containerId, sources, defaults) {
@@ -6715,6 +6724,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     if (c('tog-landscape-poster-crop')) params.set('landscape_poster_crop', 'true');
     params.set('landscape_score_out_of_10', c('tog-landscape-score-10') ? 'true' : 'false');
     params.set('landscape_score_star', c('tog-landscape-score-star') ? 'true' : 'false');
+    if (c('tog-landscape-info-center')) params.set('landscape_info_center', 'true');
     // Portrait settings brought over; each left out at its default.
     if (c('tog-landscape-greyscale')) params.set('landscape_greyscale', 'true');
     const _lbStyle = vEl('cfg-landscape-badge-style') || 'glass';
@@ -9231,7 +9241,7 @@ function _buildPresetCard(grid, preset) {
 const _LANDSCAPE_ONLY_CONTROLS = ['cfg-landscape-art', ...LANDSCAPE_SOURCE_IDS, 'cfg-landscape-badge-pos',
                                   'cfg-landscape-badge-scale', 'cfg-landscape-info-scale',
                                   'cfg-landscape-color-link', 'tog-landscape-score-10',
-                                  'tog-landscape-score-star', 'cfg-landscape-logo-pos', 'cfg-landscape-logo-row',
+                                  'tog-landscape-score-star', 'tog-landscape-info-center', 'cfg-landscape-logo-pos', 'cfg-landscape-logo-row',
                                   'cfg-landscape-info-row', 'cfg-landscape-info-col',
                                   'tog-landscape-greyscale',
                                   'cfg-landscape-badge-style', 'cfg-landscape-badge-text-color',
@@ -9666,6 +9676,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     _setEl('cfg-landscape-info-scale', p.get('landscape_info_scale') || '1.00');
     _setEl('tog-landscape-score-10',   p.get('landscape_score_out_of_10') || 'false');
     _setEl('tog-landscape-score-star', p.get('landscape_score_star') || 'false');
+    _setEl('tog-landscape-info-center', p.get('landscape_info_center') || 'false');
     { const _llp = (p.get('landscape_logo_pos') || 'left').toLowerCase();
       _setEl('cfg-landscape-logo-row', _llp.startsWith('top_') ? 'top' : 'bottom');
       _setEl('cfg-landscape-logo-pos', ['left', 'center', 'right'].includes(_llp.replace('top_', '')) ? _llp.replace('top_', '') : 'left');

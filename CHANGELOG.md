@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Landscape: centred info line
+
+- New **Centre info line** switch in the landscape Info Line group
+  (`landscape_info_center=true`). It centres the whole `Genre • Year • Score`
+  line, rating badges included, on the poster, as Minimalist's Centre under
+  logo does on a portrait. A side logo in the bottom row that would meet it
+  stands above it instead; a narrower one keeps its place. Off by default.
+
+### Blockbuster sash
+
+- New `blockbuster` sash for a film among the ten highest-grossing films of
+  its release year (TMDB worldwide revenue) that grossed at least $100M in
+  today's money (adjusted for US inflation to its year, so about $17M for
+  1975). Ranking within the year keeps older hits like Jaws in, where a flat
+  figure would shut them out. It sits first in the static tier, just above Cult
+  Classic. The first film from each year costs one TMDB lookup of that year's
+  top grossers, cached and reused for every film from that year. Operators
+  can change the count and the floor with `BLOCKBUSTER_TOP_N` and
+  `BLOCKBUSTER_MIN_REVENUE`.
+- Saved URLs that list every sash explicitly keep their list, so the new sash
+  stays off for them until it's enabled in the configurator, as with any
+  newly added sash.
+
 ### Landscape vignette levels, as on a poster
 
 - The landscape poster's Vignette settings are now the portrait's: Top and

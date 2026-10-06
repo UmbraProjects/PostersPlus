@@ -20,6 +20,7 @@ returning    TV show with a fresh/upcoming non-premiere episode
 premiere     Show initial release within the last 14 days
 just_added   Movie with a fresh TMDB digital/TV release date
 season_finale Recently-ended TV final season
+blockbuster  Top-grossing film of its release year (box_office.py)
 cult         Cult Classic / Cult Film (MDblist keyword)
 foreign      Non-English original language film
 new_release  Legacy combined newly released signal
@@ -306,6 +307,7 @@ _SASH_TYPES: dict[str, str] = {
     "premiere":         "alert",     # red — show initial release date recency
     "just_added":       "alert",     # red — fresh movie digital/TV release
     "season_finale":    "alert",     # red — final-season/finale signal
+    "blockbuster":     "trending",  # blue — popularity signal, like cult
     "cult":            "trending",  # blue — popularity signal, closest to trending without a new colour
     "foreign":         "info",      # teal — informational / discovery
     "new_release":     "alert",     # red — legacy combined newly released signal
@@ -641,6 +643,9 @@ class DiscoveryMeta:
     is_returning: bool = False        # S2+ non-premiere fresh/upcoming
     is_season_finale: bool = False    # conservative final-season/finale heuristic
 
+    # Top-grossing film of its release year (box_office.py) — movies only
+    is_blockbuster: bool = False
+
     # Keyword-based discovery signals (from MDblist keywords)
     is_cult:              bool = False   # cult-classic or cult-film
     is_true_story:        bool = False   # based-on-true-story
@@ -690,6 +695,7 @@ def extract_discovery_meta(
     notable_cast:      dict[str, str] | None = None,
     language_labels:   dict[str, str] | None = None,
     is_watchlisted:    bool = False,
+    is_blockbuster:    bool = False,
 ) -> DiscoveryMeta:
     studios        = notable_studios   or NOTABLE_STUDIOS
     directors      = notable_directors or NOTABLE_DIRECTORS
@@ -701,6 +707,7 @@ def extract_discovery_meta(
         trending_rank=trending_rank,
         original_language=tmdb_data.get("original_language"),
         is_watchlisted=is_watchlisted,
+        is_blockbuster=is_blockbuster and media_type not in ("tv", "series"),
     )
 
     # Build keyword name set once — reused for festival detection and the
@@ -988,6 +995,9 @@ def _evaluate_slot(slot: str, meta: DiscoveryMeta) -> str | None:
     if slot == "metacritic":
         return "Must-See" if meta.is_metacritic_must_see else None
 
+    if slot == "blockbuster":
+        return "Blockbuster" if meta.is_blockbuster else None
+
     if slot == "cult":
         return "Cult Classic" if meta.is_cult else None
 
@@ -1055,6 +1065,7 @@ ALL_PRIORITY_SLOTS: list[str] = [
     "premiere",
     "just_added",
     "season_finale",
+    "blockbuster",
     "cult",
     "foreign",
     "new_release",
