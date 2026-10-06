@@ -10,7 +10,10 @@
   provider's cover. **TMDB**, **Fanart** and **TVDB** draw the matching TMDB
   title's art under the usual rules (textless pick, logo on top, operator
   artwork overrides). The provider still supplies the title, genres, dates and
-  score. The title has to be in the anime id mapping database, or the request
+  score. TMDB, Fanart and TVDB apply to films and a show's first season;
+  later seasons, parts and specials (Sword Art Online II, say) keep the
+  requested provider's cover, since TMDB lists them all under one show.
+  The title has to be in the anime id mapping database, or the request
   has to carry a TMDB id; otherwise the requested provider's cover is used.
   Portrait only, since landscape already uses TMDB backdrops.
 

@@ -9633,7 +9633,12 @@ async def get_poster(
 
     # Anime Provider Source only touches titles requested by an anime id; on
     # any other request it is the default, so those share one composite.
-    if not is_anime:
+    # TMDB, Fanart and TVDB skip a later season, cour or special too: it maps
+    # to its whole TMDB series, whose art is the first season's, so it keeps
+    # its own cover.
+    if not is_anime or (
+            rcfg.anime_provider_art in ("tmdb", "fanart", "tvdb") and type != "movie"
+            and not anime_ids.is_series_start(anime_namespace, anime_id)):
         rcfg.anime_provider_art = "provider"
 
     # Operator force-refresh: ?nocache=1 skips the composite cache READ so a fresh
@@ -10365,10 +10370,10 @@ async def get_poster(
         # Japanese-language original.
         _is_anime_title = is_anime or (16 in genre_ids and _original_lang == "ja")
         _poster_source = _source_for(rcfg, "poster_source", type, _is_anime_title)
-        if is_anime and rcfg.anime_provider_art in ("tmdb", "fanart", "tvdb"):
+        if is_anime and _apa in ("tmdb", "fanart", "tvdb"):
             # A title requested by an anime id on TMDB art (by choice, or as
             # the provider's fallback) takes the source picked for those.
-            _poster_source = rcfg.anime_provider_art
+            _poster_source = _apa
         _fanart_wanted = _poster_source == "fanart"
         if (_fanart_wanted and not using_anime_art
                 and not use_cinemeta):

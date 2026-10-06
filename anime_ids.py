@@ -223,6 +223,36 @@ def season_place(namespace: str, anime_id: int) -> SeasonPlace | None:
     return SeasonPlace(season, max(0, offset))
 
 
+def is_series_start(namespace: str, anime_id: int) -> bool:
+    """False when *namespace*:*anime_id* is a later season, cour or special
+    of its TMDB series, so the series' own art is not its art.  True for the
+    first season, a film, or an entry the list doesn't place in a series.
+    An entry with no season number is the start when it is the series'
+    lowest id on its site, as in reverse_lookup."""
+    if not is_enabled() or namespace not in _NAMESPACE_FIELDS:
+        return True
+    try:
+        db = _get_db()
+        row = db.execute(
+            "SELECT tmdb_tv, season, episode_offset FROM anime_id_map "
+            "WHERE namespace = ? AND anime_id = ?",
+            (namespace, int(anime_id)),
+        ).fetchone()
+        if row is None or row[0] is None:
+            return True
+        tmdb_tv, season, offset = row
+        if season is not None:
+            return season == 1 and (offset or 0) <= 0
+        first = db.execute(
+            "SELECT MIN(anime_id) FROM anime_id_map WHERE namespace = ? AND tmdb_tv = ?",
+            (namespace, tmdb_tv),
+        ).fetchone()
+    except Exception as exc:
+        logger.warning(f"Anime season lookup failed for {namespace}:{anime_id}: {exc}")
+        return True
+    return first is None or first[0] is None or int(first[0]) == int(anime_id)
+
+
 def mal_to_provider(mal_id: int) -> "tuple[str, int] | None":
     """The provider id to render a MyAnimeList id as: ("kitsu", 7442), or
     ("anilist", 16498) when the entry has no Kitsu id, or None when the list

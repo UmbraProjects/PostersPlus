@@ -3,7 +3,9 @@ import unittest
 from unittest import mock
 
 import anime
+import anime_ids
 import main
+from tests.test_anime_id_map import _TempTable
 
 
 def _cfg(**params):
@@ -44,8 +46,46 @@ class WiringTests(unittest.TestCase):
         from pathlib import Path
         src = Path("main.py").read_text(encoding="utf-8")
         reset = src.index('rcfg.anime_provider_art = "provider"')
-        self.assertLess(src.rindex("if not is_anime:", 0, reset), reset)
+        self.assertLess(src.rindex("if not is_anime or (", 0, reset), reset)
         self.assertLess(reset, src.index("_render_config_signature(rcfg)"))
+
+
+def _entry(kitsu, season=None, offset=None, tv=45782):
+    e = {"type": "TV", "kitsu_id": kitsu, "themoviedb_id": {"tv": tv}}
+    if season is not None:
+        e["season"] = {"tmdb": season}
+    if offset is not None:
+        e["episode_offset"] = {"tmdb": offset}
+    return e
+
+
+class SeriesStartTests(_TempTable):
+    """Only a show's first season takes the series' TMDB art: later seasons,
+    cours and specials keep their own cover (Sword Art Online)."""
+
+    def setUp(self):
+        super().setUp()
+        self._load([
+            _entry(6589, season=1), _entry(8174, season=2), _entry(7914, season=0, offset=9),
+            _entry(42213, season=4), _entry(42927, season=4, offset=12),
+            # No season in the list: the lowest id on the site is the start.
+            _entry(100, tv=999), _entry(200, tv=999),
+            {"type": "MOVIE", "kitsu_id": 11614, "themoviedb_id": {"movie": [5]}},
+        ])
+
+    def test_seasons(self):
+        for kitsu_id, start in ((6589, True), (8174, False), (7914, False),
+                                (42213, False), (42927, False),
+                                (100, True), (200, False), (11614, True), (1, True)):
+            with self.subTest(kitsu_id=kitsu_id):
+                self.assertEqual(anime_ids.is_series_start("kitsu", kitsu_id), start)
+
+    def test_wired_before_the_swap(self):
+        from pathlib import Path
+        src = Path("main.py").read_text(encoding="utf-8")
+        # Before the composite key, so a later season shares As Requested's.
+        check = src.index("anime_ids.is_series_start(anime_namespace, anime_id)")
+        self.assertLess(check, src.index("_render_config_signature(rcfg)"))
 
 
 class KnownMissTests(unittest.TestCase):
