@@ -1167,8 +1167,17 @@ def _canonical_rating_id(imdb_id: str, anime_key: str, tmdb_id: str) -> str:
     The "tmdb:" form can't collide with a bare TMDB id or a tt-prefixed IMDb id,
     and matches the namespacing the anime path already stores in these columns —
     so no migration is needed.
+
+    An anime request with a real TMDB id but no IMDb id takes the "tmdb:" form
+    too, so it shares MDBList's row with a plain TMDB-id request for the same
+    show; only one with neither falls back to the anime key.  (On the anime
+    path *tmdb_id* is the anime key itself when there is no TMDB id.)
     """
-    return imdb_id or anime_key or f"tmdb:{tmdb_id}"
+    if imdb_id:
+        return imdb_id
+    if tmdb_id and _TMDB_ID_RE.match(tmdb_id):
+        return f"tmdb:{tmdb_id}"
+    return anime_key or f"tmdb:{tmdb_id}"
 
 
 def _merge_imdb_dataset_rating(
@@ -1249,7 +1258,9 @@ def _anime_sources_wanted(rcfg: "RequestConfig", weight_sets) -> set[str]:
 
 
 async def _fill_anime_scores(client, ratings_dict, wanted, *, media_type: str,
-                             tmdb_id: str | None, imdb_id: str | None):
+                             tmdb_id: str | None, imdb_id: str | None,
+                             own: "tuple[str, int] | None" = None,
+                             later_season: bool = False):
     """Add the AniList and Kitsu scores *wanted* that *ratings_dict* lacks.
 
     MDBList carries only MyAnimeList for anime, and a request by anime id
@@ -1268,7 +1279,21 @@ async def _fill_anime_scores(client, ratings_dict, wanted, *, media_type: str,
     missing = [ns for ns in _ANIME_FILL_SOURCES if ns in wanted and ns not in ratings_dict]
     if not missing:
         return ratings_dict, False
-    ids = anime_ids.reverse_lookup(media_type, tmdb_id, imdb_id)
+    # An anime-id request (*own*) takes the other site's score from the same
+    # entry.  The TMDB / IMDb id names the whole show, whose lowest entry is
+    # the first season, so for a later season (*later_season*) that would put
+    # season 1's score on it; there only the entry's own sibling will do.
+    ids = {} if later_season else anime_ids.reverse_lookup(media_type, tmdb_id, imdb_id)
+    if own is not None:
+        ns, aid = own
+        if ns == "anilist":
+            sibling = anime_ids.kitsu_for_anilist(aid)
+        elif ns == "kitsu":
+            sibling = min(anime_ids.anilist_for_kitsu(aid), default=None)
+        else:
+            sibling = None
+        if sibling is not None:
+            ids = {**ids, ("kitsu" if ns == "anilist" else "anilist"): sibling}
     todo = [(ns, ids[ns]) for ns in missing if ns in ids]
     if not todo:
         return ratings_dict, False
@@ -9619,20 +9644,28 @@ async def get_poster(
         has_tmdb_id = _TMDB_ID_RE.match(tmdb_id) is not None
 
     canonical_id = _canonical_rating_id(imdb_id, anime_key, tmdb_id)
+    # A later season or cour asked for by its anime id: its TMDB and IMDb ids
+    # are the whole show's, so a MyAnimeList, AniList or Kitsu score reached
+    # through them is season 1's (see _fill_anime_scores).
+    _anime_later_season = is_anime and (
+        not anime_ids.is_series_start(anime_namespace, anime_id)
+        or anime_resolve.resolved_as_sequel(anime_namespace, anime_id, type))
 
     # The MDBList lookup route — what we ask upstream, as opposed to what we key
     # the cache on. MDBList serves the same record under /imdb/… and /tmdb/…, so
     # a title with no IMDb id still has ratings, awards, keywords and an age
     # rating available; it just has to be asked for by its TMDB id.
     #
-    # Anime is deliberately excluded from the TMDB route: those titles take their
-    # score, genre and age rating from the anime provider, and routing them to
-    # MDBList as well would start putting awards and festival sashes on a whole
-    # catalogue that has never had them. That is a rendering change to make on
-    # purpose, not a side effect of this one.
+    # Anime takes the TMDB route too.  It was once kept off it, to spare a
+    # catalogue that only ever showed the provider's score MDBList's awards
+    # and sashes; but mapped anime reach MDBList by IMDb id anyway, so all the
+    # exclusion still did was leave the TMDB-only ones (a new show, an
+    # AIOMetadata URL without imdb_id) with no IMDb/TMDB/RT scores while the
+    # same title by TMDB id had them.  The provider's own score is merged in
+    # either way.
     if imdb_id:
         rating_provider, rating_media_id = "imdb", imdb_id
-    elif has_tmdb_id and not is_anime:
+    elif has_tmdb_id:
         rating_provider, rating_media_id = "tmdb", tmdb_id
     else:
         rating_provider, rating_media_id = None, None
@@ -9801,6 +9834,11 @@ async def get_poster(
         # with it.  Without this, anime composites rendered with the text
         # title would outlive the key being added.
         _tmdb_sig = "|tmdb=0" if (not effective_tmdb_key and is_anime) else ""
+        # Later seasons stopped borrowing season 1's anime scores; the marker
+        # moves them off composites drawn with those.
+        _season_sig = "|as=1" if _anime_later_season else ""
+        # TMDB-only anime ask MDBList now; their composites drew without it.
+        _anime_tmdb_sig = "|amt=1" if (is_anime and has_tmdb_id and not imdb_id) else ""
         _params_hash = hashlib.sha256(
             (
                 _render_config_signature(rcfg)
@@ -9812,6 +9850,8 @@ async def get_poster(
                 + _spine_sig
                 + _mdb_sig
                 + _tmdb_sig
+                + _season_sig
+                + _anime_tmdb_sig
             ).encode()
         ).hexdigest()[:16]
         # The anime key has to be part of this: the same imdb/tmdb pair renders
@@ -10054,7 +10094,9 @@ async def get_poster(
             return ratings
         ratings, pending = await _fill_anime_scores(
             client, ratings, _anime_fill_wanted - ({anime_namespace} if is_anime else set()),
-            media_type=type, tmdb_id=tmdb_id if has_tmdb_id else None, imdb_id=effective_imdb_id)
+            media_type=type, tmdb_id=tmdb_id if has_tmdb_id else None, imdb_id=effective_imdb_id,
+            own=(anime_namespace, anime_id) if is_anime else None,
+            later_season=_anime_later_season)
         _anime_scores_pending = _anime_scores_pending or pending
         return ratings
 
@@ -11425,6 +11467,10 @@ async def get_poster(
             # that; dropping them on the way in cleans rows written before.
             ratings_dict = _mdblist_row_ratings(ratings_dict)
             _row_ratings, _row_age_rating = ratings_dict, age_rating
+            if _anime_later_season and isinstance(ratings_dict, dict):
+                # MDBList's MyAnimeList score is the show's first entry's.
+                # Dropped for this render only; the row is the show's.
+                ratings_dict = {k: v for k, v in ratings_dict.items() if k != "myanimelist"}
             if _tmdb_tv_spine and not rating_already_cached:
                 # MDBList answered just now, so its Horror verdict can settle a
                 # label worked out from the cached guess above.
@@ -12165,6 +12211,16 @@ async def get_poster(
                 _ttl_override = (
                     _TRENDING_UNREAD_TTL if _ttl_override is None
                     else min(_ttl_override, _TRENDING_UNREAD_TTL)
+                )
+            # An anime id nothing could take to TMDB yet (a release newer than
+            # the mapping and TMDB's own listing) has no logo, backdrop or
+            # IMDb/TMDB ratings.  The resolver looks again after its miss TTL,
+            # and a hit changes this key, but clients hold the image for as
+            # long as it is said to last, so it is said to last only that long.
+            if is_anime and not has_tmdb_id:
+                _ttl_override = (
+                    anime_resolve.MISS_TTL if _ttl_override is None
+                    else min(_ttl_override, anime_resolve.MISS_TTL)
                 )
             # A render missing a piece is kept briefly, so a long outage of
             # whatever it is waiting on costs one render per title and config

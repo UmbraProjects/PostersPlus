@@ -12,9 +12,9 @@ import anime_ids
 
 SEASONS = [
     # Sword Art Online: three seasons under one TMDB show and IMDb id.
-    {"type": "TV", "kitsu_id": 6589, "anilist_id": 11757,
+    {"type": "TV", "kitsu_id": 6589, "anilist_id": 11757, "mal_id": 11757,
      "themoviedb_id": {"tv": 45782}, "imdb_id": ["tt2250192"]},
-    {"type": "TV", "kitsu_id": 8174, "anilist_id": 20594,
+    {"type": "TV", "kitsu_id": 8174, "anilist_id": 20594, "mal_id": 21881,
      "themoviedb_id": {"tv": 45782}, "imdb_id": ["tt2250192"]},
     {"type": "TV", "kitsu_id": 13893, "anilist_id": 100182,
      "themoviedb_id": {"tv": 45782}, "imdb_id": ["tt2250192"]},
@@ -87,7 +87,7 @@ class FillTests(_TempTable):
         super().setUp()
         self._load(SEASONS)
 
-    def fill(self, ratings, wanted, fetched, cached=None):
+    def fill(self, ratings, wanted, fetched, cached=None, **kw):
         calls = []
 
         async def fetch(client, ns, aid):
@@ -96,7 +96,7 @@ class FillTests(_TempTable):
         with mock.patch.object(anime, "fetch_anime_metadata", fetch), \
              mock.patch.object(main, "get_cached_tvdb_json", lambda key: (cached or {}).get(key)):
             out = asyncio.run(main._fill_anime_scores(
-                None, ratings, wanted, media_type="tv", tmdb_id="45782", imdb_id="tt2250192"))
+                None, ratings, wanted, media_type="tv", tmdb_id="45782", imdb_id="tt2250192", **kw))
         return out, calls
 
     def test_fills_the_missing_ones_from_the_first_season(self):
@@ -105,6 +105,21 @@ class FillTests(_TempTable):
         self.assertEqual(ratings, {"myanimelist": 7.2, "kitsu": 73.6, "anilist": 68})
         self.assertFalse(pending)
         self.assertEqual(calls, [("anilist", 11757)])   # Kitsu was already there
+
+    def test_an_anime_id_request_takes_its_own_entrys_sibling(self):
+        # SAO II by Kitsu id: AniList's score is SAO II's, not the show's first.
+        (ratings, _), calls = self.fill({"kitsu": 70}, {"anilist"}, {"anilist": _meta(75)},
+                                        own=("kitsu", 8174))
+        self.assertEqual(ratings, {"kitsu": 70, "anilist": 75})
+        self.assertEqual(calls, [("anilist", 20594)])
+        (_, _), calls = self.fill({}, {"kitsu"}, {"kitsu": _meta(1)}, own=("anilist", 20594))
+        self.assertEqual(calls, [("kitsu", 8174)])
+
+    def test_a_later_season_never_borrows_the_shows_first_entry(self):
+        # An unmapped sequel (no sibling known): nothing rather than season 1's.
+        (ratings, pending), calls = self.fill({}, {"anilist"}, {"anilist": _meta(68)},
+                                              own=("kitsu", 99999), later_season=True)
+        self.assertEqual((ratings, pending, calls), ({}, False, []))
 
     def test_nothing_wanted_fetches_nothing(self):
         (ratings, _), calls = self.fill({"imdb": 7.5}, set(), {})
@@ -128,6 +143,14 @@ class WiringTests(unittest.TestCase):
         from pathlib import Path
         src = Path("main.py").read_text(encoding="utf-8")
         self.assertEqual(src.count("= await _with_anime_scores(ratings_dict)"), 2)
+
+    def test_a_later_seasons_myanimelist_score_is_dropped_but_not_from_the_row(self):
+        from pathlib import Path
+        src = Path("main.py").read_text(encoding="utf-8")
+        row = src.index("_row_ratings, _row_age_rating = ratings_dict, age_rating")
+        drop = src.index('if k != "myanimelist"}')
+        self.assertLess(row, drop)
+        self.assertLess(drop - row, 400)
         for i in [m for m in range(len(src)) if src.startswith("await _with_anime_scores(ratings_dict)", m)]:
             nxt = src.index("_weights_for(ratings_dict)", i)
             self.assertLess(nxt - i, 200)

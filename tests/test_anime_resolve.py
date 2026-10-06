@@ -34,7 +34,8 @@ class ResolveTests(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def _run(self, media_by_id, mapped, search=None, namespace="anilist", anime_id=2, media_type="series"):
+    def _run(self, media_by_id, mapped, search=None, namespace="anilist", anime_id=2, media_type="series",
+             imdb=None):
         async def anilist(client, anilist_id=None, mal_id=None):
             return media_by_id.get(anilist_id)
 
@@ -44,9 +45,15 @@ class ResolveTests(unittest.TestCase):
         async def search_tmdb(client, key, kind, media):
             return (search or {}).get(media["id"])
 
+        async def tmdb_imdb_id(client, key, kind, tmdb_id):
+            self.imdb_asked.append(tmdb_id)
+            return (imdb or {}).get(tmdb_id, (None, True))
+
+        self.imdb_asked = []
         with mock.patch.object(ar, "_anilist", anilist), \
                 mock.patch.object(ar.anime_ids, "lookup", lookup), \
-                mock.patch.object(ar, "_search_tmdb", search_tmdb):
+                mock.patch.object(ar, "_search_tmdb", search_tmdb), \
+                mock.patch.object(ar, "_tmdb_imdb_id", tmdb_imdb_id):
             return asyncio.run(ar.resolve(None, namespace, anime_id, media_type, "key"))
 
     def test_a_later_season_takes_its_prequels_ids(self):
@@ -67,6 +74,54 @@ class ResolveTests(unittest.TestCase):
         media = {212888: _media(212888, "Overgeared", "Tempal: Item no Chikara")}
         got = self._run(media, {}, search={212888: "324502"}, anime_id=212888)
         self.assertEqual(got.tmdb_id, "324502")
+
+    def test_a_show_found_by_name_brings_its_imdb_id(self):
+        # The anime path reads MDBList by IMDb id only: without it, no ratings.
+        media = {212888: _media(212888, "Overgeared", "Tempal: Item no Chikara")}
+        got = self._run(media, {}, search={212888: "324502"}, anime_id=212888,
+                        imdb={"324502": ("tt43691353", True)})
+        self.assertEqual(got, anime_ids.MappedIds("324502", "tt43691353"))
+        self.assertEqual(self.imdb_asked, ["324502"])
+        # Cached: not asked again.
+        self._run(media, {}, search={212888: "324502"}, anime_id=212888)
+        self.assertEqual(self.imdb_asked, [])
+
+    def test_a_name_match_cached_without_its_imdb_id_is_looked_up_again(self):
+        self.cache["animeres:v1:anilist:212888:tv"] = {"tmdb_id": "324502", "imdb_id": None, "via": "search"}
+        media = {212888: _media(212888, "Overgeared")}
+        got = self._run(media, {}, search={212888: "324502"}, anime_id=212888,
+                        imdb={"324502": ("tt43691353", True)})
+        self.assertEqual(got.imdb_id, "tt43691353")
+        self.assertTrue(self.cache["animeres:v1:anilist:212888:tv"]["imdb_checked"])
+
+    def test_tmdb_not_answering_for_the_imdb_id_keeps_the_tmdb_id(self):
+        media = {6: _media(6, "Some Show")}
+        got = self._run(media, {}, search={6: "222"}, anime_id=6, imdb={"222": (None, False)})
+        self.assertEqual(got, anime_ids.MappedIds("222", None))
+        row = self.cache["animeres:v1:anilist:6:tv"]
+        self.assertFalse(row["imdb_checked"])
+        # Not asked again inside the retry window; asked once it has passed.
+        self._run(media, {}, search={6: "222"}, anime_id=6)
+        self.assertEqual(self.imdb_asked, [])
+        row["imdb_retry_at"] = 0
+        got = self._run(media, {}, search={6: "222"}, anime_id=6, imdb={"222": ("tt9", True)})
+        self.assertEqual(got, anime_ids.MappedIds("222", "tt9"))
+
+    def test_an_old_name_match_is_not_resolved_again_from_scratch(self):
+        # Only the IMDb id is asked for: a throttled AniList can't cost the
+        # title the TMDB id it already has.
+        self.cache["animeres:v1:anilist:6:tv"] = {"tmdb_id": "222", "imdb_id": None, "via": "search"}
+
+        async def throttled(*a, **k):
+            raise ar._Transient("AniList 429")
+        with mock.patch.object(ar, "_resolve", throttled):
+            got = self._run({}, {}, anime_id=6, imdb={"222": ("tt9", True)})
+        self.assertEqual(got, anime_ids.MappedIds("222", "tt9"))
+
+    def test_a_later_season_found_by_prequel_asks_nothing_of_tmdb(self):
+        media = {3: _media(3, prequel=1), 1: _media(1)}
+        self._run(media, {1: anime_ids.MappedIds("99", "tt1")}, anime_id=3)
+        self.assertEqual(self.imdb_asked, [])
 
     def test_a_deleted_tmdb_id_in_the_mapping_is_passed_over(self):
         # The AniList id's own row names a TMDB entry since deleted: the name
@@ -152,6 +207,28 @@ class ResolveTests(unittest.TestCase):
 
 
 class SearchTests(unittest.TestCase):
+    def _imdb(self, status, body=None, exc=None):
+        import httpx
+
+        def handler(request):
+            if exc:
+                raise exc
+            assert request.url.path == "/3/tv/324502/external_ids"
+            return httpx.Response(status, json=body or {})
+
+        async def go():
+            async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+                return await ar._tmdb_imdb_id(client, "k", "tv", "324502")
+        return asyncio.run(go())
+
+    def test_imdb_id_from_external_ids(self):
+        import httpx
+        self.assertEqual(self._imdb(200, {"imdb_id": "tt43691353"}), ("tt43691353", True))
+        self.assertEqual(self._imdb(200, {"imdb_id": None}), (None, True))
+        self.assertEqual(self._imdb(404), (None, True))
+        self.assertEqual(self._imdb(429), (None, False))
+        self.assertEqual(self._imdb(0, exc=httpx.ConnectError("down")), (None, False))
+
     def _search(self, results, media):
         import httpx
 

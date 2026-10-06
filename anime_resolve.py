@@ -17,10 +17,12 @@ Two ways back to a TMDB id, tried in order:
 2. A new show: search TMDB by its English and romaji titles and take a
    result only when its name matches one of them outright, it is Animation,
    and it started within a year of the anime.  Strict on purpose: a wrong id
-   would print another show's logo and ratings.
+   would print another show's logo and ratings.  The match's IMDb id is asked
+   of TMDB too: the anime path reads MDBList ratings by IMDb id only, so
+   without it a new show has no IMDb/TMDB/RT scores at all.
 
 Kitsu and MAL ids are taken to AniList first (Kitsu's own mappings, AniList's
-idMal).  Results are cached: a hit for _HIT_TTL, a miss for _MISS_TTL, since
+idMal).  Results are cached: a hit for _HIT_TTL, a miss for MISS_TTL, since
 TMDB and the mapping catch up within days, and a throttled or failed lookup
 for _FAIL_TTL.
 """
@@ -29,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 import unicodedata
 
 import httpx
@@ -40,7 +43,7 @@ from cache import get_cached_tvdb_json, set_cached_tvdb_json
 logger = logging.getLogger(__name__)
 
 _HIT_TTL = 14 * 86400
-_MISS_TTL = 86400
+MISS_TTL = 86400
 # A throttle clears in a minute or two (AniList names the wait), so a title
 # caught in one is tried again soon rather than drawn on the canvas for long.
 _FAIL_TTL = 120
@@ -135,6 +138,26 @@ async def _search_tmdb(client: httpx.AsyncClient, tmdb_key: str, kind: str,
     return None
 
 
+async def _tmdb_imdb_id(client: httpx.AsyncClient, tmdb_key: str, kind: str,
+                        tmdb_id: str) -> "tuple[str | None, bool]":
+    """(*tmdb_id*'s IMDb id or None, whether TMDB answered)."""
+    try:
+        resp = await client.get(
+            f"https://api.themoviedb.org/3/{kind}/{tmdb_id}/external_ids",
+            params={"api_key": tmdb_key}, timeout=15.0,
+        )
+    except httpx.HTTPError as exc:
+        logger.warning(f"TMDB external ids for {kind} {tmdb_id} failed: {exc}")
+        return None, False
+    if resp.status_code != 200:
+        return None, resp.status_code == 404
+    try:
+        imdb_id = str(resp.json().get("imdb_id") or "")
+    except ValueError:
+        return None, False
+    return (imdb_id if imdb_id.startswith("tt") else None), True
+
+
 def _usable(mapped: anime_ids.MappedIds | None, media_type: str) -> bool:
     """Whether a mapping row names a TMDB id TMDB still has: a row naming a
     deleted one (a duplicate merged away) is what sent the request here."""
@@ -190,6 +213,7 @@ async def _resolve(client: httpx.AsyncClient, namespace: str, anime_id: int,
         for candidate in ([media, node] if node is not media else [media]):
             found = await _search_tmdb(client, tmdb_key, kind, candidate)
             if found:
+                # Its IMDb id is asked for by resolve().
                 return {"tmdb_id": found, "imdb_id": None, "via": "search"}
     return {}
 
@@ -211,11 +235,20 @@ async def resolve(client: httpx.AsyncClient, namespace: str, anime_id: int,
     """The TMDB (and maybe IMDb) id for an anime id the mapping lacks, or None."""
     kind = "movie" if media_type == "movie" else "tv"
     key = _key(namespace, anime_id, media_type)
+
+    def needs_imdb(row: dict | None) -> bool:
+        # A name match whose IMDb id TMDB hasn't given yet: found before it
+        # was asked for, or TMDB didn't answer then.  Only that is asked
+        # again, so a throttled AniList can't cost a title its TMDB id.
+        return bool(row and row.get("tmdb_id") and row.get("via") == "search"
+                    and not row.get("imdb_checked") and tmdb_key
+                    and time.time() >= float(row.get("imdb_retry_at") or 0))
+
     cached = get_cached_tvdb_json(key)
     if cached and cached.get("tmdb_id") and not _usable(anime_ids.MappedIds(cached["tmdb_id"], None), media_type):
         # Found before TMDB deleted it: look again.
         cached = None
-    if cached is None:
+    if cached is None or needs_imdb(cached):
         fut = _inflight.get(key)
         if fut is not None:
             cached = await asyncio.shield(fut)
@@ -223,11 +256,17 @@ async def resolve(client: httpx.AsyncClient, namespace: str, anime_id: int,
             fut = asyncio.get_running_loop().create_future()
             _inflight[key] = fut
             try:
-                cached = await _resolve(client, namespace, anime_id, media_type, tmdb_key)
-                set_cached_tvdb_json(key, cached, _HIT_TTL if cached.get("tmdb_id") else _MISS_TTL)
-                if cached.get("tmdb_id"):
-                    logger.info(f"Resolved unmapped {namespace}:{anime_id} to TMDB {kind} "
-                                f"{cached['tmdb_id']} ({cached.get('via')})")
+                if cached is None:
+                    cached = await _resolve(client, namespace, anime_id, media_type, tmdb_key)
+                    if cached.get("tmdb_id"):
+                        logger.info(f"Resolved unmapped {namespace}:{anime_id} to TMDB {kind} "
+                                    f"{cached['tmdb_id']} ({cached.get('via')})")
+                if needs_imdb(cached):
+                    imdb_id, answered = await _tmdb_imdb_id(client, tmdb_key, kind, cached["tmdb_id"])
+                    cached = {**cached, "imdb_id": imdb_id, "imdb_checked": answered}
+                    if not answered:
+                        cached["imdb_retry_at"] = time.time() + _FAIL_TTL
+                set_cached_tvdb_json(key, cached, _HIT_TTL if cached.get("tmdb_id") else MISS_TTL)
             except (_Transient, httpx.HTTPError, ValueError) as exc:
                 # Held briefly, so a throttled AniList isn't asked again by
                 # every request for the title.

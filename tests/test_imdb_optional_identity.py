@@ -42,9 +42,22 @@ class CanonicalRatingIdTests(unittest.TestCase):
             main._canonical_rating_id("tt0903747", "", "1396"), "tt0903747"
         )
 
-    def test_anime_key_outranks_tmdb_fallback(self):
+    def test_a_real_tmdb_id_outranks_the_anime_key(self):
+        # Shares MDBList's row with a plain TMDB-id request for the show.
         self.assertEqual(
-            main._canonical_rating_id("", "kitsu:7442", "1396"), "kitsu:7442"
+            main._canonical_rating_id("", "kitsu:7442", "1396"), "tmdb:1396"
+        )
+
+    def test_tmdb_only_anime_asks_mdblist_by_tmdb_id(self):
+        from pathlib import Path
+        src = Path("main.py").read_text(encoding="utf-8")
+        route = src[src.index('rating_provider, rating_media_id = "imdb", imdb_id'):][:200]
+        self.assertIn("elif has_tmdb_id:", route)
+
+    def test_anime_key_when_there_is_no_tmdb_id(self):
+        # On the anime path tmdb_id stands in as the anime key itself.
+        self.assertEqual(
+            main._canonical_rating_id("", "kitsu:7442", "kitsu:7442"), "kitsu:7442"
         )
 
     def test_tmdb_namespace_is_the_fallback(self):
