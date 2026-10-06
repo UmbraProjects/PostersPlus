@@ -9,7 +9,9 @@
 #
 # Either one frees the sash for the next label in the user's priority list, so
 # a title can read "#3" and "New Season" at once.  Both are laid out as ratios
-# of the canvas width, so every poster width draws the same mark.
+# of the canvas width, so every poster width draws the same mark.  A canvas
+# that is not 2:3 (landscape) passes *unit*, the width of the portrait poster
+# its marks should match, and the marks are sized and inset by that instead.
 import math
 import os
 from functools import lru_cache
@@ -79,17 +81,18 @@ def _shadow(layer: Image.Image, blur: float, alpha: int) -> Image.Image:
     return shadow.filter(ImageFilter.GaussianBlur(blur))
 
 
-def number_box(width: int, scale: float = 1.0) -> tuple[int, int]:
+def number_box(width: int, scale: float = 1.0, unit: float | None = None) -> tuple[int, int]:
     """(inset, bottom) of the numeral's band, in pixels of a *width*-wide
     poster: where to look for room beside it."""
-    return round(_NUM_INSET * width), round((_NUM_INSET + _NUM_H * scale) * width)
+    u = unit or width
+    return round(_NUM_INSET * u), round((_NUM_INSET + _NUM_H * scale) * u)
 
 
-def _number_layout(w: int, text: str, max_w: float | None, scale: float) -> tuple:
+def _number_layout(u: float, text: str, max_w: float | None, scale: float) -> tuple:
     """(font, track, ink_w, ink_h, pad, glyphs, adv) of the numeral at SS:
     each digit's ink box and advance too.  Shared by the drawing and its
     footprint."""
-    ink_h = _NUM_H * scale * w
+    ink_h = _NUM_H * scale * u
     if max_w is not None:
         font, _ = _digit_font(ink_h)
         natural = font.getlength(text) * 0.97
@@ -103,18 +106,19 @@ def _number_layout(w: int, text: str, max_w: float | None, scale: float) -> tupl
     x0 = min(0, glyphs[0][0])
     ink_w = sum(adv[:-1]) + track * (len(text) - 1) + glyphs[-1][2] - x0
     ink_h = -min(b[1] for b in glyphs)
-    pad = round(0.04 * w * _SS)          # room for the shadow's blur
+    pad = round(0.04 * u * _SS)          # room for the shadow's blur
     return font, track, ink_w, ink_h, pad, glyphs, adv
 
 
 def _number_origin(w: int, iw: float, right: bool, top: int | None,
-                   center_x: float | None = None, align: str = "center") -> tuple[float, int]:
+                   center_x: float | None = None, align: str = "center",
+                   u: float | None = None) -> tuple[float, int]:
     """(x, y) of the numeral's ink box: in a top corner, or with *top* given,
     its ink starting at *top*, centred on *center_x* (the poster's middle by
     default) and kept inside the corner insets.  *align* "left" or "right"
     puts that edge of the ink at *center_x* instead, flush with a chip
     nearer the edge than the insets."""
-    inset = round(_NUM_INSET * w)
+    inset = round(_NUM_INSET * (u or w))
     if top is not None:
         cx = w / 2 if center_x is None else center_x
         if align in ("left", "right"):
@@ -127,18 +131,20 @@ def _number_origin(w: int, iw: float, right: bool, top: int | None,
 def draw_rank_number(image: Image.Image, rank: int, right: bool = False,
                      max_w: float | None = None, scale: float = 1.0,
                      top: int | None = None, center_x: float | None = None,
-                     align: str = "center") -> Image.Image:
+                     align: str = "center", unit: float | None = None) -> Image.Image:
     """The rank as a large silver numeral in the top-left (or top-right) corner.
 
     *scale* sizes it against its default.  *max_w* caps its width in pixels,
     for when a notch sits beside it: the digits shrink to fit, down to 60 % of
     their size and no further.  *top* hangs it there instead, centred on
     *center_x* (under the notch, wherever that is), or with *align* "left" /
-    "right" with that edge there.
+    "right" with that edge there.  *unit* sizes it for a canvas that is not
+    2:3 (see the module notes).
     """
     w = image.width
+    u = unit or w
     text = str(rank)
-    font, track, ink_w, ink_h, pad, glyphs, adv = _number_layout(w, text, max_w, scale)
+    font, track, ink_w, ink_h, pad, glyphs, adv = _number_layout(u, text, max_w, scale)
     x0 = min(0, glyphs[0][0])
 
     lw, lh = round(ink_w) + 2 * pad, round(ink_h) + 2 * pad
@@ -159,12 +165,12 @@ def draw_rank_number(image: Image.Image, rank: int, right: bool = False,
     numeral.putalpha(mask)
     numeral = numeral.reduce(_SS)
 
-    shadow = _shadow(numeral, 0.012 * w, 150)
+    shadow = _shadow(numeral, 0.012 * u, 150)
     pad1 = pad / _SS
-    ix, iy = _number_origin(w, numeral.width - 2 * pad1, right, top, center_x, align)
+    ix, iy = _number_origin(w, numeral.width - 2 * pad1, right, top, center_x, align, u)
     nx = round(ix - pad1)
     ny = round(iy - pad1)
-    off = max(1, round(0.004 * w))
+    off = max(1, round(0.004 * u))
 
     result = image.convert("RGBA") if image.mode != "RGBA" else image.copy()
     _paste(result, shadow, nx, ny + off)
@@ -213,15 +219,16 @@ def _ribbon_body(style: str, size: tuple[int, int], yb: float, region: Image.Ima
 
 
 def _ribbon_geometry(w: int, rank: int, right: bool, label: bool, scale: float,
-                     corner: bool, top_inset: int) -> tuple:
+                     corner: bool, top_inset: int, u: float | None = None) -> tuple:
     """(widen, rib_w, body_h, pad, grow, lift, rx): the ribbon's size and
     where its layer goes, shared by the drawing and its footprint."""
+    u = u or w
     widen = 1 + 0.28 * max(0, len(str(rank)) - 2)
-    rib_w = _RIB_W * scale * w * widen
+    rib_w = _RIB_W * scale * u * widen
     body_h = rib_w * (_RIB_BODY + (_RIB_LABEL_BAND if label else 0))
-    pad = round(0.03 * w)                # room for the shadow's blur
+    pad = round(0.03 * u)                # room for the shadow's blur
     grow, lift = max(0, top_inset), min(0, top_inset)
-    inset = 0 if corner else _RIB_INSET * w
+    inset = 0 if corner else _RIB_INSET * u
     rx = round(w - inset - rib_w - pad) if right else round(inset - pad)
     return widen, rib_w, body_h, pad, grow, lift, rx
 
@@ -232,17 +239,18 @@ _SHADE = 0.016
 
 
 def ribbon_footprint(w: int, rank: int, right: bool = False, label: bool = False,
-                     scale: float = 1.0, corner: bool = False,
-                     top_inset: int = 0) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
+                     scale: float = 1.0, corner: bool = False, top_inset: int = 0,
+                     unit: float | None = None) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
     """(body, extent) of the ribbon draw_rank_ribbon draws with these
     arguments, as (x0, y0, x1, y1) pixel boxes: the ribbon down to the tips
     of its notch, with as much of its shadow as reads, and everything the
     drawing touches, the shadow's faint tail included."""
     _, rib_w, body_h, pad, grow, lift, rx = _ribbon_geometry(w, rank, right, label, scale,
-                                                             corner, top_inset)
+                                                             corner, top_inset, unit)
+    u = unit or w
     lw, lh = round(rib_w + 2 * pad), round(grow + body_h + pad)
-    off = max(1, round(0.004 * w))
-    shade = _SHADE * w
+    off = max(1, round(0.004 * u))
+    shade = _SHADE * u
     body = (round(rx + pad - shade), 0, round(rx + pad + rib_w + shade),
             max(0, round(lift + grow + body_h + shade)))
     return body, (rx, 0, rx + lw + off, max(0, lift + lh + off))
@@ -250,17 +258,18 @@ def ribbon_footprint(w: int, rank: int, right: bool = False, label: bool = False
 
 def number_footprint(w: int, rank: int, right: bool = False, max_w: float | None = None,
                      scale: float = 1.0, top: int | None = None,
-                     center_x: float | None = None,
-                     align: str = "center") -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
+                     center_x: float | None = None, align: str = "center",
+                     unit: float | None = None) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
     """(body, extent) of the numeral draw_rank_number draws with these
     arguments, as ribbon_footprint gives them for the ribbon."""
-    _font, _track, ink_w, ink_h, pad, _glyphs, _adv = _number_layout(w, str(rank), max_w, scale)
+    u = unit or w
+    _font, _track, ink_w, ink_h, pad, _glyphs, _adv = _number_layout(u, str(rank), max_w, scale)
     iw, ih = round(ink_w / _SS), round(ink_h / _SS)
-    x0, y0 = _number_origin(w, iw, right, top, center_x, align)
+    x0, y0 = _number_origin(w, iw, right, top, center_x, align, u)
     x0 = round(x0)
-    shade = round(_SHADE * w)
+    shade = round(_SHADE * u)
     body = (x0 - shade, y0 - shade, x0 + iw + shade, y0 + ih + shade)
-    grow = round(pad / _SS) + max(1, round(0.004 * w))
+    grow = round(pad / _SS) + max(1, round(0.004 * u))
     return body, (max(0, x0 - grow), max(0, y0 - grow), min(w, x0 + iw + grow), y0 + ih + grow)
 
 
@@ -271,7 +280,7 @@ def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
                      frost_opacity: float = 0.75, frost_saturation: float = 1.2,
                      frost_reference: bool | str = False,
                      text_color: tuple[int, int, int] | None = None,
-                     top_inset: int = 0) -> Image.Image:
+                     top_inset: int = 0, unit: float | None = None) -> Image.Image:
     """The rank on a ribbon hanging from the top edge, its foot cut into a
     notch: just in from the top-left (or top-right) corner, or with *corner*,
     nested right into it.
@@ -287,13 +296,15 @@ def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
     the notch takes: a client that crops the poster's top edge would cut into
     the ribbon, so it grows upwards by that much, and still meets the edge
     where nothing is cropped.  Negative raises it off the top instead.
+    *unit* sizes it for a canvas that is not 2:3 (see the module notes).
     """
     if style not in RIBBON_STYLES:
         style = "charcoal"
     w = image.width
     text = str(rank)
+    u = unit or w
     widen, rib_w, body_h, pad, grow, lift, rx = _ribbon_geometry(
-        w, rank, right, bool(label), scale, corner, top_inset)
+        w, rank, right, bool(label), scale, corner, top_inset, u)
     notch = rib_w * _RIB_NOTCH
 
     S = _SS
@@ -382,10 +393,10 @@ def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
     draw.text((cx, cy), text, font=font, fill=(*ink_rgb, num_a), anchor="ls")
 
     ribbon = layer.reduce(S)
-    shadow = _shadow(ribbon, 0.012 * w, 140)
+    shadow = _shadow(ribbon, 0.012 * u, 140)
 
     result = image.convert("RGBA") if image.mode != "RGBA" else image.copy()
-    _paste(result, shadow, rx + max(1, round(0.004 * w)), lift + max(1, round(0.004 * w)))
+    _paste(result, shadow, rx + max(1, round(0.004 * u)), lift + max(1, round(0.004 * u)))
     _paste(result, ribbon, rx, lift)
     return result.convert(image.mode) if image.mode != "RGBA" else result
 

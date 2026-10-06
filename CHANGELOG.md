@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Trending rank on landscape
+
+- Landscape posters can show a trending rank as the portrait's **Number** or
+  **Ribbon** in place of the `#N Today` badge, which then shows the next
+  label (`landscape_trending_style=number|ribbon`). The Trending Rank group
+  now shows in the landscape view and keeps its own values per shape, so a
+  `{shape}` URL's landscape side is unchanged until it picks a mark.
+  **Sash / Notch with Rank** applies to the badge: Do Nothing moves it clear
+  of the mark, Hide drops it, Opposite Side moves a top-corner badge across.
+  Landscape offers the two corners only.
+
 ### Landscape badge shape and case
 
 - The landscape info badge has a **Badge Shape**: the **Pill** it has been,

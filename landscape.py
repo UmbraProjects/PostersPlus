@@ -1090,6 +1090,76 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
 # beside the glass pill, whose text is _BADGE_FONT of the height.
 _GB_UNIT         = 0.062   # row height at the default size, of the height
 
+# The trending rank mark (trending_rank.py) is laid out as fractions of a
+# portrait poster's width.  Here it is drawn as for a portrait this fraction
+# of the canvas height wide — sized off height, as everything on this canvas
+# is — so its numeral's ink is about a sixth of the height.  The numeral
+# stands in the badge's column, its head on the badge's top line; the ribbon
+# hangs from the top edge, in from the corner as on a portrait.
+_RANK_UNIT       = 0.90
+
+
+def _rank_mark(cfg, discovery_meta, priority: list[str]) -> tuple[int | None, list[str], object]:
+    """(rank, priority, cfg) with a trending rank mark: the rank it draws
+    (None without one), the sash priority the badge picks from — the trending
+    slots dropped, as the mark shows the rank — and the config the badge
+    draws with, per trending_sash: hidden, or moved to the top corner the
+    mark leaves free."""
+    from discovery import TRENDING_SLOTS, shown_trending_rank
+    if cfg.trending_style == "sash" or discovery_meta is None:
+        return None, priority, cfg
+    rank = shown_trending_rank(discovery_meta, priority)
+    priority = [s for s in priority if s not in TRENDING_SLOTS]
+    if rank is None:
+        return None, priority, cfg
+    if cfg.trending_sash == "hide":
+        cfg = dataclasses.replace(cfg, sash_mode="hidden")
+    elif (cfg.trending_sash == "opposite"
+          and getattr(cfg, "landscape_badge_pos", "top_left") in ("top_left", "top_right")):
+        cfg = dataclasses.replace(cfg, landscape_badge_pos="top_left" if _rank_right(cfg) else "top_right")
+    return rank, priority, cfg
+
+
+def _rank_right(cfg) -> bool:
+    # No notch to hang under on this canvas, so "center" is the left corner.
+    return cfg.trending_side == "right"
+
+
+def _rank_layout(size: tuple[int, int], cfg, rank: int, media_kind: str | None) -> tuple:
+    """(footprint, args) of the rank's mark on a canvas of *size*: its
+    trending_rank (body, extent), and what it is drawn with, minus the frost
+    tint.  Known before anything is drawn, so a top-row logo or info line on
+    its side can stand clear of it."""
+    import trending_rank
+    width, height = size
+    args = dict(right=_rank_right(cfg), scale=cfg.trending_scale, unit=height * _RANK_UNIT)
+    if cfg.trending_style == "ribbon":
+        label = None
+        if cfg.trending_label and media_kind in trending_rank.KIND_LABELS:
+            label = upper_label(translate_sash(trending_rank.KIND_LABELS[media_kind],
+                                               cfg.label_lang), cfg.label_lang)
+        args.update(corner=cfg.trending_corner)
+        footprint = trending_rank.ribbon_footprint(width, rank, label=bool(label), **args)
+        args.update(label=label, style=cfg.trending_ribbon_style,
+                    frost_opacity=cfg.trending_frost_opacity,
+                    frost_saturation=cfg.trending_frost_saturation,
+                    frost_reference=cfg.frost_reference, text_color=cfg.sash_text_color)
+        return footprint, args
+    # In the badge's column, its head on the badge's top line.
+    right = args.pop("right")
+    args.update(top=int(height * _BADGE_TOP), align="right" if right else "left",
+                center_x=width - int(width * _RIGHT_PAD) if right else int(width * _SIDE_PAD))
+    return trending_rank.number_footprint(width, rank, **args), args
+
+
+def _draw_rank(image: Image.Image, cfg, rank: int, args: dict,
+               tint: tuple[float, float, float] | None) -> Image.Image:
+    """The rank as cfg.trending_style's mark, laid out by _rank_layout."""
+    import trending_rank
+    if cfg.trending_style == "ribbon":
+        return trending_rank.draw_rank_ribbon(image, rank, tint_rgb=tint, **args)
+    return trending_rank.draw_rank_number(image, rank, **args)
+
 
 def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: list[str],
                          certification: str | None, age_rating: int | None,
@@ -1203,6 +1273,7 @@ def _build_landscape(
     badge_logos: tuple = (None, None),
     cinema_run=None,
     ratings: dict | None = None,
+    media_kind: str | None = None,
     **_ignored,
 ) -> Image.Image:
     """Render the landscape poster.  Mirrors ``build_poster``'s call shape so the
@@ -1237,10 +1308,13 @@ def _build_landscape(
                                              or cfg.vignette_poster_color_top):
         from awards import dominant_frost_rgb
         shared = tuple(float(c) for c in dominant_frost_rgb(art))
+    # A trending rank drawn as a number or ribbon: the badge moves on to the
+    # next label, and may be hidden or moved (trending_sash).
+    rank, sash_priority, cfg = _rank_mark(cfg, discovery_meta, cfg.sash_priority)
     # Picked again where the badge is drawn; here only for "Vignette Only On Sash".
     sash_shown = not cfg.top_vignette_sash_only or (
         cfg.sash_mode != "hidden" and discovery_meta is not None
-        and pick_sash(discovery_meta, cfg.sash_priority) is not None)
+        and pick_sash(discovery_meta, sash_priority) is not None)
     band_tint = _draw_vignette(image, art, cfg, source=shared, sash_shown=sash_shown)
     badge_source = band_tint if link == "badge_follows_vignette" else shared
     # What the overlays are measured against, for the graphic badges to lay
@@ -1321,6 +1395,13 @@ def _build_landscape(
     logo_baseline = None
     logo_scale = max(0.5, min(1.5, float(getattr(cfg, "landscape_logo_scale", 1.0) or 1.0)))
     logo_top = int(height * _BADGE_TOP) if top_row else None
+    # The rank mark's corner: a top-row logo or info line on its side hangs
+    # below it rather than under it.
+    rank_layout = _rank_layout((width, height), cfg, rank, media_kind) if rank is not None else None
+    rank_side = "right" if rank is not None and _rank_right(cfg) else "left"
+    below_rank = (rank_layout[0][0][3] + int(height * _STACK_GAP)) if rank_layout else None
+    if top_row and below_rank and align == rank_side:
+        logo_top = max(logo_top, below_rank)
     if stacked and not top_row:
         info_box = _strip(bounds=full)
         if info_box:
@@ -1365,6 +1446,8 @@ def _build_landscape(
                           + (int(height * _STACK_GAP) if logo_box else 0))
     elif not stacked and not centre_beside_logo:
         where = {"top": int(height * _BADGE_TOP)} if info_row == "top" else {}
+        if where and below_rank and info_col == rank_side:
+            where["top"] = max(where["top"], below_rank)
         if info_row != logo_row:
             info_box = _strip(bounds=full, **where)
         else:
@@ -1380,9 +1463,24 @@ def _build_landscape(
                     lo = max(lo, logo_box[2] + edge_gap) if align != "right" else lo
             info_box = _strip(bounds=(lo, hi), **where)
 
+    # The rank mark, in its top corner before the badge, which keeps clear
+    # of it like the logo.
+    rank_box = None
+    if rank_layout is not None:
+        tint = None
+        if cfg.trending_style == "ribbon" and cfg.trending_ribbon_style == "frosted":
+            from awards import dominant_frost_rgb
+            tint = badge_source or tuple(float(c) for c in dominant_frost_rgb(art))
+        pre = np.asarray(image) if before is not None else None
+        (rank_box, extent), rank_args = rank_layout
+        image = _draw_rank(image, cfg, rank, rank_args, tint)
+        if before is not None:
+            from main import _claim_footprint
+            _claim_footprint(before, pre, np.asarray(image), rank_box, extent)
+
     badge_position = None
     if cfg.sash_mode != "hidden" and discovery_meta is not None:
-        sash_result = pick_sash(discovery_meta, cfg.sash_priority)
+        sash_result = pick_sash(discovery_meta, sash_priority)
         if sash_result is not None:
             label, _sash_type = sash_result
             label = translate_sash(label, cfg.label_lang)
@@ -1405,7 +1503,7 @@ def _build_landscape(
                         source=badge_source,
                         logo_align=align, logo_baseline=logo_baseline,
                         logo_box=logo_box, logo_top_row=top_row,
-                        obstacles=(logo_box, info_box))
+                        obstacles=(logo_box, info_box, rank_box))
 
     # Drawn last because they lay themselves out around everything else.
     if graphic:

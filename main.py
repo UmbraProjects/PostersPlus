@@ -2405,6 +2405,17 @@ _LANDSCAPE_OWN_PARAMS: tuple[str, ...] = (
     "bottom_gradient_height",
     "top_vignette_sash_only",
     "vignette_poster_color_top",
+    # The trending rank mark, landscape's own since it gained one: until then
+    # landscape kept the "#N Today" label whatever trending_style a URL had.
+    "trending_style",
+    "trending_scale",
+    "trending_side",
+    "trending_sash",
+    "trending_ribbon_style",
+    "trending_frost_opacity",
+    "trending_frost_saturation",
+    "trending_label",
+    "trending_corner",
 )
 
 
