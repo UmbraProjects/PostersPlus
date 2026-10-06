@@ -1355,6 +1355,8 @@ def _text_center(
         ascent, descent = 0, 0
 
     x = cx - bbox_width / 2 - bbox[0]
+    if fonts.has_arabic(text):
+        return x, fonts.arabic_top(font, bbox, cy)
     optical_adjust = px(ascent * 0.22)
     y = cy - (ascent + descent) / 2 - descent + optical_adjust
 
