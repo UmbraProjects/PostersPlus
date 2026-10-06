@@ -324,7 +324,7 @@ def _box(text: str, h: int, filled: bool) -> Image.Image:
     reads as a different kind of fact from the outlined ones beside it."""
     ss = 4
     # 500-wide rounding (pxscale), snapped to whole pixels for the image.
-    font = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), px(h * _BOX_TEXT) * ss)
+    font = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), px(h * _BOX_TEXT) * ss, layout_engine=ImageFont.Layout.BASIC)
     w = round(px(font.getlength(text) / ss + h * _BOX_PAD))
     im = Image.new("RGBA", (w * ss, h * ss), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
@@ -415,7 +415,7 @@ def _chip_ink(content: str, h: int) -> Image.Image | None:
 @lru_cache(maxsize=128)
 def _chip_label(content: str, h: int) -> Image.Image:
     ss = 4
-    font = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), px(h * _BOX_TEXT) * ss)
+    font = ImageFont.truetype(os.path.join(_FONTS_DIR, "Inter-Bold.ttf"), px(h * _BOX_TEXT) * ss, layout_engine=ImageFont.Layout.BASIC)
     w = round(px(font.getlength(content) / ss + h * _BOX_PAD))
     im = Image.new("RGBA", (w * ss, h * ss), (255, 255, 255, 0))
     ImageDraw.Draw(im).text((w * ss / 2, h * ss / 2), content, font=font,
@@ -659,8 +659,8 @@ def _disc_face(face: str, h: int, ink: tuple[int, int, int]) -> Image.Image:
     im = Image.new("RGBA", (d_ss, d_ss), (*ink, 0))
     d = ImageDraw.Draw(im)
     font_path = os.path.join(_FONTS_DIR, "Inter-Bold.ttf")
-    mon_font = ImageFont.truetype(font_path, px(h * 0.24) * ss or ss)
-    day_font = ImageFont.truetype(font_path, px(h * 0.49) * ss or ss)
+    mon_font = ImageFont.truetype(font_path, px(h * 0.24) * ss or ss, layout_engine=ImageFont.Layout.BASIC)
+    day_font = ImageFont.truetype(font_path, px(h * 0.49) * ss or ss, layout_engine=ImageFont.Layout.BASIC)
     # The two lines as one block centred on the disc, by their ink (caps and
     # figures, so no descenders): month cap-height, a gap, then the day.
     mon_h = -d.textbbox((0, 0), month, font=mon_font, anchor="ls")[1]

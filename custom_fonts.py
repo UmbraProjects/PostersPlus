@@ -207,7 +207,7 @@ def _check_draws(data: bytes) -> None:
     from PIL import ImageFont
     import fontprep
     try:
-        font = ImageFont.truetype(io.BytesIO(data), 40)
+        font = ImageFont.truetype(io.BytesIO(data), 40, layout_engine=ImageFont.Layout.BASIC)
         notdef = bytes(font.getmask("\U0010FFFD"))
         for text in (*fontprep.LABEL_SYMBOLS, "Sci-Fi 88"):
             mask = font.getmask(text)

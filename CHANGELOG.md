@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Long translated labels fit
+
+- In Clean, Bar and the accent bar, a label line too wide for the poster
+  (a long translated genre such as "Документальный ★ 79", or the accent
+  bar's genre, year and sash together in any language) is drawn smaller to
+  fit instead of running off both edges. Lines that fit are unchanged; the
+  posters that could have overflowed re-render once.
+
+### Arabic, Persian and Urdu
+
+- Poster text can be in **Arabic**, **Persian** and **Urdu** (★ in the
+  language lists), drawn right to left with their letters joined. They are
+  drawn in **Almarai**, a new Font choice, whichever font is chosen (Rubik,
+  when chosen, keeps the Arabic and Persian it has); a text title standing
+  in for a missing logo switches the same way. Arabic and Persian posters
+  write the trending rank, release dates, season numbers and the year in
+  their own digits (`#٨ اليوم`, `٢٠٢٦`); scores and ratings keep 0-9.
+- **Title's Own Language** (`original_labels`, off by default): titles first
+  made in the listed languages get their labels in that language, and their
+  original title when the title is drawn as text, while every other poster
+  stays in the Native Language. `original_labels=ar` puts an Arabic film's
+  genre, sash and title in Arabic and leaves Hollywood films in English.
+  Any fully translated language can be listed.
+- Thanks to @aRamadi (issue 40), whose Arabic branch this takes its Arabic
+  wording, the Almarai choice, the native digits and Title's Own Language
+  from.
+- The image now installs `libfribidi0`, which turns on Pillow's raqm layout.
+  Only these three languages use it; every other poster is drawn exactly as
+  before. Their diagonal sash is drawn on the slower PIL path (about 17 ms
+  more), since Skia can't join the letters. Posters in these languages
+  cached before now re-render.
+
 ### Anime Provider Source
 
 - New **Anime Provider Source** under Artwork (`anime_provider_art`), for

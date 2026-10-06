@@ -101,22 +101,26 @@ class FullVocabularyTests(unittest.TestCase):
 
     def test_every_translation_renders_in_the_label_font(self):
         # Poster text is drawn in the label font the language resolves to
-        # (Inter, or Rubik for Hebrew), whichever font the user chose; no
-        # label font has CJK, Arabic, Indic or Thai glyphs — those would
-        # render as boxes.  Upper case is checked too: the landscape badge
+        # (Inter; Rubik for Hebrew, Arabic and Persian; Noto Sans Arabic for
+        # Urdu), whichever font the user chose; no label font has CJK, Indic
+        # or Thai glyphs — those would render as boxes.  Upper case is checked too: the landscape badge
         # uppercases its label.
         for path, choice in itertools.product(LANGUAGE_DIR.glob("*.json"), fonts.LABEL_FONTS):
             with self.subTest(language=path.stem, label_font=choice):
                 language = _load_language(path)
-                font = ImageFont.truetype(fonts.resolve_label_font(choice, language["code"]), 40)
+                font = ImageFont.truetype(fonts.resolve_label_font(choice, language["code"]), 40,
+                                          layout_engine=ImageFont.Layout.BASIC)
                 notdef = bytes(font.getmask("\U0010FFFD"))
                 text = "".join([*language["genreLabels"].values(),
                                 *language["sashLabels"].values(),
                                 *language["monthsShort"]])
                 # Plus what the renderer puts between and before them.
                 chars = set(text) | set(upper_label(text, language["code"])) | set("★·•…")
+                # The joiner controls (Persian's zero-width non-joiner) need
+                # no glyph, as fonts.covers has it.
                 missing = sorted(c for c in chars
-                                 if ord(c) > 127 and bytes(font.getmask(c)) == notdef)
+                                 if ord(c) > 127 and c not in fonts.JOINERS
+                                 and bytes(font.getmask(c)) == notdef)
                 self.assertFalse(missing, f"{path.name} has no glyph for {missing}")
 
 

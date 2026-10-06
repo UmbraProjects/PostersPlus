@@ -38,6 +38,7 @@ FAMILIES: dict[str, str] = {
     "Exo 2": "Exo2-Bold.ttf",
     "Fira Sans": "FiraSans-Bold.ttf",
     "Open Sans": "OpenSans-Bold.ttf",
+    "Almarai": "Almarai-Bold.ttf",
 }
 
 # An old browser's UA gets one static TrueType file per family from the CSS

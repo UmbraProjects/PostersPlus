@@ -166,7 +166,7 @@ PostersPlus is built on data and images from these services. None of them endors
 - **[RapidOCR](https://github.com/RapidAI/RapidOCR)**: the PP-OCRv5 text detection model from [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR), under the Apache License 2.0.
 - **Anime ID mapping**: from [Fribb/anime-lists](https://github.com/Fribb/anime-lists), which is built from [anime-offline-database](https://github.com/cedya77/anime-offline-database) (a continuation of [manami-project](https://github.com/manami-project)'s original) and [Anime-Lists/anime-lists](https://github.com/Anime-Lists/anime-lists). anime-offline-database is made available under the [Open Database License v1.0](https://opendatacommons.org/licenses/odbl/1-0/), and its contents under the [Database Contents License v1.0](https://opendatacommons.org/licenses/dbcl/1-0/).
 
-The bundled fonts are Barlow Condensed, Bebas Neue, Creepster, Exo 2, Fira Sans, Inter, Manrope, Montserrat, Noto Serif, Open Sans, Oswald, Pacifico, Playfair Display, Plus Jakarta Sans, Roboto Condensed, Rubik and Space Grotesk under the [SIL Open Font License 1.1](https://openfontlicense.org), and Ubuntu under the [Ubuntu Font Licence 1.0](https://ubuntu.com/legal/font-licence). Each licence, with its copyright notice, is in [fonts/](fonts).
+The bundled fonts are Almarai, Barlow Condensed, Bebas Neue, Creepster, Exo 2, Fira Sans, Inter, Manrope, Montserrat, Noto Serif, Open Sans, Oswald, Pacifico, Playfair Display, Plus Jakarta Sans, Roboto Condensed, Rubik and Space Grotesk under the [SIL Open Font License 1.1](https://openfontlicense.org), and Ubuntu under the [Ubuntu Font Licence 1.0](https://ubuntu.com/legal/font-licence). Each licence, with its copyright notice, is in [fonts/](fonts).
 
 ### Badge artwork
 

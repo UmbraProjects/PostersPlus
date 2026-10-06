@@ -728,6 +728,10 @@ def draw_frosted_bar(
 
     # ── Font ─────────────────────────────────────────────────────────────────
     font_size = max(fixed(10), px(bar_h * font_size_ratio))
+    h_pad     = max(fixed(20), px(width * 0.055))
+    if center_text and center_run is None:
+        # A long translated genre shrinks to fit between the bar's padding.
+        font_size = fonts.fit_label_size(visual(center_text), font_size, width - 2 * h_pad)
     try:
         font = fonts.label_font(font_size)
     except IOError:
@@ -861,7 +865,6 @@ def draw_frosted_bar(
 
     txt_layer = Image.new("RGBA", (width, bar_h), (0, 0, 0, 0))
     td        = ImageDraw.Draw(txt_layer)
-    h_pad     = max(fixed(20), px(width * 0.055))
 
     if center_run is not None:
         import rating_badges

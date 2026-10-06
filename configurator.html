@@ -2499,14 +2499,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="bg">Bulgarian ★</option>
                 <option value="hr">Croatian ★</option>
                 <option value="sk">Slovak ★</option>
-                <option value="ar">Arabic</option>
+                <option value="ar">Arabic ★</option>
                 <option value="hi">Hindi</option>
                 <option value="bn">Bengali</option>
                 <option value="ta">Tamil</option>
                 <option value="te">Telugu</option>
                 <option value="ml">Malayalam</option>
-                <option value="ur">Urdu</option>
-                <option value="fa">Persian</option>
+                <option value="ur">Urdu ★</option>
+                <option value="fa">Persian ★</option>
                 <option value="he">Hebrew ★</option>
                 <option value="id">Indonesian ★</option>
                 <option value="ms">Malay ★</option>
@@ -2526,7 +2526,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             </div>
             </div><!-- /field-row -->
             <div class="field">
-              <label class="field-label" data-tip="The font the poster's text is drawn in: the genre, year and rating, the sash or notch, the Bar and the landscape labels. A language the chosen font has no letters for is drawn in one that has them, so Hebrew always uses Rubik and Greek or Vietnamese always uses Inter. Fonts under This instance were added by this server's operator.">Font</label>
+              <label class="field-label" data-tip="The font the poster's text is drawn in: the genre, year and rating, the sash or notch, the Bar and the landscape labels. A language the chosen font has no letters for is drawn in one that has them, so Hebrew always uses Rubik, Arabic, Persian and Urdu use Almarai (or Rubik for Arabic and Persian if it is chosen), and Greek or Vietnamese always uses Inter. Fonts under This instance were added by this server's operator.">Font</label>
               <select id="cfg-label-font" onchange="build(); queuePreviewReload()">
                 <option value="inter" selected>Inter</option>
                 <option value="rubik">Rubik</option>
@@ -2540,6 +2540,15 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="exo2">Exo 2</option>
                 <option value="fira">Fira Sans</option>
                 <option value="opensans">Open Sans</option>
+                <option value="almarai">Almarai</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="field-label" data-tip="Titles first made in one of these languages get the poster's text in it — the genre, the sash or notch, and the title drawn when there is no logo — while every other poster stays in your Native Language. For example, Arabic shows an Arabic film's labels and title in Arabic and leaves Hollywood films in English. Add as many languages as you like; ✕ removes one.">Title's Own Language</label>
+              <input type="hidden" id="cfg-original-labels" value="" data-default="">
+              <div class="sash-list lp-list" id="original-labels-list"></div>
+              <select id="original-labels-add" onchange="addOriginalLabel(this.value)">
+                <option value="" selected>Off — add a language…</option>
               </select>
             </div>
             <div class="field">
@@ -2580,14 +2589,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <option value="bg">Bulgarian ★</option>
                 <option value="hr">Croatian ★</option>
                 <option value="sk">Slovak ★</option>
-                <option value="ar">Arabic</option>
+                <option value="ar">Arabic ★</option>
                 <option value="hi">Hindi</option>
                 <option value="bn">Bengali</option>
                 <option value="ta">Tamil</option>
                 <option value="te">Telugu</option>
                 <option value="ml">Malayalam</option>
-                <option value="ur">Urdu</option>
-                <option value="fa">Persian</option>
+                <option value="ur">Urdu ★</option>
+                <option value="fa">Persian ★</option>
                 <option value="he">Hebrew ★</option>
                 <option value="id">Indonesian ★</option>
                 <option value="ms">Malay ★</option>
@@ -6301,6 +6310,49 @@ function _rbTouchEnd(e) {
   _rbDragId = null;
 }
 
+// Title's Own Language (original_labels): the languages whose titles get
+// their labels in that language.  Order doesn't matter, so it is a plain
+// list: ✕ removes, the picker below adds.
+// The fully translated (★) base languages of the Native Language list, so a
+// new translation turns up here without a second list to keep.
+const ORIGINAL_LABEL_LANGS = [...document.querySelectorAll('#cfg-language option')]
+  .filter(o => !o.value.includes('-') && o.textContent.includes('★'))
+  .map(o => [o.value, o.textContent.replace('★', '').trim()]);
+function originalLabelCodes(value) {
+  const known = new Set(ORIGINAL_LABEL_LANGS.map(([code]) => code));
+  return [...new Set(String(value ?? vEl('cfg-original-labels') ?? '').toLowerCase()
+    .split(',').map(c => c.trim().split('-')[0]).filter(c => known.has(c)))];
+}
+function setOriginalLabels(codes) {
+  document.getElementById('cfg-original-labels').value = originalLabelCodes(codes.join(',')).join(',');
+  buildOriginalLabelsList(); build(); queuePreviewReload();
+}
+function addOriginalLabel(code) {
+  if (code) setOriginalLabels([...originalLabelCodes(), code]);
+}
+function buildOriginalLabelsList() {
+  const container = document.getElementById('original-labels-list');
+  const picker = document.getElementById('original-labels-add');
+  if (!container || !picker) return;
+  const chosen = originalLabelCodes();
+  const name = code => (ORIGINAL_LABEL_LANGS.find(([c]) => c === code) || [code, code])[1];
+  container.innerHTML = '';
+  chosen.forEach(code => {
+    const item = document.createElement('div');
+    item.className = 'sash-item';
+    item.innerHTML = `<span class="sash-label">${name(code)}</span>
+      <button class="sash-disable-btn" title="Remove">✕</button>`;
+    item.querySelector('.sash-disable-btn').addEventListener('click', () =>
+      setOriginalLabels(chosen.filter(c => c !== code)));
+    container.appendChild(item);
+  });
+  container.style.display = chosen.length ? '' : 'none';
+  picker.innerHTML = `<option value="" selected>${chosen.length ? 'Add another language…' : 'Off — add a language…'}</option>`
+    + ORIGINAL_LABEL_LANGS.filter(([c]) => !chosen.includes(c))
+        .map(([c, n]) => `<option value="${c}">${n}</option>`).join('');
+  picker.value = '';
+}
+
 // The custom-language picker only means something while Custom is in the list.
 function syncSecondaryLangVisibility() {
   const field = document.getElementById('secondary-lang-field');
@@ -6934,6 +6986,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   if (vEl('cfg-meta-order')) params.set('meta_order', vEl('cfg-meta-order'));
   // And the font.
   if (vEl('cfg-label-font') !== 'inter') params.set('label_font', vEl('cfg-label-font'));
+  // And the languages whose titles keep their own labels.
+  if (vEl('cfg-original-labels')) params.set('original_labels', vEl('cfg-original-labels'));
 
   // Landscape draws its one badge its own way: the mode only decides whether
   // it is drawn, the priority list what it says.  Everything else here is
@@ -7614,6 +7668,7 @@ function resetDefaults() {
   buildSashList();
   buildLogoPriorityList();
   buildRatingBadgeList();
+  buildOriginalLabelsList();
   // Refresh the mode-conditional field visibility so the blocks for the
   // *previously-selected* rating / badge mode don't linger after the parent
   // dropdown reverts to its default (e.g. resetting from Compact would
@@ -7718,6 +7773,7 @@ function resetScope(roots, name) {
   buildSashList();
   buildLogoPriorityList();
   buildRatingBadgeList();
+  buildOriginalLabelsList();
   syncSecondaryLangVisibility();
   updateRatingFields();
   updateOriginalArt();
@@ -7790,6 +7846,7 @@ function resetScopeToImport(roots, name) {
   buildSashList();
   buildLogoPriorityList();
   buildRatingBadgeList();
+  buildOriginalLabelsList();
   syncSecondaryLangVisibility();
   updateRatingFields();
   updateOriginalArt();
@@ -9281,7 +9338,7 @@ const _BOTH_SHAPES_CONTROLS = new Set([
   'cfg-language', 'cfg-language-secondary', 'cfg-logo-priority',
   'tog-fallback-imdb', 'cfg-imdb-rating-source', 'cfg-tmdb-rating-source',
   'tog-release-cinema-only', 'tog-release-dates', 'tog-anime-weights',
-  'tog-hide-unreleased-rating', 'cfg-meta-order', 'cfg-label-font',
+  'tog-hide-unreleased-rating', 'cfg-meta-order', 'cfg-label-font', 'cfg-original-labels',
   'cfg-primary-client', 'cfg-resolution', 'cfg-domain', 'cfg-access-key', 'cfg-tmdb-key', 'cfg-mdblist-key',
   'cfg-search-query',
 ]);
@@ -9763,6 +9820,8 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     const _lfOpt = [...document.getElementById('cfg-label-font').options].some(o => o.value === _lf);
     _setEl('cfg-label-font', _lfOpt ? _lf : 'inter');
   }
+  _setEl('cfg-original-labels', originalLabelCodes(p.get('original_labels') || '').join(','));
+  buildOriginalLabelsList();
 
   if (p.has('muted'))           _setEl('tog-muted',         p.get('muted'));
   // sash_mode supersedes the legacy show_award_sash + sash_badge bools.
@@ -10113,6 +10172,7 @@ initSegmented();
 updateTrendingStyleFields();   // hides buttons the restored style doesn't offer
 buildLogoPriorityList();
 buildRatingBadgeList();
+buildOriginalLabelsList();
 updateRatingFields();
 updateOriginalArt();
 updateBadgeModeHint();

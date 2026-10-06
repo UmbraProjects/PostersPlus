@@ -60,7 +60,7 @@ _RIB_LABEL_GAP  = 0.28
 
 @lru_cache(maxsize=16)
 def _font(size: int) -> ImageFont.FreeTypeFont:
-    return ImageFont.truetype(_FONT_PATH, size)
+    return ImageFont.truetype(_FONT_PATH, size, layout_engine=ImageFont.Layout.BASIC)
 
 
 def _digit_font(ink_h: float) -> tuple[ImageFont.FreeTypeFont, int]:

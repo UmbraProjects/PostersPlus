@@ -108,7 +108,7 @@ def _font(name: str, size: int):
     key = (name, size)
     if key not in _font_cache:
         try:
-            _font_cache[key] = ImageFont.truetype(name, size)
+            _font_cache[key] = ImageFont.truetype(name, size, layout_engine=ImageFont.Layout.BASIC)
         except IOError:
             _font_cache[key] = ImageFont.load_default()
     return _font_cache[key]

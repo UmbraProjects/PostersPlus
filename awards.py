@@ -1529,13 +1529,13 @@ def dominant_frost_rgb(
 # actually repeats.
 def _notch_font(size_ss: float):
     """The current render's label font (fonts.label_path) at *size_ss*."""
-    return _notch_font_at(fonts.label_path(), size_ss)
+    return _notch_font_at(fonts.label_path(), fonts.shaping(), size_ss)
 
 
 @lru_cache(maxsize=16)
-def _notch_font_at(font_path: str, size_ss: float):
+def _notch_font_at(font_path: str, shaped: bool, size_ss: float):
     try:
-        return ImageFont.truetype(font_path, size_ss)
+        return fonts.truetype(font_path, size_ss, shaped)
     except IOError:
         return ImageFont.load_default()
 
@@ -1563,11 +1563,11 @@ def _notch_shape_1x(w: int, h: int, radius: int, frost_opacity: float) -> tuple[
 
 def _notch_label_layer_1x(label: str, size_ss: int, ss: int, w: int, h: int,
                           ink: tuple[int, int, int, int]) -> Image.Image:
-    return _notch_label_layer_1x_in(fonts.label_path(), label, size_ss, ss, w, h, ink)
+    return _notch_label_layer_1x_in(fonts.label_path(), fonts.shaping(), label, size_ss, ss, w, h, ink)
 
 
 @lru_cache(maxsize=64)
-def _notch_label_layer_1x_in(font_path: str, label: str, size_ss: int, ss: int, w: int, h: int,
+def _notch_label_layer_1x_in(font_path: str, shaped: bool, label: str, size_ss: int, ss: int, w: int, h: int,
                              ink: tuple[int, int, int, int]) -> Image.Image:
     """The frosted notch's label at 1x, anti-aliased by FreeType itself.
 
@@ -1575,13 +1575,13 @@ def _notch_label_layer_1x_in(font_path: str, label: str, size_ss: int, ss: int, 
     3x, divided down — and drawn from that baseline, rather than re-centred with
     1x metrics: those round to whole pixels (int(ascent * 0.22) above all) and
     sat the label a pixel high."""
-    font3 = _notch_font_at(font_path, size_ss)
+    font3 = _notch_font_at(font_path, shaped, size_ss)
     tx, ty = _text_center(ImageDraw.Draw(Image.new("L", (1, 1))), label, font3, w * ss / 2, h * ss / 2)
     baseline = (ty + font3.getmetrics()[0]) / ss
     layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     # True division: size_ss is a whole multiple of ss at 500 wide, but above it
     # (pxscale) it is fractional, and flooring would shrink the label again.
-    ImageDraw.Draw(layer).text((tx / ss, baseline), label, font=_notch_font_at(font_path, size_ss / ss),
+    ImageDraw.Draw(layer).text((tx / ss, baseline), label, font=_notch_font_at(font_path, shaped, size_ss / ss),
                                fill=ink, anchor="ls")
     return layer
 
@@ -1592,12 +1592,12 @@ def _notch_heights(height: int, size_ratio_h: float, font_size_ratio: float,
     this tall, in the current render's label font.  Depends only on sizes and
     the font, never on the label, so the side chip's height (and the graphic
     badge row that lines up with it) is known without drawing anything."""
-    return _notch_heights_in(fonts.label_path(), height, size_ratio_h, font_size_ratio,
-                             notch_pad_ratio)
+    return _notch_heights_in(fonts.label_path(), fonts.shaping(), height, size_ratio_h,
+                             font_size_ratio, notch_pad_ratio)
 
 
 @lru_cache(maxsize=32)
-def _notch_heights_in(font_path: str, height: int, size_ratio_h: float, font_size_ratio: float,
+def _notch_heights_in(font_path: str, shaped: bool, height: int, size_ratio_h: float, font_size_ratio: float,
                       notch_pad_ratio: float) -> tuple[int, int, int, int]:
     SS = 3
     # base_h is the nominal height size_ratio_h asks for.  It drives the font
@@ -1609,7 +1609,7 @@ def _notch_heights_in(font_path: str, height: int, size_ratio_h: float, font_siz
     # layout instead of rounding its own way.  Plain int() at 500.
     base_h = px(height * 0.075 * size_ratio_h)
     font_size_ss = px(base_h * font_size_ratio) * SS
-    font = _notch_font_at(font_path, font_size_ss)
+    font = _notch_font_at(font_path, shaped, font_size_ss)
     _tmp_d = ImageDraw.Draw(Image.new("L", (1, 1)))
 
     # Vertical padding.  Floored so an aggressive notch_pad_ratio crops the empty
@@ -2423,7 +2423,9 @@ def draw_award_sash(
         font = ImageFont.load_default()
 
     _txt_rgb = text_color if text_color is not None else (225, 225, 225)
-    if _HAS_SKIA:
+    # Skia's drawString neither joins nor orders letters, so a shaped label
+    # (fonts.shaping) takes the PIL path, whose text is laid out by raqm.
+    if _HAS_SKIA and not fonts.shaping():
         sash = _sash_skia(
             (ex - ox, ey - oy), _to_poster(sl / 2, sh / 2), (ox, oy), -45 if left else 45,
             (sash_length, sash_height), (edge / SS, margin / SS), (hi, lo, border_colour, dark),

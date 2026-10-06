@@ -23,10 +23,13 @@ WORKDIR /app
 
 # libcairo2 (runtime only — no -dev headers needed) for pycairo;
 # gosu for privilege drop in entrypoint.sh;
-# tini as PID 1 so orphaned processes get reaped (see CMD below).
+# tini as PID 1 so orphaned processes get reaped (see CMD below);
+# libfribidi0, which Pillow's wheel loads to enable raqm (it bundles HarfBuzz
+# and raqm themselves): Arabic-script labels are shaped with it (fonts.py).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     libcairo2 \
+    libfribidi0 \
     tini \
     && rm -rf /var/lib/apt/lists/*
 

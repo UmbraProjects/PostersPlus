@@ -834,7 +834,7 @@ def get_combined_badge(tokens: list[str], height: int) -> Image.Image | None:
 # ---------------------------------------------------------------------------
 
 try:
-    _FALLBACK_FONT: ImageFont.FreeTypeFont | ImageFont.ImageFont = ImageFont.truetype(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "Inter-Bold.ttf"), 28)
+    _FALLBACK_FONT: ImageFont.FreeTypeFont | ImageFont.ImageFont = ImageFont.truetype(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "Inter-Bold.ttf"), 28, layout_engine=ImageFont.Layout.BASIC)
 except IOError:
     _FALLBACK_FONT = ImageFont.load_default()
 
