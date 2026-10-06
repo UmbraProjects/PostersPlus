@@ -2028,6 +2028,10 @@ _CHIP_RADIUS     = 0.30    # of the chip's height
 _CHIP_SHADOW_A   = 90      # peak drop-shadow alpha under the chip
 
 
+# Image.info key under which a side chip leaves its (left, top, right, bottom).
+CHIP_BOX_KEY = "posters_chip_box"
+
+
 @lru_cache(maxsize=32)
 def _chip_mask(w: int, h: int, radius: int) -> Image.Image:
     """The side chip's shape at 1x, drawn at 3x and box-reduced for
@@ -2155,6 +2159,9 @@ def _place_chip(image: Image.Image, badge: Image.Image, mask: Image.Image,
     cl, ct = max(0, -sx), max(0, -sy)
     result.alpha_composite(shadow.crop((cl, ct, shadow.width, shadow.height)), (sx + cl, sy + ct))
     result.alpha_composite(badge, (x, y))
+    # The chip's own box, for anything laid out against it: measured by what
+    # changed, the shadow would count on bright art and not on dark.
+    result.info[CHIP_BOX_KEY] = (x, y, x + w, y + h)
     return result
 
 

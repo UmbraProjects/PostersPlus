@@ -5606,7 +5606,10 @@ def _build_poster(
         _pre_rank = np.asarray(image) if _before_overlays is not None else None
         _notch_box = None
         if _pre_notch is not None:
-            _notch_box = _changed_box(_pre_notch, np.asarray(image.convert("RGB"))[:_pre_notch.shape[0]])
+            # A side chip says where it is; its soft shadow, measured, would
+            # count on bright art and not on dark, moving the numeral with it.
+            _notch_box = image.info.pop(_awards_mod.CHIP_BOX_KEY, None) or _changed_box(
+                _pre_notch, np.asarray(image.convert("RGB"))[:_pre_notch.shape[0]])
         image, _rank_print = _draw_trending_rank(image, cfg, _rank, _before_rank, media_kind,
                                                  frost=(_frost_tint, _frost_ref),
                                                  notch_box=_notch_box)
