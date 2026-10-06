@@ -1232,6 +1232,10 @@ def _merge_imdb_dataset_rating(
 
 
 _ANIME_FILL_SOURCES = ("anilist", "kitsu")
+# What _fill_anime_scores can supply: the two above, and MyAnimeList through
+# Jikan where MDBList's (the show's first season) isn't the title's own.
+_ANIME_SCORE_SOURCES = _ANIME_FILL_SOURCES + ("myanimelist",)
+
 
 
 def _shows_rating_badges(rcfg: "RequestConfig") -> bool:
@@ -1247,70 +1251,126 @@ def _shows_rating_badges(rcfg: "RequestConfig") -> bool:
 
 
 def _anime_sources_wanted(rcfg: "RequestConfig", weight_sets) -> set[str]:
-    """The AniList / Kitsu scores this request has a use for: a badge that
-    shows one, or a weight set that counts one.  Nothing else fetches them."""
+    """The AniList / Kitsu / MyAnimeList scores this request has a use for: a
+    badge that shows one, or a weight set that counts one.  Nothing else
+    fetches them."""
     wanted: set[str] = set()
     if _shows_rating_badges(rcfg):
-        wanted |= set(rcfg.rating_badges.split(",")) & set(_ANIME_FILL_SOURCES)
+        wanted |= set(rcfg.rating_badges.split(",")) & set(_ANIME_SCORE_SOURCES)
     for weights in weight_sets:
-        wanted |= {s for s in _ANIME_FILL_SOURCES if (weights or {}).get(s, 0) > 0}
+        wanted |= {s for s in _ANIME_SCORE_SOURCES if (weights or {}).get(s, 0) > 0}
     return wanted
 
 
 async def _fill_anime_scores(client, ratings_dict, wanted, *, media_type: str,
                              tmdb_id: str | None, imdb_id: str | None,
                              own: "tuple[str, int] | None" = None,
-                             later_season: bool = False):
-    """Add the AniList and Kitsu scores *wanted* that *ratings_dict* lacks.
+                             later_season: bool = False,
+                             own_mal_id: int | None = None):
+    """Add the AniList, Kitsu and MyAnimeList scores *wanted* that
+    *ratings_dict* lacks.
 
     MDBList carries only MyAnimeList for anime, and a request by anime id
     brings only its own site's score, so without this a title shows AniList
-    or Kitsu only when asked for by that site's id.  The anime id list maps
-    the title's TMDB / IMDb id to each site's entry (see
-    anime_ids.reverse_lookup), whose score comes from the same cached
-    metadata an anime-id request reads.  Merged per request, like the other
-    extras, never into the rating row.
+    or Kitsu only when asked for by that site's id.  Each comes from the
+    entry itself where there is one, else from the show's first season:
+
+    * An anime-id request (*own*) takes the other site's score from its own
+      entry's sibling, and MyAnimeList's from Jikan by the entry's MAL id.
+    * The TMDB / IMDb id names the whole show, whose first season is what
+      anime_ids.reverse_lookup (or, for a show the mapping lacks yet,
+      anime_resolve.reverse) gives.  That is the title for a TMDB-id request
+      and the fallback for a later season (*later_season*) whose own entry
+      has no score yet: a new season's Kitsu score waits for enough ratings.
+    * MyAnimeList: MDBList's score is the first season's, so it stands for
+      everything but a later season, which asks Jikan for its own and keeps
+      MDBList's when Jikan has none.  With no MDBList score at all (no IMDb
+      or TMDB id to ask by), Jikan is asked for the entry's or the show's.
+
+    Merged per request, like the other extras, never into the rating row.
 
     Returns (ratings, pending): pending when a fetch failed for a reason
     other than the site having no such entry, so the render isn't kept.
     """
     if not isinstance(ratings_dict, dict):
         return ratings_dict, False
-    missing = [ns for ns in _ANIME_FILL_SOURCES if ns in wanted and ns not in ratings_dict]
-    if not missing:
-        return ratings_dict, False
-    # An anime-id request (*own*) takes the other site's score from the same
-    # entry.  The TMDB / IMDb id names the whole show, whose lowest entry is
-    # the first season, so for a later season (*later_season*) that would put
-    # season 1's score on it; there only the entry's own sibling will do.
-    ids = {} if later_season else anime_ids.reverse_lookup(media_type, tmdb_id, imdb_id)
-    if own is not None:
-        ns, aid = own
-        if ns == "anilist":
-            sibling = anime_ids.kitsu_for_anilist(aid)
-        elif ns == "kitsu":
-            sibling = min(anime_ids.anilist_for_kitsu(aid), default=None)
-        else:
-            sibling = None
-        if sibling is not None:
-            ids = {**ids, ("kitsu" if ns == "anilist" else "anilist"): sibling}
-    todo = [(ns, ids[ns]) for ns in missing if ns in ids]
-    if not todo:
-        return ratings_dict, False
-    results = await asyncio.gather(
-        *(anime.fetch_anime_metadata(client, ns, aid) for ns, aid in todo), return_exceptions=True)
     out, pending = dict(ratings_dict), False
-    for (ns, aid), result in zip(todo, results):
+
+    def siblings(ids: dict) -> dict:
+        # The list pairs Kitsu and AniList entries on their MAL rows.
+        ids = dict(ids)
+        if "anilist" in ids and "kitsu" not in ids:
+            k = anime_ids.kitsu_for_anilist(ids["anilist"])
+            if k is not None:
+                ids["kitsu"] = k
+        if "kitsu" in ids and "anilist" not in ids:
+            a = min(anime_ids.anilist_for_kitsu(ids["kitsu"]), default=None)
+            if a is not None:
+                ids["anilist"] = a
+        return ids
+
+    season_ids = siblings({own[0]: own[1]}) if own is not None and own[0] in _ANIME_FILL_SOURCES else {}
+    # For a first season the show's entry is the same one, and covers a
+    # sibling the list doesn't pair with the requested id.
+    show_ids = siblings(anime_ids.reverse_lookup(media_type, tmdb_id, imdb_id)
+                        or anime_resolve.reverse(media_type, tmdb_id))
+
+    async def provider_score(ns: str, aid: int):
+        nonlocal pending
+        try:
+            result = await anime.fetch_anime_metadata(client, ns, aid)
+        except Exception as exc:                       # never fail the render over a badge
+            logger.warning(f"Anime score fill failed for {ns}:{aid}: {exc}")
+            result = None
         if isinstance(result, tuple):
-            score = (result[7] or {}).get("anime_score")
-            if score is not None:
-                out[ns] = score
-        else:
-            # None is also what a genuine miss returns, and that one is
-            # negative-cached; without the marker it was a blip or a throttle.
-            cached = get_cached_tvdb_json(anime._cache_key(ns, aid))
-            if not (cached and cached.get("__miss__")):
+            return result[7] or {}
+        # None is also what a genuine miss returns, and that one is
+        # negative-cached; without the marker it was a blip or a throttle.
+        if not anime.known_miss(ns, aid):
+            pending = True
+        return None
+
+    # AniList / Kitsu: the entry's own, then the show's first season's.
+    fill = [ns for ns in _ANIME_FILL_SOURCES if ns in wanted and ns not in out]
+    season_meta: dict = {}
+
+    async def score_for(ns: str):
+        for ids in (season_ids, show_ids):
+            aid = ids.get(ns)
+            if aid is None:
+                continue
+            meta = await provider_score(ns, aid)
+            if meta is None:
+                continue
+            if ids is season_ids:
+                season_meta[ns] = meta
+            if meta.get("anime_score") is not None:
+                return ns, meta["anime_score"]
+        return ns, None
+
+    for ns, score in await asyncio.gather(*(score_for(ns) for ns in fill)):
+        if score is not None:
+            out[ns] = score
+
+    # MyAnimeList through Jikan, where MDBList's isn't the title's own.
+    if "myanimelist" in wanted and anime.jikan_enabled() and (
+            later_season or "myanimelist" not in out):
+        mal_ids: list[int] = []
+        if own is not None:
+            mal_ids.append(own_mal_id or next(
+                (m for m in (anime_ids.mal_for(ns, aid) for ns, aid in season_ids.items()) if m), None)
+                or (season_meta.get("anilist") or {}).get("anime_mal_id"))
+        if "myanimelist" not in out:
+            mal_ids.append(next(
+                (m for m in (anime_ids.mal_for(ns, aid) for ns, aid in show_ids.items()) if m), None))
+        for mal_id in dict.fromkeys(m for m in mal_ids if m):
+            score, answered = await anime.fetch_mal_score(client, int(mal_id))
+            if not answered:
                 pending = True
+                break
+            if score is not None:
+                out["myanimelist"] = score
+                break
     return out, pending
 
 
@@ -9777,6 +9837,17 @@ async def get_poster(
     # Skipped when an explicit quality= override is supplied (one-off), and
     # for ?debug=1.
     # ------------------------------------------------------------------
+    effective_movie_weights = rcfg.movie_weights or _cfg.MOVIE_WEIGHTS
+    effective_tv_weights    = rcfg.tv_weights    or _cfg.TV_WEIGHTS
+    # Anime weights are opt-in: a URL naming neither scores its anime with the
+    # two sets above, exactly as it did before the anime parameters existed.
+    effective_anime_movie_weights = rcfg.anime_movie_weights or effective_movie_weights
+    effective_anime_tv_weights    = rcfg.anime_tv_weights    or effective_tv_weights
+
+    _anime_fill_wanted = _anime_sources_wanted(rcfg, (
+        effective_movie_weights, effective_tv_weights,
+        effective_anime_movie_weights, effective_anime_tv_weights))
+
     if not quality and not _cfg.DISABLE_COMPOSITE_CACHE and not _debug:
         # Server-side detection settings affect the rendered output but aren't URL
         # params, so fold a signature into the hash.  Toggling detection or
@@ -9834,9 +9905,13 @@ async def get_poster(
         # with it.  Without this, anime composites rendered with the text
         # title would outlive the key being added.
         _tmdb_sig = "|tmdb=0" if (not effective_tmdb_key and is_anime) else ""
-        # Later seasons stopped borrowing season 1's anime scores; the marker
-        # moves them off composites drawn with those.
-        _season_sig = "|as=1" if _anime_later_season else ""
+        # Anime scores became season-true (Jikan, a new season's own AniList
+        # score) with the first season's as fallback, and a TMDB-id request
+        # stopped taking a special for the first season; the marker moves
+        # anime that draw or weight those scores off composites made before.
+        _season_sig = "|as=2" if (_anime_fill_wanted and (
+            is_anime or anime_ids.reverse_lookup(type, tmdb_id if has_tmdb_id else None,
+                                                 imdb_id or None))) else ""
         # TMDB-only anime ask MDBList now; their composites drew without it.
         _anime_tmdb_sig = "|amt=1" if (is_anime and has_tmdb_id and not imdb_id) else ""
         _params_hash = hashlib.sha256(
@@ -10076,27 +10151,21 @@ async def get_poster(
             "poster will be served without rating/award data."
         )
 
-    effective_movie_weights = rcfg.movie_weights or _cfg.MOVIE_WEIGHTS
-    effective_tv_weights    = rcfg.tv_weights    or _cfg.TV_WEIGHTS
-    # Anime weights are opt-in: a URL naming neither scores its anime with the
-    # two sets above, exactly as it did before the anime parameters existed.
-    effective_anime_movie_weights = rcfg.anime_movie_weights or effective_movie_weights
-    effective_anime_tv_weights    = rcfg.anime_tv_weights    or effective_tv_weights
-
-    _anime_fill_wanted = _anime_sources_wanted(rcfg, (
-        effective_movie_weights, effective_tv_weights,
-        effective_anime_movie_weights, effective_anime_tv_weights))
     _anime_scores_pending = False
 
     async def _with_anime_scores(ratings):
         nonlocal _anime_scores_pending
         if not _anime_fill_wanted:
             return ratings
+        # The request's own site's score is already in *ratings* when the
+        # provider has one; asked for here too, a new season it hasn't scored
+        # yet takes the first season's.
         ratings, pending = await _fill_anime_scores(
-            client, ratings, _anime_fill_wanted - ({anime_namespace} if is_anime else set()),
+            client, ratings, _anime_fill_wanted,
             media_type=type, tmdb_id=tmdb_id if has_tmdb_id else None, imdb_id=effective_imdb_id,
             own=(anime_namespace, anime_id) if is_anime else None,
-            later_season=_anime_later_season)
+            later_season=_anime_later_season,
+            own_mal_id=tmdb_data.get("anime_mal_id") if is_anime else None)
         _anime_scores_pending = _anime_scores_pending or pending
         return ratings
 
@@ -11437,6 +11506,9 @@ async def get_poster(
             # them before giving up on a score entirely. calculate_weighted_score
             # returns "N/A" itself when ratings_dict has nothing usable, so this
             # is safe even when neither source has anything to offer.
+            # The provider's own score doesn't depend on MDBList.
+            if is_anime and tmdb_data.get("anime_score") is not None:
+                ratings_dict = {anime_namespace: tmdb_data["anime_score"]}
             ratings_dict     = _merge_imdb_dataset_rating(ratings_dict, effective_imdb_id, rcfg)
             ratings_dict     = _merge_direct_tmdb_rating(ratings_dict, tmdb_data, rcfg)
             ratings_dict     = await _with_anime_scores(ratings_dict)
@@ -11467,10 +11539,6 @@ async def get_poster(
             # that; dropping them on the way in cleans rows written before.
             ratings_dict = _mdblist_row_ratings(ratings_dict)
             _row_ratings, _row_age_rating = ratings_dict, age_rating
-            if _anime_later_season and isinstance(ratings_dict, dict):
-                # MDBList's MyAnimeList score is the show's first entry's.
-                # Dropped for this render only; the row is the show's.
-                ratings_dict = {k: v for k, v in ratings_dict.items() if k != "myanimelist"}
             if _tmdb_tv_spine and not rating_already_cached:
                 # MDBList answered just now, so its Horror verdict can settle a
                 # label worked out from the cached guess above.
@@ -11867,6 +11935,7 @@ async def get_poster(
                 "tmdb_id":           tmdb_id,
                 "type":              type,
                 "score":             score if isinstance(score, str) else int(score),
+                "ratings":           ratings_dict if isinstance(ratings_dict, dict) else None,
                 "is_anime":          is_anime or (
                     isinstance(ratings_dict, dict) and is_anime_rated(ratings_dict)
                 ),

@@ -228,7 +228,7 @@ def is_series_start(namespace: str, anime_id: int) -> bool:
     of its TMDB series, so the series' own art is not its art.  True for the
     first season, a film, or an entry the list doesn't place in a series.
     An entry with no season number is the start when it is the series'
-    lowest id on its site, as in reverse_lookup."""
+    first by _SERIES_START_ORDER, as in reverse_lookup."""
     if not is_enabled() or namespace not in _NAMESPACE_FIELDS:
         return True
     try:
@@ -244,13 +244,24 @@ def is_series_start(namespace: str, anime_id: int) -> bool:
         if season is not None:
             return season == 1 and (offset or 0) <= 0
         first = db.execute(
-            "SELECT MIN(anime_id) FROM anime_id_map WHERE namespace = ? AND tmdb_tv = ?",
+            f"SELECT anime_id FROM anime_id_map WHERE namespace = ? AND tmdb_tv = ? "
+            f"ORDER BY {_SERIES_START_ORDER} LIMIT 1",
             (namespace, tmdb_tv),
         ).fetchone()
     except Exception as exc:
         logger.warning(f"Anime season lookup failed for {namespace}:{anime_id}: {exc}")
         return True
     return first is None or first[0] is None or int(first[0]) == int(anime_id)
+
+
+# Which of a show's entries is its start: the one the list places at season 1
+# episode 1, else one it doesn't place, else a later season, and TMDB's
+# specials (season 0) last.  By id within each: a show's lowest id is normally
+# its first season, but a pilot or festival special can predate it (Black
+# Clover's Jump Festa 2016 special, AniList 87528, comes before the series).
+_SERIES_START_ORDER = (
+    "CASE WHEN season = 1 AND COALESCE(episode_offset, 0) <= 0 THEN 0 "
+    "WHEN season IS NULL THEN 1 WHEN season = 0 THEN 3 ELSE 2 END, anime_id")
 
 
 def mal_to_provider(mal_id: int) -> "tuple[str, int] | None":
@@ -285,9 +296,8 @@ def reverse_lookup(media_type: str, tmdb_id: str | None, imdb_id: str | None) ->
     The TMDB id is matched as the kind being rendered (see lookup) and wins
     over the IMDb id when it matches anything.  A series' later seasons map
     to the same TMDB and IMDb ids as its first, so a show matches several
-    entries per namespace; the lowest id is taken, which on both sites is
-    normally the first season — the same entry MDBList's MyAnimeList score
-    comes from.
+    entries per namespace; the first season is taken (_SERIES_START_ORDER),
+    the same entry MDBList's MyAnimeList score comes from.
     """
     if not is_enabled():
         return {}
@@ -300,14 +310,19 @@ def reverse_lookup(media_type: str, tmdb_id: str | None, imdb_id: str | None) ->
     for column, value in tries:
         try:
             rows = _get_db().execute(
-                f"SELECT namespace, MIN(anime_id) FROM anime_id_map WHERE {column} = ? GROUP BY namespace",
+                f"SELECT namespace, anime_id FROM anime_id_map WHERE {column} = ? "
+                f"ORDER BY {_SERIES_START_ORDER}",
                 (value,),
             ).fetchall()
         except Exception as exc:
             logger.warning(f"Anime id reverse lookup failed for {column}={value}: {exc}")
             return {}
         if rows:
-            return {ns: int(aid) for ns, aid in rows if ns in _NAMESPACE_FIELDS}
+            found: dict[str, int] = {}
+            for ns, aid in rows:
+                if ns in _NAMESPACE_FIELDS:
+                    found.setdefault(ns, int(aid))
+            return found
     return {}
 
 
@@ -327,6 +342,15 @@ def anilist_for_kitsu(kitsu_id: int) -> list[int]:
     return [int(a) for (a,) in _query(
         "SELECT DISTINCT anilist_id FROM anime_mal_map WHERE kitsu_id = ? AND anilist_id IS NOT NULL",
         (int(kitsu_id),))]
+
+
+def mal_for(namespace: str, anime_id: int) -> int | None:
+    """The MyAnimeList id of Kitsu or AniList entry *anime_id*, or None."""
+    col = {"kitsu": "kitsu_id", "anilist": "anilist_id"}.get(namespace)
+    if col is None:
+        return None
+    rows = _query(f"SELECT mal_id FROM anime_mal_map WHERE {col} = ? LIMIT 1", (int(anime_id),))
+    return int(rows[0][0]) if rows else None
 
 
 def kitsu_for_anilist(anilist_id: int) -> int | None:

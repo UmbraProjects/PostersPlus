@@ -223,6 +223,32 @@ def _key(namespace: str, anime_id: int, media_type: str) -> str:
     return f"animeres:v1:{namespace}:{anime_id}:{kind}"
 
 
+def _reverse_key(kind: str, tmdb_id) -> str:
+    return f"animeres-rev:v1:{kind}:{tmdb_id}"
+
+
+def _remember_reverse(kind: str, tmdb_id, namespace: str, anime_id: int) -> None:
+    """Note which anime entry a name search tied to *tmdb_id*, so a request
+    for the show by its TMDB id finds its AniList and Kitsu scores before the
+    mapping lists it (reverse())."""
+    if namespace not in anime.NAMESPACES:
+        return
+    key = _reverse_key(kind, tmdb_id)
+    row = dict(get_cached_tvdb_json(key) or {})
+    row[namespace] = int(anime_id)
+    set_cached_tvdb_json(key, row, _HIT_TTL)
+
+
+def reverse(media_type: str, tmdb_id) -> dict[str, int]:
+    """{namespace: anime id} for a new show resolve() found by name, as
+    anime_ids.reverse_lookup gives for a mapped one; empty when none was."""
+    if not tmdb_id or not str(tmdb_id).isdigit():
+        return {}
+    kind = "movie" if media_type == "movie" else "tv"
+    row = get_cached_tvdb_json(_reverse_key(kind, tmdb_id)) or {}
+    return {ns: int(aid) for ns, aid in row.items() if ns in anime.NAMESPACES}
+
+
 def resolved_as_sequel(namespace: str, anime_id: int, media_type: str) -> bool:
     """Whether resolve() found this title's ids through a prequel: a later
     season the mapping hasn't caught up with (anime_season.py)."""
@@ -261,6 +287,8 @@ async def resolve(client: httpx.AsyncClient, namespace: str, anime_id: int,
                     if cached.get("tmdb_id"):
                         logger.info(f"Resolved unmapped {namespace}:{anime_id} to TMDB {kind} "
                                     f"{cached['tmdb_id']} ({cached.get('via')})")
+                        if cached.get("via") == "search":
+                            _remember_reverse(kind, cached["tmdb_id"], namespace, anime_id)
                 if needs_imdb(cached):
                     imdb_id, answered = await _tmdb_imdb_id(client, tmdb_key, kind, cached["tmdb_id"])
                     cached = {**cached, "imdb_id": imdb_id, "imdb_checked": answered}
@@ -279,4 +307,8 @@ async def resolve(client: httpx.AsyncClient, namespace: str, anime_id: int,
                     fut.set_result(cached)
     if not cached or not cached.get("tmdb_id"):
         return None
+    if (cached.get("via") == "search" and namespace in anime.NAMESPACES
+            and namespace not in reverse(media_type, cached["tmdb_id"])):
+        # Found before the reverse note was kept.
+        _remember_reverse(kind, cached["tmdb_id"], namespace, anime_id)
     return anime_ids.MappedIds(cached["tmdb_id"], cached.get("imdb_id"))

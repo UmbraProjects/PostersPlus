@@ -256,6 +256,104 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(client.url)   # no request made
 
 
+class UnscoredRecheckTests(unittest.IsolatedAsyncioTestCase):
+    """A new show has no score for its first days; its cached metadata is
+    asked again once a day rather than keeping "no score" for a week."""
+
+    def setUp(self):
+        self._real_get = anime.get_cached_tvdb_json
+        self._real_set = anime.set_cached_tvdb_json
+        self.store: dict = {}
+        anime.get_cached_tvdb_json = lambda key: self.store.get(key)
+        anime.set_cached_tvdb_json = lambda k, v, t: self.store.__setitem__(k, v)
+        self._quiet = anime._anilist_quiet_until
+        anime._anilist_quiet_until = 0.0
+
+    def tearDown(self):
+        anime.get_cached_tvdb_json = self._real_get
+        anime.set_cached_tvdb_json = self._real_set
+        anime._anilist_quiet_until = self._quiet
+
+    def _row(self, score):
+        td = anime._blank_tmdb_data()
+        td["anime_score"] = score
+        return {"genre_ids": [16], "release_year": "2026", "title": "T",
+                "poster_path": "u", "tmdb_data": td}
+
+    def _media(self, score):
+        return _FakeResponse(200, {"data": {"Media": {
+            "id": 1, "idMal": 5, "title": {"english": "T"}, "coverImage": {"extraLarge": "u"},
+            "genres": [], "averageScore": score, "format": "TV", "startDate": {}}}})
+
+    async def test_a_cached_unscored_entry_is_asked_again_once(self):
+        self.store[anime._cache_key("anilist", 1)] = self._row(None)
+        client = _FakeClient(self._media(87))
+        result = await anime.fetch_anime_metadata(client, "anilist", 1)
+        self.assertEqual(result[7]["anime_score"], 87)
+        self.assertEqual(result[7]["anime_mal_id"], 5)
+        # Still unscored after asking: the cached row is used until tomorrow.
+        self.store[anime._cache_key("anilist", 1)] = self._row(None)
+        client = _FakeClient(self._media(None))
+        self.store.pop(anime._score_check_key("anilist", 1), None)
+        await anime.fetch_anime_metadata(client, "anilist", 1)
+        client = _FakeClient(self._media(90))
+        result = await anime.fetch_anime_metadata(client, "anilist", 1)
+        self.assertIsNone(client.url)
+        self.assertIsNone(result[7]["anime_score"])
+
+    async def test_a_failed_recheck_keeps_the_cached_row(self):
+        self.store[anime._cache_key("anilist", 1)] = self._row(None)
+        result = await anime.fetch_anime_metadata(_FakeClient(RuntimeError("down")), "anilist", 1)
+        self.assertEqual(result[4], "T")
+
+    async def test_a_scored_entry_is_not_asked_again(self):
+        self.store[anime._cache_key("anilist", 1)] = self._row(70)
+        client = _FakeClient(self._media(87))
+        self.assertEqual((await anime.fetch_anime_metadata(client, "anilist", 1))[7]["anime_score"], 70)
+        self.assertIsNone(client.url)
+
+
+class JikanTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._saved = (anime.get_cached_tvdb_json, anime.set_cached_tvdb_json,
+                       anime.JIKAN_API_URL, anime._jikan_quiet_until)
+        self.store: dict = {}
+        anime.get_cached_tvdb_json = lambda key: self.store.get(key)
+        anime.set_cached_tvdb_json = lambda k, v, t: self.store.__setitem__(k, v)
+        anime.JIKAN_API_URL = "https://jikan.example/v4"
+        anime._jikan_quiet_until = 0.0
+
+    def tearDown(self):
+        (anime.get_cached_tvdb_json, anime.set_cached_tvdb_json,
+         anime.JIKAN_API_URL, anime._jikan_quiet_until) = self._saved
+
+    async def test_score_is_read_and_cached(self):
+        client = _FakeClient(_FakeResponse(200, {"data": {"mal_id": 61967, "score": 8.83}}))
+        self.assertEqual(await anime.fetch_mal_score(client, 61967), (8.83, True))
+        self.assertEqual(client.url, "https://jikan.example/v4/anime/61967")
+        client = _FakeClient(_FakeResponse(200, {"data": {"score": 1.0}}))
+        self.assertEqual(await anime.fetch_mal_score(client, 61967), (8.83, True))
+        self.assertIsNone(client.url)
+
+    async def test_unscored_and_missing_are_answers(self):
+        client = _FakeClient(_FakeResponse(200, {"data": {"score": None}}))
+        self.assertEqual(await anime.fetch_mal_score(client, 1), (None, True))
+        self.assertEqual(await anime.fetch_mal_score(_FakeClient(_FakeResponse(404)), 2), (None, True))
+
+    async def test_an_outage_pauses_jikan(self):
+        import httpx
+        self.assertEqual(await anime.fetch_mal_score(_FakeClient(httpx.ConnectError("x")), 3), (None, False))
+        client = _FakeClient(_FakeResponse(200, {"data": {"score": 7.0}}))
+        self.assertEqual(await anime.fetch_mal_score(client, 3), (None, False))
+        self.assertIsNone(client.url)
+
+    async def test_unset_url_asks_nothing(self):
+        anime.JIKAN_API_URL = ""
+        client = _FakeClient(_FakeResponse(200, {"data": {"score": 7.0}}))
+        self.assertEqual(await anime.fetch_mal_score(client, 4), (None, False))
+        self.assertIsNone(client.url)
+
+
 class RatingIntegrationTests(unittest.TestCase):
     """The provider score has to behave like any other weighted source."""
 

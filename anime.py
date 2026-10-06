@@ -45,6 +45,7 @@ from config import (
     ANIME_NEG_CACHE_DURATION,
     ANILIST_API_URL,
     KITSU_API_BASE,
+    JIKAN_API_URL,
 )
 
 # Namespaces accepted on the wire, in the order they're probed by the request
@@ -71,7 +72,7 @@ class _TransientError(Exception):
 # Lazily-created asyncio primitives (bind to the running loop on first use).
 # One per provider: sharing a semaphore would make Kitsu queue behind AniList's
 # much tighter budget for no reason.
-_CONCURRENCY = {"anilist": ANILIST_CONCURRENCY, "kitsu": KITSU_CONCURRENCY}
+_CONCURRENCY = {"anilist": ANILIST_CONCURRENCY, "kitsu": KITSU_CONCURRENCY, "jikan": 2}
 _semaphores: "dict[str, asyncio.Semaphore]" = {}
 
 
@@ -269,6 +270,7 @@ _ANILIST_QUERY = """
 query ($id: Int) {
   Media(id: $id, type: ANIME) {
     id
+    idMal
     title { romaji english native }
     startDate { year month day }
     seasonYear
@@ -505,6 +507,8 @@ def _blank_tmdb_data() -> dict:
         # The provider's wide art (AniList's banner, Kitsu's cover image):
         # landscape's last art before a crop of the cover or the canvas.
         "anime_banner":         None,
+        # AniList's MyAnimeList id for the same entry (Kitsu doesn't say).
+        "anime_mal_id":         None,
         # AniList's titles, year, format and prequel, for anime_resolve.
         "anime_lookup":         None,
     }
@@ -551,6 +555,7 @@ def _normalise_anilist(media: dict) -> tuple:
         "movie" if (media.get("format") or "") in _MOVIE_FORMATS else "series"
     )
     tmdb_data["anime_banner"]      = media.get("bannerImage")
+    tmdb_data["anime_mal_id"]      = media.get("idMal")
     # What anime_resolve needs to find a TMDB id the id mapping lacks, so it
     # doesn't ask AniList again: titles, start year, format and the prequel.
     tmdb_data["anime_lookup"] = {
@@ -648,6 +653,14 @@ def poster_cache_key(namespace: str, anime_id: int, url: str) -> str:
     return f"anime_{namespace}_{anime_id}_{digest}"
 
 
+# How often an entry the provider hasn't scored yet is asked for its score.
+_UNSCORED_RECHECK = 86400
+
+
+def _score_check_key(namespace: str, anime_id: int) -> str:
+    return f"anime_scorecheck:{namespace}:{anime_id}"
+
+
 def known_miss(namespace: str, anime_id: int) -> bool:
     """True when the provider is known to have no entry for *anime_id* (the
     negative cache), as against a ``fetch_anime_metadata`` None that was a
@@ -692,8 +705,7 @@ async def fetch_anime_metadata(
         if cached.get("__miss__"):
             logger.info(f"{namespace} negative cache hit for {anime_id}")
             return None
-        logger.info(f"{namespace} metadata cache hit for {anime_id}")
-        return (
+        hit = (
             cached["genre_ids"],
             False,
             [],
@@ -703,7 +715,25 @@ async def fetch_anime_metadata(
             None,
             cached["tmdb_data"],
         )
+        # A new show has no score for its first days (Kitsu waits for enough
+        # ratings, AniList for its first episodes), and the metadata is kept
+        # a week; an unscored entry is asked again once a day instead.
+        score_check = _score_check_key(namespace, anime_id)
+        if (cached["tmdb_data"] or {}).get("anime_score") is not None or get_cached_tvdb_json(score_check):
+            logger.info(f"{namespace} metadata cache hit for {anime_id}")
+            return hit
+        set_cached_tvdb_json(score_check, {"checked": True}, _UNSCORED_RECHECK)
+        logger.info(f"{namespace} metadata for {anime_id} has no score yet; asking again")
+        return await _fetch_and_cache(client, namespace, anime_id, key) or hit
 
+    fresh = await _fetch_and_cache(client, namespace, anime_id, key)
+    if fresh is not None and fresh[7].get("anime_score") is None:
+        set_cached_tvdb_json(_score_check_key(namespace, anime_id), {"checked": True}, _UNSCORED_RECHECK)
+    return fresh
+
+
+async def _fetch_and_cache(client: httpx.AsyncClient, namespace: str, anime_id: int,
+                           key: str) -> tuple | None:
     try:
         async with _get_semaphore(namespace):
             if namespace == "anilist":
@@ -748,3 +778,68 @@ async def fetch_anime_metadata(
     )
 
     return genre_ids, False, [], release_year, title, poster_url, None, tmdb_data
+
+
+# ---------------------------------------------------------------------------
+# MyAnimeList scores through Jikan
+# ---------------------------------------------------------------------------
+
+_MAL_SCORE_TTL = 86400
+_MAL_UNSCORED_TTL = 12 * 3600
+# After Jikan fails, it isn't asked again for this long, so an instance that
+# can't reach it doesn't wait out a timeout on every render.
+_JIKAN_COOLDOWN = 300
+_jikan_quiet_until = 0.0
+
+
+def jikan_enabled() -> bool:
+    return bool(JIKAN_API_URL)
+
+
+def _mal_score_key(mal_id: int) -> str:
+    return f"jikan_score:v1:{mal_id}"
+
+
+async def fetch_mal_score(client: httpx.AsyncClient, mal_id: int) -> "tuple[float | None, bool]":
+    """MyAnimeList's score (0-10) for *mal_id* as Jikan reports it.
+
+    MDBList keeps one MyAnimeList score per IMDb title, the first season's,
+    so this is what gives a later season its own.  Returns (score, answered):
+    answered is False when Jikan couldn't be asked (unset, throttled, down),
+    which the caller treats like any other provider blip.  A score of None
+    with answered True is an entry MAL hasn't scored yet (or doesn't have).
+    """
+    global _jikan_quiet_until
+    if not JIKAN_API_URL:
+        return None, False
+    key = _mal_score_key(mal_id)
+    cached = get_cached_tvdb_json(key)
+    if cached is not None:
+        return cached.get("score"), True
+    if time.monotonic() < _jikan_quiet_until:
+        return None, False
+    try:
+        async with _get_semaphore("jikan"):
+            logger.info(f"External API Call: Jikan score for mal:{mal_id}")
+            resp = await client.get(f"{JIKAN_API_URL}/anime/{int(mal_id)}", timeout=6.0,
+                                    follow_redirects=True)
+    except httpx.HTTPError as exc:
+        logger.warning(f"Jikan unavailable for mal:{mal_id}: {type(exc).__name__}: {exc}")
+        _jikan_quiet_until = time.monotonic() + _JIKAN_COOLDOWN
+        return None, False
+    if resp.status_code == 404:
+        set_cached_tvdb_json(key, {"score": None}, ANIME_NEG_CACHE_DURATION * 86400)
+        return None, True
+    if resp.status_code != 200:
+        # Jikan answers 429 for its own per-second limit and passes MAL's
+        # outages on as 5xx; a short pause covers both.
+        logger.warning(f"Jikan error {resp.status_code} for mal:{mal_id}")
+        _jikan_quiet_until = time.monotonic() + (10 if resp.status_code == 429 else _JIKAN_COOLDOWN)
+        return None, False
+    try:
+        score = (resp.json().get("data") or {}).get("score")
+        score = float(score) if score is not None else None
+    except (ValueError, TypeError, AttributeError):
+        return None, False
+    set_cached_tvdb_json(key, {"score": score}, _MAL_SCORE_TTL if score is not None else _MAL_UNSCORED_TTL)
+    return score, True

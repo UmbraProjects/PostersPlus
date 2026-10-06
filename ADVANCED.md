@@ -84,6 +84,12 @@ Override the Kitsu endpoint (useful for a proxy or a mirror).
 
 Default: `https://kitsu.io/api/edge`
 
+### `JIKAN_API_URL`
+
+The Jikan v4 instance (an unofficial MyAnimeList API, no key needed) a later anime season's own MyAnimeList score is read from. MDBList only has one MyAnimeList score per show, its first season's, which is kept when Jikan can't answer or the season isn't scored yet. Point it at another Jikan instance if the public one is slow or unreachable from your server; leave it empty to always use the first season's score.
+
+Default: `https://api.jikan.moe/v4`
+
 ### `CINEMETA_METADATA_CACHE_DURATION`
 
 Days to cache a title's Cinemeta document — the art urls, title, genres, dates and the TMDB id it carries (which is what resolves an IMDb-only request without a TMDB key). Metahub art itself is cached under the normal image cache.
