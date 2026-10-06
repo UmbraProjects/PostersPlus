@@ -86,9 +86,9 @@ Default: `https://kitsu.io/api/edge`
 
 ### `JIKAN_API_URL`
 
-The Jikan v4 instance (an unofficial MyAnimeList API, no key needed) a later anime season's own MyAnimeList score is read from. MDBList only has one MyAnimeList score per show, its first season's, which is kept when Jikan can't answer or the season isn't scored yet. Point it at another Jikan instance if the public one is slow or unreachable from your server; leave it empty to always use the first season's score.
+The Jikan v4 instance (a MyAnimeList API, no key needed) a later anime season's own MyAnimeList score is read from. MDBList only has one MyAnimeList score per show, its first season's, which is kept when Jikan can't answer or the season isn't scored yet. The public `api.jikan.moe` shut down on 1 October 2026, so the default is a community-run instance; to run your own, see [AIOMetadata's self-hosted Jikan guide](https://github.com/cedya77/aiometadata/blob/dev/docs/self-hosted-jikan.md) and point this at it. Leave it empty to always use the first season's score.
 
-Default: `https://api.jikan.moe/v4`
+Default: `https://jikan.slokker.cc/v4`
 
 ### `CINEMETA_METADATA_CACHE_DURATION`
 
