@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 import numpy as np
-from PIL import Image, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 import awards
 import fonts
@@ -128,6 +128,66 @@ class ShapingScopeTests(unittest.TestCase):
         basic = fonts.truetype(ALMARAI, 60, shaped=False)
         raqm = fonts.truetype(ALMARAI, 60, shaped=True)
         self.assertLess(raqm.getlength("سسس"), basic.getlength("سسس"))
+
+
+class BadgeCentringTests(unittest.TestCase):
+    """Badge text is centred on its line by _text_center.  The nudge tuned
+    for Latin capitals left Arabic low, so Arabic is placed halfway between
+    centring its ink and centring the band from baseline to alef top."""
+
+    def _drawn(self, text, font, cy=100):
+        im = Image.new("L", (400, 200))
+        draw = ImageDraw.Draw(im)
+        x, y = awards._text_center(draw, text, font, 200, cy)
+        draw.text((x, y), text, font=font, fill=255)
+        return y, im.getbbox()
+
+    def test_has_arabic(self):
+        self.assertTrue(fonts.has_arabic("دراما"))
+        self.assertTrue(fonts.has_arabic("Drama · دراما"))
+        self.assertTrue(fonts.has_arabic("ﻻ"))  # presentation forms too
+        self.assertFalse(fonts.has_arabic("Drama"))
+        self.assertFalse(fonts.has_arabic("דרמה"))
+        self.assertFalse(fonts.has_arabic(""))
+        self.assertFalse(fonts.has_arabic(None))
+
+    @unittest.skipUnless(fonts.HAVE_RAQM, "raqm unavailable (libfribidi missing)")
+    def test_arabic_is_centred_between_its_ink_and_its_alef_band(self):
+        font = fonts.truetype(ALMARAI, 40, shaped=True)
+        ascent = font.getmetrics()[0]
+        alef_top = font.getbbox("\u0627", anchor="ls")[1]
+        # With and without an alef, and with dots and tails below the line.
+        for text in ("عربي", "الفائز", "ترشيح", "دراما"):
+            with self.subTest(text):
+                y, ink = self._drawn(text, font)
+                ink_centre = (ink[1] + ink[3]) / 2
+                band_centre = y + ascent + alef_top / 2
+                self.assertAlmostEqual((ink_centre + band_centre) / 2, 100, delta=1)
+
+    @unittest.skipUnless(fonts.HAVE_RAQM, "raqm unavailable (libfribidi missing)")
+    def test_arabic_sits_higher_than_the_latin_nudge_put_it(self):
+        font = fonts.truetype(ALMARAI, 40, shaped=True)
+        ascent, descent = font.getmetrics()
+        latin_y = 100 - (ascent + descent) / 2 - descent + awards.px(ascent * 0.22)
+        y, _ = self._drawn("عربي", font)
+        self.assertLess(y, latin_y - 2)
+
+    def test_arabic_script_posters_cached_before_now_re_render(self):
+        rev = next(r for r in main._RENDER_REVISIONS if r.rev == 32)
+        for params in ({"logo_language": "ar"}, {"logo_language": "fa"}, {"logo_language": "ur-PK"},
+                       {"logo_language": "en", "original_labels": "ar"}):
+            self.assertTrue(rev.applies(build_request_config(params)), params)
+        for params in ({"logo_language": "en"}, {"logo_language": "he"},
+                       {"logo_language": "en", "original_labels": "he"}):
+            self.assertFalse(rev.applies(build_request_config(params)), params)
+
+    def test_latin_and_hebrew_are_placed_as_before(self):
+        for path, text in ((INTER, "DRAMA ★ 87"), (RUBIK, "דרמה")):
+            font = fonts.truetype(path, 40, shaped=False)
+            ascent, descent = font.getmetrics()
+            with self.subTest(text):
+                y, _ = self._drawn(text, font)
+                self.assertEqual(y, 100 - (ascent + descent) / 2 - descent + awards.px(ascent * 0.22))
 
 
 class RenderTests(unittest.TestCase):

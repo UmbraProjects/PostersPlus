@@ -25,6 +25,8 @@
   stays in the Native Language. `original_labels=ar` puts an Arabic film's
   genre, sash and title in Arabic and leaves Hollywood films in English.
   Any fully translated language can be listed.
+- Arabic-script badge and sash text sits in the middle of its line, as Latin
+  text does; it was a little low. Those posters re-render once.
 - Thanks to @aRamadi (issue 40), whose Arabic branch this takes its Arabic
   wording, the Almarai choice, the native digits and Title's Own Language
   from.

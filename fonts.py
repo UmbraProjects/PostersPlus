@@ -26,6 +26,7 @@ Numerals and codes that are never translated (quality and age badges, the
 trending numeral, rating badge logos) stay in Inter.
 """
 import os
+import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import lru_cache
@@ -188,6 +189,28 @@ def _truetype(path: str, size: float, shaped: bool) -> ImageFont.FreeTypeFont:
 def label_font(size: float) -> ImageFont.FreeTypeFont:
     """The current render's label font at *size*."""
     return truetype(label_path(), size)
+
+
+_ARABIC = re.compile("[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]")
+
+
+def has_arabic(text: str | None) -> bool:
+    """Whether *text* has any Arabic-script letters."""
+    return bool(text) and bool(_ARABIC.search(text))
+
+
+def arabic_top(font: ImageFont.FreeTypeFont, ink: tuple, cy: float) -> float:
+    """Where to draw Arabic text (its top, as ImageDraw.text takes it) to
+    centre it on *cy*, given its ink box *ink* drawn at the origin.
+
+    Halfway between centring the ink and centring the band from baseline to
+    alef top: an Arabic font's line is taller than its letters (room for
+    stacked vowel marks), so the offset tuned for Latin capitals misplaces
+    it.  On its ink alone, ي's tail and the dots under the line lift a word
+    high; on the alef band alone, a word with no alef ("عربي") sits low."""
+    ascent = font.getmetrics()[0]
+    alef_height = -font.getbbox("\u0627", anchor="ls")[1]
+    return cy - (ink[1] + ink[3]) / 4 - (ascent - alef_height / 2) / 2
 
 
 def fit_label_size(text: str, size: float, max_width: float) -> float:

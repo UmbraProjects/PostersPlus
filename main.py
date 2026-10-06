@@ -7980,6 +7980,15 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
                 and has_language(cfg.logo_language))),
         stale=lambda cfg, facts: True,
     ),
+    # 32: Arabic-script badge and sash text is centred on its line: the nudge
+    #     tuned for Latin capitals had left it below the middle.  Posters in
+    #     Arabic, Persian or Urdu, or that original_labels can switch to them.
+    _RenderRevision(
+        rev=32,
+        applies=lambda cfg: (cfg.logo_language.split("-", 1)[0] in ("ar", "fa", "ur")
+                             or bool({"ar", "fa", "ur"} & set(cfg.original_labels.split(",")))),
+        stale=lambda cfg, facts: True,
+    ),
 )
 _RENDER_REVISION = max((r.rev for r in _RENDER_REVISIONS), default=0)
 
