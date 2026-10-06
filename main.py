@@ -2210,7 +2210,10 @@ class RequestConfig:
     landscape_badge_scale: float = 1.0
     landscape_info_scale: float = 1.0   # size of the landscape "Genre • Year • Score" line
     landscape_score_out_of_10: bool = False   # "8.7" rather than "87" on that line
-    landscape_score_star: bool = False        # "★ 87" as Clean labels it, in place of "• 87"
+    # The glyph before that line's score: "bullet" ("• 87"), "pip" (the
+    # portrait bar) or "star" ("★ 87", as Clean labels it).  The older
+    # landscape_score_star=true means "star".
+    landscape_rating_separator: str = "bullet"
     landscape_info_center: bool = False       # that line centred on the poster, in its row
     # Portrait settings brought to landscape.  Each is a landscape setting of
     # its own, off (or as it was) by default, so a "{shape}" URL's landscape
@@ -2702,6 +2705,12 @@ def _render_config_signature(cfg: "RequestConfig") -> str:
             fields[_name] = list(_per_type)
     # Per render, decided by the title: original_labels is what keys it.
     fields.pop("label_language", None)
+    # The landscape rating separator was a star switch when composites were
+    # first keyed with it; the two settings it had are written as they were.
+    _lrsep = fields.pop("landscape_rating_separator")
+    fields["landscape_score_star"] = _lrsep == "star"
+    if _lrsep not in ("bullet", "star"):
+        fields["landscape_rating_separator"] = _lrsep
     # Fields added after composites were first cached are left out at their
     # default, so adding one doesn't change — and re-render — every cached key.
     for name, default in _SIGNATURE_OMIT_AT_DEFAULT.items():
@@ -2967,7 +2976,11 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.landscape_badge_scale = _f("landscape_badge_scale", cfg.landscape_badge_scale, 0.5, 2.5)
     cfg.landscape_info_scale  = _f("landscape_info_scale",  cfg.landscape_info_scale,  0.5, 2.0)
     cfg.landscape_score_out_of_10 = _b("landscape_score_out_of_10", cfg.landscape_score_out_of_10)
-    cfg.landscape_score_star      = _b("landscape_score_star",      cfg.landscape_score_star)
+    _lrsep = (params.get("landscape_rating_separator") or "").strip().lower()
+    if _lrsep in ("bullet", "pip", "star"):
+        cfg.landscape_rating_separator = _lrsep
+    elif _b("landscape_score_star", False):
+        cfg.landscape_rating_separator = "star"
     cfg.landscape_info_center     = _b("landscape_info_center",     cfg.landscape_info_center)
     cfg.landscape_greyscale       = _b("landscape_greyscale",       cfg.landscape_greyscale)
     _ls_style = (params.get("landscape_badge_style") or "").strip().lower()

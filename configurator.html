@@ -1133,6 +1133,8 @@
     margin-top: var(--gap-group);
     padding-top: var(--gap-group);
   }
+  /* Landscape's Rating tab is this one group, with nothing above to rule off. */
+  body.shape-landscape #rating-labels-group { border-top: 0; margin-top: 0; padding-top: 0; }
 
   /* Same break, no rule — for groups whose preceding row already draws one
      (the weights total), where a second line 24px below the first read as a
@@ -2738,63 +2740,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
         <!-- 2. RATING / GENRE LABEL -->
         <div class="section" data-tab="rating">
           <div class="section-body">
-            <!-- Landscape draws one "Genre • Year • Score" line; this group and
-                 Labels below are all of this tab it reads. -->
-            <div class="landscape-only">
-              <span class="group-title">Info Line</span>
-              <div class="field">
-                <label class="field-label" data-tip="Where the genre, year and score line goes. Auto places it against the logo: across from a bottom logo, under a centred one, and in the bottom row on a top logo's side. Put it in the logo's own spot and the two stack. A long line drops its genre first rather than run into the logo.">Placement</label>
-                <select class="segmented-source" id="cfg-landscape-info-row" onchange="updateLandscapeLogoFields(); build(); queuePreviewReload()">
-                  <option value="auto" selected>Auto</option>
-                  <option value="bottom">Bottom</option>
-                  <option value="top">Top</option>
-                </select>
-                <div class="segmented" data-for="cfg-landscape-info-row"></div>
-                <div id="landscape-info-col-field" style="display:none;">
-                  <select class="segmented-source" id="cfg-landscape-info-col" onchange="build(); queuePreviewReload()">
-                    <option value="left">Left</option>
-                    <option value="center">Centre</option>
-                    <option value="right" selected>Right</option>
-                  </select>
-                  <div class="segmented" data-for="cfg-landscape-info-col" style="margin-top: 6px;"></div>
-                </div>
-              </div>
-              <div class="field">
-                <label class="field-label" data-tip="Size of the genre, year and score line, 1.00 being the tuned size. It grows up and away from its corner; if it would reach the logo, the genre is dropped first.">Info Size</label>
-                <div class="range-row">
-                  <input type="range" id="cfg-landscape-info-scale" min="0.60" max="2.00" step="0.05" value="1.00" oninput="updateRange(this,'rng-lis'); build(); queuePreviewReload()">
-                  <span class="range-val" id="rng-lis">1.00</span>
-                </div>
-              </div>
-              <div class="toggle-row" id="landscape-score10-row">
-                <span class="toggle-label">Display score out of 10</span>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-landscape-score-10" onchange="build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
-              <div class="toggle-row" id="landscape-star-row">
-                <span class="toggle-label" data-tip="Put a star beside the score, as Clean does on a portrait: Genre • Year ★ 87.">Star beside score</span>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-landscape-score-star" onchange="build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
-              <div class="toggle-row" id="landscape-rating-badges-row">
-                <span class="toggle-label" data-tip="Show sites' own scores, each behind its logo, in place of the score on the info line. The sites are chosen under Rating Badges below, shared with the portrait. Short of room the genre goes first, then the year, then badges from the end of the list.">Rating Badges</span>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-landscape-rating-badges" onchange="updateRatingBadgeRows(); build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
-              <div class="toggle-row" id="landscape-info-center-row">
-                <span class="toggle-label" data-tip="Centre the whole line, rating badges included, on the poster in its row, as Minimalist's Centre under logo does on a portrait. A side logo in the same row that would reach it stands above it, as a centred logo does.">Centre info line</span>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="tog-landscape-info-center" onchange="updateLandscapeLogoFields(); build(); queuePreviewReload()">
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
-            </div>
             <div class="portrait-only">
             <span class="group-title">Mode</span>
             <div class="field">
@@ -3069,8 +3014,28 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
             </div>
 
+            <!-- Landscape draws one "Genre • Year • Score" line; this group is
+                 all of this tab it reads, its own controls among the shared
+                 Order and Hide switches. -->
             <div class="cfg-sep" id="rating-labels-group">
               <span class="group-title">Labels</span>
+              <div class="field landscape-only">
+                <label class="field-label" data-tip="Where the genre, year and score line goes. Auto places it against the logo: across from a bottom logo, under a centred one, and in the bottom row on a top logo's side. Put it in the logo's own spot and the two stack. A long line drops its genre first rather than run into the logo.">Placement</label>
+                <select class="segmented-source" id="cfg-landscape-info-row" onchange="updateLandscapeLogoFields(); build(); queuePreviewReload()">
+                  <option value="auto" selected>Auto</option>
+                  <option value="bottom">Bottom</option>
+                  <option value="top">Top</option>
+                </select>
+                <div class="segmented" data-for="cfg-landscape-info-row"></div>
+                <div id="landscape-info-col-field" style="display:none;">
+                  <select class="segmented-source" id="cfg-landscape-info-col" onchange="build(); queuePreviewReload()">
+                    <option value="left">Left</option>
+                    <option value="center">Centre</option>
+                    <option value="right" selected>Right</option>
+                  </select>
+                  <div class="segmented" data-for="cfg-landscape-info-col" style="margin-top: 6px;"></div>
+                </div>
+              </div>
               <div class="field" id="meta-order-field">
                 <label class="field-label" data-tip="The order the genre, year and rating are printed in, in every mode and shape that prints more than one of them. A field a mode doesn't print is skipped. Default keeps each mode's own order. In Minimalist's Split layout the rating keeps its own margin: the right one, or the left one when it comes first.">Order</label>
                 <select id="cfg-meta-order" onchange="build(); queuePreviewReload()">
@@ -3082,6 +3047,43 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <option value="rating,genre,year">Rating · Genre · Year</option>
                   <option value="rating,year,genre">Rating · Year · Genre</option>
                 </select>
+              </div>
+              <div class="field landscape-only" id="landscape-rating-sep-field">
+                <label class="field-label" data-tip="Glyph in front of the score, as Minimalist's Rating Separator is on a portrait. Bullet matches the rest of the line, Bar draws the portrait's bar, and Star labels the score the way Clean does (Genre • Year ★ 87). With Rating Badges on, the star gives way to a bullet, as the badges label the scores themselves.">Rating Separator</label>
+                <select class="segmented-source" id="cfg-landscape-rating-sep" onchange="build(); queuePreviewReload()">
+                  <option value="bullet" selected>Bullet</option>
+                  <option value="pip">Bar</option>
+                  <option value="star">Star</option>
+                </select>
+                <div class="segmented" data-for="cfg-landscape-rating-sep"></div>
+              </div>
+              <div class="field landscape-only">
+                <label class="field-label" data-tip="Size of the genre, year and score line, 1.00 being the tuned size. It grows up and away from its corner; if it would reach the logo, the genre is dropped first.">Info Size</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-landscape-info-scale" min="0.60" max="2.00" step="0.05" value="1.00" oninput="updateRange(this,'rng-lis'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-lis">1.00</span>
+                </div>
+              </div>
+              <div class="toggle-row landscape-only" id="landscape-score10-row">
+                <span class="toggle-label">Display score out of 10</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-landscape-score-10" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="toggle-row landscape-only" id="landscape-rating-badges-row">
+                <span class="toggle-label" data-tip="Show sites' own scores, each behind its logo, in place of the score on the info line. The sites are chosen under Rating Badges below, shared with the portrait. Short of room the genre goes first, then the year, then badges from the end of the list.">Rating Badges</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-landscape-rating-badges" onchange="updateRatingBadgeRows(); build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="toggle-row landscape-only" id="landscape-info-center-row">
+                <span class="toggle-label" data-tip="Centre the whole line, rating badges included, on the poster in its row, as Minimalist's Centre under logo does on a portrait. A side logo in the same row that would reach it stands above it, as a centred logo does.">Centre info line</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-landscape-info-center" onchange="updateLandscapeLogoFields(); build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
               </div>
               <div class="toggle-row" id="hide-genre-row">
                 <span class="toggle-label" data-tip="Removes the genre text and its associated spacers.">Hide Genre</span>
@@ -6786,7 +6788,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     if (_lir !== 'auto') params.set('landscape_info_pos', `${_lir}_${vEl('cfg-landscape-info-col') || 'right'}`);
     if (c('tog-landscape-poster-crop')) params.set('landscape_poster_crop', 'true');
     params.set('landscape_score_out_of_10', c('tog-landscape-score-10') ? 'true' : 'false');
-    params.set('landscape_score_star', c('tog-landscape-score-star') ? 'true' : 'false');
+    const _lrsep = vEl('cfg-landscape-rating-sep') || 'bullet';
+    if (_lrsep !== 'bullet') params.set('landscape_rating_separator', _lrsep);
     if (c('tog-landscape-info-center')) params.set('landscape_info_center', 'true');
     // Portrait settings brought over; each left out at its default.
     if (c('tog-landscape-greyscale')) params.set('landscape_greyscale', 'true');
@@ -8518,7 +8521,7 @@ function updateShapeFields() {
   if (!landscape) updateRatingFields();
   _updateLabelRows();
   document.getElementById('landscape-score10-row').style.display = c('tog-hide-rating') ? 'none' : '';
-  document.getElementById('landscape-star-row').style.display    = c('tog-hide-rating') ? 'none' : '';
+  document.getElementById('landscape-rating-sep-field').style.display = c('tog-hide-rating') ? 'none' : '';
   updateRatingBadgeRows();
   updateLandscapeBadgeFields();
   // There is no diagonal sash or notch in landscape, only the badge: the mode
@@ -8857,7 +8860,7 @@ function updateRatingFields() {
     ratingBadgeSources(vEl('cfg-rating-badges')).length > 1 ? '' : 'none';
   document.getElementById('rating-badge-style-field').style.display = vEl('cfg-rating-badges') ? '' : 'none';
   document.getElementById('landscape-score10-row').style.display    = hideRating ? 'none' : '';
-  document.getElementById('landscape-star-row').style.display       = hideRating ? 'none' : '';
+  document.getElementById('landscape-rating-sep-field').style.display = hideRating ? 'none' : '';
   _updateMinimalistRows();
   // Hidden mode has no per-mode fields, so the Style group would otherwise be
   // a heading and a rule with nothing under them.
@@ -9324,7 +9327,7 @@ function _buildPresetCard(grid, preset) {
 const _LANDSCAPE_ONLY_CONTROLS = ['cfg-landscape-art', ...LANDSCAPE_SOURCE_IDS, 'cfg-landscape-badge-pos',
                                   'cfg-landscape-badge-scale', 'cfg-landscape-info-scale',
                                   'cfg-landscape-color-link', 'tog-landscape-score-10',
-                                  'tog-landscape-score-star', 'tog-landscape-info-center', 'cfg-landscape-logo-pos', 'cfg-landscape-logo-row',
+                                  'cfg-landscape-rating-sep', 'tog-landscape-info-center', 'cfg-landscape-logo-pos', 'cfg-landscape-logo-row',
                                   'cfg-landscape-info-row', 'cfg-landscape-info-col',
                                   'tog-landscape-greyscale',
                                   'cfg-landscape-badge-style', 'cfg-landscape-badge-text-color',
@@ -9758,7 +9761,9 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     _setEl('cfg-landscape-badge-scale', p.get('landscape_badge_scale') || '1.00');
     _setEl('cfg-landscape-info-scale', p.get('landscape_info_scale') || '1.00');
     _setEl('tog-landscape-score-10',   p.get('landscape_score_out_of_10') || 'false');
-    _setEl('tog-landscape-score-star', p.get('landscape_score_star') || 'false');
+    { const _lrsep = (p.get('landscape_rating_separator') || '').toLowerCase();
+      _setEl('cfg-landscape-rating-sep', ['bullet', 'pip', 'star'].includes(_lrsep) ? _lrsep
+        : (!['', '0', 'false', 'no'].includes((p.get('landscape_score_star') || '').trim().toLowerCase()) ? 'star' : 'bullet')); }
     _setEl('tog-landscape-info-center', p.get('landscape_info_center') || 'false');
     { const _llp = (p.get('landscape_logo_pos') || 'left').toLowerCase();
       _setEl('cfg-landscape-logo-row', _llp.startsWith('top_') ? 'top' : 'bottom');

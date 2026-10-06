@@ -44,6 +44,7 @@ import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 import fonts
+from ratings import _cairo_pill_mask
 from i18n import native_digits, translate_genre, translate_sash, upper_label, visual
 
 
@@ -162,6 +163,7 @@ _TITLE_MAX_LINES = 2
 
 _MUTED           = (255, 255, 255, 195)   # was 170; lifted with the shadow
 _SEPARATOR       = (255, 255, 255, 90)
+_PIP             = object()   # the info strip's bar separator, drawn as a pill
 
 # Black, not a colour of its own.  The panel already carries the poster's hue,
 # and any tinted border competes with it — a gold one disappeared outright on
@@ -839,7 +841,7 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
                      release_year: str | None, score, scale: float = 1.0,
                      logo_right: int | None = None,
                      out_of_10: bool = False,
-                     star: bool = False,
+                     rating_sep: str = "bullet",
                      align: str = "right",
                      logo_left: int | None = None,
                      bounds: tuple[float, float] | None = None,
@@ -877,16 +879,18 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
     ``out_of_10`` prints the score the way portrait's out-of-10 switches do:
     one decimal ("8.7", "8.0"), with a bare "10" at the top.
 
-    ``star`` labels the score the way Clean does on a portrait: the separator
-    in front of it becomes a ★ (`Genre • Year ★ 87`), or a lone score gets
-    one of its own.  The star is the text's colour, not the separator's —
-    it names the number rather than dividing the row.
+    ``rating_sep`` (landscape_rating_separator) is the separator in front of
+    the score, as Minimalist's Rating Separator is on a portrait: "bullet"
+    like the rest of the row, "pip" the bar, or "star", which labels the
+    score the way Clean does (`Genre • Year ★ 87`) and gives a lone score
+    one of its own.  The star and the bar are the text's colour, not the
+    bullets' — the star names the number, and a faint bar would vanish.
 
     ``rating_items`` (landscape_rating_badges) puts those sites' scores,
     each behind its logo, where the score was, in ``badge_scale`` and
     ``badge_style`` (rating_badges.rating_run); the ★ goes, as the badges
     stand in for it.  Short of room they drop from the end, after the genre
-    and the year, keeping the first.
+    and the year, keeping the first; a bar stays, as it divides them too.
 
     ``snug`` (landscape_info_center) keeps a centred line on the canvas's
     centre, moved only as far as ``bounds`` make it, rather than into the
@@ -945,20 +949,30 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
 
     sep = "  •  "
     star_sep = "  ★ "
+    # The bar is drawn, not typed: a pill sized off the type as portrait's
+    # Minimalist sizes its pip, with a gap either side.
+    font_px = font.size
+    pip_gap = font_px * 0.55
+    pip_w = max(2, round(font_px * 0.18))
+    pip_h = round(font_px * 1.1)
 
     def segments(items) -> list[tuple[str, tuple[int, int, int, int]]]:
         # The row as drawn, separators included, left to right.
         out = []
         for i, part in enumerate(items):
             text, fill = part
-            if star and part is score_part and run is None:
+            if rating_sep == "star" and part is score_part and run is None:
                 out.append(("★ " if i == 0 else star_sep, _MUTED))
+            elif rating_sep == "pip" and part is score_part and i:
+                out.append((_PIP, _MUTED))
             elif i:
                 out.append((sep, _SEPARATOR))
             out.append((run if run is not None and part is score_part else visual(text), fill))
         return out
 
     def width_of(text) -> float:
+        if text is _PIP:
+            return 2 * pip_gap + pip_w
         if isinstance(text, list):
             return rating_badges.run_width(text, measure)
         return draw.textlength(text, font=font)
@@ -1016,7 +1030,15 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
         baseline = int(height * _BASELINE)
     for text, fill in reversed(segments(parts)):
         x -= width_of(text)
-        if isinstance(text, list):
+        if text is _PIP:
+            # Centred on the caps, as a bullet sits.
+            caps = font.getbbox("H", anchor="ls")
+            cy = baseline + (caps[1] + caps[3]) / 2
+            mask = _cairo_pill_mask(pip_w, pip_h, max(1, pip_w // 2))
+            pill = Image.new("RGBA", mask.size, fill)
+            pill.putalpha(ImageChops.multiply(mask, Image.new("L", mask.size, fill[3])))
+            layer.alpha_composite(pill, (round(x + pip_gap), round(cy - pip_h / 2)))
+        elif isinstance(text, list):
             # draw_run takes the text's top, as ImageDraw.text does by default.
             rating_badges.draw_run(layer, ldraw, text, x, baseline - ascent, font, fill, measure)
         else:
@@ -1254,7 +1276,7 @@ def _build_landscape(
             None if cfg.hide_rating else score,
             scale=getattr(cfg, "landscape_info_scale", 1.0),
             out_of_10=getattr(cfg, "landscape_score_out_of_10", False),
-            star=getattr(cfg, "landscape_score_star", False),
+            rating_sep=getattr(cfg, "landscape_rating_separator", "bullet"),
             align=info_col, order=getattr(cfg, "meta_order", ""), snug=info_center,
             rating_items=rating_items, badge_scale=getattr(cfg, "rating_badge_scale", "native"),
             badge_style=getattr(cfg, "rating_badge_style", "color"), **where)

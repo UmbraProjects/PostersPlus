@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Landscape rating separator
+
+- The landscape info line's score can be set off by the portrait's **Bar**
+  as well as a bullet or a star: **Rating Separator**
+  (`landscape_rating_separator=bullet|pip|star`) replaces the Star beside
+  score switch, whose `landscape_score_star=true` still means Star. Posters
+  with a bullet or star keep their cached renders.
+- Landscape's Rating tab is one **Labels** group: Placement, Order, Rating
+  Separator, Info Size, then the switches.
+
 ### Long translated labels fit
 
 - In Clean, Bar and the accent bar, a label line too wide for the poster

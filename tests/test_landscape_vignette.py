@@ -341,7 +341,7 @@ class LandscapeLogoAndBadgeTests(unittest.TestCase):
         # The star takes the separator's place in front of the score, as
         # Clean has it on a portrait; a lone score gets one of its own, and
         # without a score there is nothing for it to label.
-        def drawn(genre, year, score, star=True):
+        def drawn(genre, year, score, sep="star"):
             texts = []
             real_draw = landscape.ImageDraw.Draw
 
@@ -353,15 +353,36 @@ class LandscapeLogoAndBadgeTests(unittest.TestCase):
 
             with mock.patch.object(landscape.ImageDraw, "Draw", spy):
                 landscape._draw_info_strip(Image.new("RGBA", (1000, 563)), genre, year,
-                                           score, star=star)
+                                           score, rating_sep=sep)
             return list(reversed(texts))
 
         self.assertEqual(drawn("Drama", "2024", 87), ["Drama", "  •  ", "2024", "  ★ ", "87"])
         self.assertEqual(drawn("", None, 87), ["★ ", "87"])
         self.assertEqual(drawn("Drama", "2024", "N/A"), ["Drama", "  •  ", "2024"])
-        self.assertNotIn("  ★ ", drawn("Drama", "2024", 87, star=False))
-        self.assertFalse(main.build_request_config({}).landscape_score_star)
-        self.assertTrue(main.build_request_config({"landscape_score_star": "true"}).landscape_score_star)
+        self.assertNotIn("  ★ ", drawn("Drama", "2024", 87, sep="bullet"))
+        # The bar is drawn rather than typed, so only the bullet before the
+        # year is text; it takes room between the year and the score.
+        self.assertEqual(drawn("Drama", "2024", 87, sep="pip"), ["Drama", "  •  ", "2024", "87"])
+        bullet = landscape._draw_info_strip(Image.new("RGBA", (1000, 563)), "Drama", "2024", 87)
+        piped = landscape._draw_info_strip(Image.new("RGBA", (1000, 563)), "Drama", "2024", 87,
+                                           rating_sep="pip")
+        self.assertNotEqual(bullet[0], piped[0])
+        self.assertEqual(main.build_request_config({}).landscape_rating_separator, "bullet")
+        self.assertEqual(main.build_request_config(
+            {"landscape_score_star": "true"}).landscape_rating_separator, "star")
+        self.assertEqual(main.build_request_config(
+            {"landscape_rating_separator": "pip"}).landscape_rating_separator, "pip")
+
+    def test_rating_separator_keeps_old_star_keys(self):
+        # Bullet and star key as the switch they replace did; only the bar is new.
+        sig = main._render_config_signature
+        plain = sig(main.build_request_config({}))
+        self.assertIn('"landscape_score_star": false', plain)
+        self.assertNotIn("landscape_rating_separator", plain)
+        star = sig(main.build_request_config({"landscape_score_star": "true"}))
+        self.assertIn('"landscape_score_star": true', star)
+        self.assertIn('"landscape_rating_separator": "pip"',
+                      sig(main.build_request_config({"landscape_rating_separator": "pip"})))
 
     def test_badge_shadow_clips_at_the_canvas_edge(self):
         # A top-left pill's shadow spills past x=0 / y=0; it must be clipped
