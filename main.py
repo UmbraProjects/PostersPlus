@@ -5558,9 +5558,6 @@ def _claim_footprint(before: np.ndarray, pre: np.ndarray, post: np.ndarray,
         before[y0:y1, x0:x1] = np.where(now > 127, 0, 255).astype(before.dtype)
 
 
-# How far a group may move off its anchor's line to find room, as a fraction
-# of the poster's height: down from the top, up from the bottom.
-_GROUP_SEARCH = {"top": 0.20, "bottom": 0.30}
 # A pixel the overlays changed by more than this (summed over RGB) is taken.
 _OCCUPIED_DELTA = 30
 
@@ -5747,7 +5744,10 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
                 graphic_badges.draw_row(image, shrunk, center_y=start, gap=g_gap,
                                         left_x=width - margin - row_w if right else margin)
                 continue
-        limit = height * _GROUP_SEARCH["top" if top else "bottom"]
+        # As far as the canvas goes: a crowded corner (a top logo, the sash and
+        # another group stacked there) pushes a row a long way down, and a row
+        # that runs out of room is dropped without a word.
+        limit = (height - half - start) if top else (start - half)
         step = max(2, g_unit // 3)
         offset = 0.0
         def fits(off: float) -> list:

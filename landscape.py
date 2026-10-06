@@ -1034,7 +1034,6 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
 # poster's units, where 22 sits beside the side chip; here it is scaled to sit
 # beside the glass pill, whose text is _BADGE_FONT of the height.
 _GB_UNIT         = 0.062   # row height at the default size, of the height
-_GB_SEARCH       = 0.35    # how far a corner row may move from its corner, of the height
 
 
 def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: list[str],
@@ -1103,8 +1102,11 @@ def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: li
                 graphic_badges.draw_row(image, shrunk, center_y=start, gap=gap,
                                         left_x=width - margin - row_w if right else margin)
                 continue
+        # Down (up) as far as the canvas goes, as portrait does: a top logo
+        # with the sash and another row under it can take half the height.
         step, offset = max(2, unit // 3), 0.0
-        while offset <= height * _GB_SEARCH:
+        limit = (height - half - start) if top else (start - half)
+        while offset <= limit:
             cy = start + offset if top else start - offset
             cols = _occupied_cols(now, before, max(0, int(cy - half)), min(height, int(cy + half) + 1))
             fitted = graphic_badges.fit(items, graphic_badges.free_run(cols, right, margin) - clear, gap)
