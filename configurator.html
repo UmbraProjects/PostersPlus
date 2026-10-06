@@ -3048,6 +3048,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <option value="rating,year,genre">Rating · Year · Genre</option>
                 </select>
               </div>
+              <div class="field landscape-only">
+                <label class="field-label" data-tip="Glyph between the genre and the year, as Minimalist's Separator is on a portrait. The one in front of the score is Rating Separator's.">Separator</label>
+                <select class="segmented-source" id="cfg-landscape-sep" onchange="build(); queuePreviewReload()">
+                  <option value="bullet" selected>Bullet</option>
+                  <option value="pip">Bar</option>
+                </select>
+                <div class="segmented" data-for="cfg-landscape-sep"></div>
+              </div>
               <div class="field landscape-only" id="landscape-rating-sep-field">
                 <label class="field-label" data-tip="Glyph in front of the score, as Minimalist's Rating Separator is on a portrait. Bullet matches the rest of the line, Bar draws the portrait's bar, and Star labels the score the way Clean does (Genre • Year ★ 87). With Rating Badges on, the star gives way to a bullet, as the badges label the scores themselves.">Rating Separator</label>
                 <select class="segmented-source" id="cfg-landscape-rating-sep" onchange="build(); queuePreviewReload()">
@@ -3684,6 +3692,21 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <option value="black">Pure Black</option>
                   <option value="silver">Black, Silver Trim</option>
                   <option value="gold">Black, Gold Trim</option>
+                </select>
+              </div>
+              <div class="field">
+                <label class="field-label" data-tip="Pill has fully round ends. Chip is the portrait's side chip: a rounded rectangle.">Badge Shape</label>
+                <select id="cfg-landscape-badge-shape" onchange="build(); queuePreviewReload()">
+                  <option value="pill" selected>Pill</option>
+                  <option value="chip">Chip</option>
+                </select>
+              </div>
+              <div class="field">
+                <label class="field-label" data-tip="Auto sets the Pill's label in capitals and keeps the Chip's in its own case, as the portrait chip does.">Label Case</label>
+                <select id="cfg-landscape-badge-case" onchange="build(); queuePreviewReload()">
+                  <option value="auto" selected>Auto</option>
+                  <option value="upper">Capitals</option>
+                  <option value="mixed">Mixed Case</option>
                 </select>
               </div>
               <div class="field" id="landscape-badge-text-color-field" style="display:none;">
@@ -6790,6 +6813,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     params.set('landscape_score_out_of_10', c('tog-landscape-score-10') ? 'true' : 'false');
     const _lrsep = vEl('cfg-landscape-rating-sep') || 'bullet';
     if (_lrsep !== 'bullet') params.set('landscape_rating_separator', _lrsep);
+    if (vEl('cfg-landscape-sep') === 'pip') params.set('landscape_separator', 'pip');
     if (c('tog-landscape-info-center')) params.set('landscape_info_center', 'true');
     // Portrait settings brought over; each left out at its default.
     if (c('tog-landscape-greyscale')) params.set('landscape_greyscale', 'true');
@@ -6799,6 +6823,9 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       const _lbtc = document.getElementById('cfg-landscape-badge-text-color').value.trim();
       if (/^[0-9a-fA-F]{6}$/.test(_lbtc)) params.set('landscape_badge_text_color', _lbtc);
     }
+    if (vEl('cfg-landscape-badge-shape') === 'chip') params.set('landscape_badge_shape', 'chip');
+    const _lbCase = vEl('cfg-landscape-badge-case') || 'auto';
+    if (_lbCase !== 'auto') params.set('landscape_badge_case', _lbCase);
     if (c('tog-landscape-winner-star')) params.set('landscape_winner_star', 'true');
     for (const [id, [param, def, dec]] of Object.entries(LANDSCAPE_BADGE_TUNING)) {
       const v = n(id);
@@ -9327,10 +9354,11 @@ function _buildPresetCard(grid, preset) {
 const _LANDSCAPE_ONLY_CONTROLS = ['cfg-landscape-art', ...LANDSCAPE_SOURCE_IDS, 'cfg-landscape-badge-pos',
                                   'cfg-landscape-badge-scale', 'cfg-landscape-info-scale',
                                   'cfg-landscape-color-link', 'tog-landscape-score-10',
-                                  'cfg-landscape-rating-sep', 'tog-landscape-info-center', 'cfg-landscape-logo-pos', 'cfg-landscape-logo-row',
+                                  'cfg-landscape-sep', 'cfg-landscape-rating-sep', 'tog-landscape-info-center', 'cfg-landscape-logo-pos', 'cfg-landscape-logo-row',
                                   'cfg-landscape-info-row', 'cfg-landscape-info-col',
                                   'tog-landscape-greyscale',
                                   'cfg-landscape-badge-style', 'cfg-landscape-badge-text-color',
+                                  'cfg-landscape-badge-shape', 'cfg-landscape-badge-case',
                                   'tog-landscape-winner-star', 'cfg-landscape-logo-scale',
                                   ...Object.keys(LANDSCAPE_BADGE_TUNING),
                                   'tog-landscape-rating-badges', 'tog-landscape-poster-crop'];
@@ -9764,6 +9792,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     { const _lrsep = (p.get('landscape_rating_separator') || '').toLowerCase();
       _setEl('cfg-landscape-rating-sep', ['bullet', 'pip', 'star'].includes(_lrsep) ? _lrsep
         : (!['', '0', 'false', 'no'].includes((p.get('landscape_score_star') || '').trim().toLowerCase()) ? 'star' : 'bullet')); }
+    _setEl('cfg-landscape-sep', (p.get('landscape_separator') || '').toLowerCase() === 'pip' ? 'pip' : 'bullet');
     _setEl('tog-landscape-info-center', p.get('landscape_info_center') || 'false');
     { const _llp = (p.get('landscape_logo_pos') || 'left').toLowerCase();
       _setEl('cfg-landscape-logo-row', _llp.startsWith('top_') ? 'top' : 'bottom');
@@ -9779,6 +9808,9 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     { const _lbtc = (p.get('landscape_badge_text_color') || '').replace('#', '').toUpperCase();
       document.getElementById('cfg-landscape-badge-text-color').value = _lbtc;
       _syncLandscapeBadgeColorPicker(); }
+    _setEl('cfg-landscape-badge-shape', p.get('landscape_badge_shape') === 'chip' ? 'chip' : 'pill');
+    _setEl('cfg-landscape-badge-case', ['upper', 'mixed'].includes(p.get('landscape_badge_case'))
+      ? p.get('landscape_badge_case') : 'auto');
     _setEl('tog-landscape-winner-star', p.get('landscape_winner_star') || 'false');
     for (const [id, [param, def, dec]] of Object.entries(LANDSCAPE_BADGE_TUNING))
       _setEl(id, p.get(param) || def.toFixed(dec));

@@ -406,6 +406,23 @@ def _drop_shadow(image: Image.Image, mask: Image.Image, x: int, y: int,
     image.alpha_composite(shadow, (sx + left, sy + top))
 
 
+def _corner(h: int, chip: bool) -> int:
+    """Corner radius of a badge ``h`` tall: half its height for the pill (round
+    ends), or the portrait side chip's (landscape_badge_shape=chip)."""
+    from awards import _CHIP_RADIUS
+    return round(h * _CHIP_RADIUS) if chip else h // 2
+
+
+def _badge_caps(cfg) -> bool:
+    """Whether the badge label is set in capitals (landscape_badge_case): the
+    pill's always have been, and the chip keeps the label's own case, as the
+    portrait chip does, unless either is asked for."""
+    case = getattr(cfg, "landscape_badge_case", "auto")
+    if case == "auto":
+        return getattr(cfg, "landscape_badge_shape", "pill") != "chip"
+    return case == "upper"
+
+
 # The dark pills (landscape_badge_style), after portrait's black / silver /
 # gold notch: a near-black body, or the notch's dark vertical gradient with a
 # silver or gold rim, and a light label.
@@ -418,7 +435,7 @@ _DARK_OPACITY = 0.90
 
 def _dark_pill(image: Image.Image, box: tuple[int, int, int, int], style: str,
                ink: tuple[int, int, int] | None = None,
-               opacity: float = _DARK_OPACITY) -> tuple[int, int, int]:
+               opacity: float = _DARK_OPACITY, chip: bool = False) -> tuple[int, int, int]:
     """A black / silver / gold pill at ``box``.  Returns its ink colour:
     ``ink`` (landscape_badge_text_color) when given, else the style's own.
 
@@ -431,7 +448,7 @@ def _dark_pill(image: Image.Image, box: tuple[int, int, int, int], style: str,
     w, h = x1 - x0, y1 - y0
     if w <= 0 or h <= 0:
         return ink or _DARK_INK.get(style, (255, 255, 255))
-    mask = _cairo_pill_mask(w, h, h // 2)
+    mask = _cairo_pill_mask(w, h, _corner(h, chip))
     k = max(0.0, opacity) / _DARK_OPACITY
     if style == "black":
         body = Image.new("RGBA", (w, h), (10, 10, 12, 0))
@@ -446,8 +463,8 @@ def _dark_pill(image: Image.Image, box: tuple[int, int, int, int], style: str,
         body.putalpha(mask.point(lambda a: min(255, int(a * 235 * k) // 255)))
         bw = max(1, round(h * 0.06))
         inner = Image.new("L", (w, h), 0)
-        inner.paste(_cairo_pill_mask(max(1, w - 2 * bw), max(1, h - 2 * bw), max(1, (h - 2 * bw) // 2)),
-                    (bw, bw))
+        inner.paste(_cairo_pill_mask(max(1, w - 2 * bw), max(1, h - 2 * bw),
+                                     max(1, _corner(h - 2 * bw, chip))), (bw, bw))
         trim = Image.new("RGBA", (w, h), (*_TRIM[style], 0))
         trim.putalpha(ImageChops.subtract(mask, inner).point(lambda a: a * 215 // 255))
         body = Image.alpha_composite(body, trim)
@@ -460,7 +477,7 @@ def _dark_pill(image: Image.Image, box: tuple[int, int, int, int], style: str,
 def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
                 art: Image.Image, cfg,
                 source: tuple[float, float, float] | None = None,
-                ) -> tuple[int, int, int]:
+                chip: bool = False) -> tuple[int, int, int]:
     """Frosted pill carrying the poster's own colour.  Returns its ink colour.
 
     ``source`` replaces the colour the pill would sample for itself — the
@@ -515,7 +532,7 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
     # an edge and a staircase.  The border is the difference of two masks rather
     # than a stroked outline, so both of its edges are smooth — stroking would
     # only smooth the outer one.
-    mask = _cairo_pill_mask(w, h, h // 2)
+    mask = _cairo_pill_mask(w, h, _corner(h, chip))
     blurred.putalpha(mask)
     frost = Image.new("RGBA", (w, h), (*tint, 0))
     frost.putalpha(mask.point(lambda a: int(a * opacity)))
@@ -530,7 +547,7 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
         bw = max(1, round(h * _BORDER_RATIO))
         iw, ih = max(1, w - 2 * bw), max(1, h - 2 * bw)
         inner = Image.new("L", (w, h), 0)
-        inner.paste(_cairo_pill_mask(iw, ih, ih // 2), (bw, bw))
+        inner.paste(_cairo_pill_mask(iw, ih, max(1, _corner(ih, chip))), (bw, bw))
         ring = ImageChops.subtract(mask, inner)
 
         border = Image.new("RGBA", (w, h), (*_BORDER_RGB, 255))
@@ -636,12 +653,13 @@ def _draw_badge(image: Image.Image, text: str, position: str, art: Image.Image,
         y = hit[3] + gap if down else hit[1] - gap - bh
 
     style = getattr(cfg, "landscape_badge_style", "glass")
+    chip = getattr(cfg, "landscape_badge_shape", "pill") == "chip"
     if style in _DARK_INK:
         ink = _dark_pill(image, (x, y, x + bw, y + bh), style,
                          getattr(cfg, "landscape_badge_text_color", None),
-                         getattr(cfg, "landscape_badge_opacity", _DARK_OPACITY))
+                         getattr(cfg, "landscape_badge_opacity", _DARK_OPACITY), chip=chip)
     else:
-        ink = _glass_pill(image, (x, y, x + bw, y + bh), art, cfg, source=source)
+        ink = _glass_pill(image, (x, y, x + bw, y + bh), art, cfg, source=source, chip=chip)
     draw.text((x + pad_x, y + pad_y - round(2 * scale)), text, font=font,
               fill=(*ink, 245))
 
@@ -842,6 +860,7 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
                      logo_right: int | None = None,
                      out_of_10: bool = False,
                      rating_sep: str = "bullet",
+                     field_sep: str = "bullet",
                      align: str = "right",
                      logo_left: int | None = None,
                      bounds: tuple[float, float] | None = None,
@@ -885,6 +904,10 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
     score the way Clean does (`Genre • Year ★ 87`) and gives a lone score
     one of its own.  The star and the bar are the text's colour, not the
     bullets' — the star names the number, and a faint bar would vanish.
+
+    ``field_sep`` (landscape_separator) is the separator between the other
+    fields, genre and year, as Minimalist's Separator is on a portrait:
+    "bullet" or "pip", the same bar as the rating's.
 
     ``rating_items`` (landscape_rating_badges) puts those sites' scores,
     each behind its logo, where the score was, in ``badge_scale`` and
@@ -964,6 +987,8 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
             if rating_sep == "star" and part is score_part and run is None:
                 out.append(("★ " if i == 0 else star_sep, _MUTED))
             elif rating_sep == "pip" and part is score_part and i:
+                out.append((_PIP, _MUTED))
+            elif i and field_sep == "pip" and part is not score_part:
                 out.append((_PIP, _MUTED))
             elif i:
                 out.append((sep, _SEPARATOR))
@@ -1277,6 +1302,7 @@ def _build_landscape(
             scale=getattr(cfg, "landscape_info_scale", 1.0),
             out_of_10=getattr(cfg, "landscape_score_out_of_10", False),
             rating_sep=getattr(cfg, "landscape_rating_separator", "bullet"),
+            field_sep=getattr(cfg, "landscape_separator", "bullet"),
             align=info_col, order=getattr(cfg, "meta_order", ""), snug=info_center,
             rating_items=rating_items, badge_scale=getattr(cfg, "rating_badge_scale", "native"),
             badge_style=getattr(cfg, "rating_badge_style", "color"), **where)
@@ -1359,7 +1385,9 @@ def _build_landscape(
         sash_result = pick_sash(discovery_meta, cfg.sash_priority)
         if sash_result is not None:
             label, _sash_type = sash_result
-            label = upper_label(translate_sash(label, cfg.label_lang), cfg.label_lang)
+            label = translate_sash(label, cfg.label_lang)
+            if _badge_caps(cfg):
+                label = upper_label(label, cfg.label_lang)
             # A win wears portrait's Winner Star (sash_winner_star) as a ★.
             if getattr(cfg, "landscape_winner_star", False) and _sash_type == "win":
                 label = f"★ {label}"

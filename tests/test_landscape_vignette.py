@@ -341,7 +341,7 @@ class LandscapeLogoAndBadgeTests(unittest.TestCase):
         # The star takes the separator's place in front of the score, as
         # Clean has it on a portrait; a lone score gets one of its own, and
         # without a score there is nothing for it to label.
-        def drawn(genre, year, score, sep="star"):
+        def drawn(genre, year, score, sep="star", field_sep="bullet"):
             texts = []
             real_draw = landscape.ImageDraw.Draw
 
@@ -353,7 +353,7 @@ class LandscapeLogoAndBadgeTests(unittest.TestCase):
 
             with mock.patch.object(landscape.ImageDraw, "Draw", spy):
                 landscape._draw_info_strip(Image.new("RGBA", (1000, 563)), genre, year,
-                                           score, rating_sep=sep)
+                                           score, rating_sep=sep, field_sep=field_sep)
             return list(reversed(texts))
 
         self.assertEqual(drawn("Drama", "2024", 87), ["Drama", "  •  ", "2024", "  ★ ", "87"])
@@ -367,6 +367,14 @@ class LandscapeLogoAndBadgeTests(unittest.TestCase):
         piped = landscape._draw_info_strip(Image.new("RGBA", (1000, 563)), "Drama", "2024", 87,
                                            rating_sep="pip")
         self.assertNotEqual(bullet[0], piped[0])
+        # The field separator is its own: a bar between genre and year, and
+        # the rating separator's glyph still in front of the score.
+        self.assertEqual(drawn("Drama", "2024", 87, field_sep="pip"), ["Drama", "2024", "  ★ ", "87"])
+        self.assertEqual(drawn("Drama", "2024", 87, sep="bullet", field_sep="pip"),
+                         ["Drama", "2024", "  •  ", "87"])
+        self.assertEqual(main.build_request_config({}).landscape_separator, "bullet")
+        self.assertEqual(main.build_request_config({"landscape_separator": "pip"}).landscape_separator, "pip")
+        self.assertNotIn("landscape_separator", main._render_config_signature(main.build_request_config({})))
         self.assertEqual(main.build_request_config({}).landscape_rating_separator, "bullet")
         self.assertEqual(main.build_request_config(
             {"landscape_score_star": "true"}).landscape_rating_separator, "star")
@@ -635,6 +643,29 @@ class LandscapeBadgeSettingsTests(unittest.TestCase):
         self.assertLess(max(grey) - min(grey), max(centre()) - min(centre()))
         self.assertNotEqual(centre(landscape_badge_style="black", landscape_badge_opacity="0.3"),
                             centre(landscape_badge_style="black"))
+
+    def test_chip_shape_rounds_only_its_corners(self):
+        import ratings
+
+        def radii(**params):
+            with mock.patch.object(ratings, "_cairo_pill_mask", wraps=ratings._cairo_pill_mask) as spy:
+                self._pill(**params)
+            return [(c.args[1], c.args[2]) for c in spy.call_args_list]
+        for style in ("glass", "black", "gold"):
+            self.assertTrue(radii(landscape_badge_style=style))
+            for h, r in radii(landscape_badge_style=style):
+                self.assertEqual(r, h // 2)
+            for h, r in radii(landscape_badge_style=style, landscape_badge_shape="chip"):
+                self.assertEqual(r, round(h * 0.30))
+
+    def test_label_case_follows_the_shape_unless_set(self):
+        def caps(**params):
+            return landscape._badge_caps(main.build_request_config({"shape": "landscape", **params}))
+        self.assertTrue(caps())
+        self.assertFalse(caps(landscape_badge_shape="chip"))
+        self.assertTrue(caps(landscape_badge_shape="chip", landscape_badge_case="upper"))
+        self.assertFalse(caps(landscape_badge_case="mixed"))
+        self.assertTrue(caps(landscape_badge_shape="oval", landscape_badge_case="lower"))
 
     def test_ranges_are_clamped(self):
         cfg = main.build_request_config({"landscape_badge_width": "99", "landscape_badge_x": "-5"})

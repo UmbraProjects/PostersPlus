@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Landscape badge shape and case
+
+- The landscape info badge has a **Badge Shape**: the **Pill** it has been,
+  or the portrait's side **Chip**, a rounded rectangle
+  (`landscape_badge_shape=pill|chip`). **Label Case**
+  (`landscape_badge_case=auto|upper|mixed`) sets the label in capitals or in
+  mixed case (`Oscar Winner`); Auto keeps capitals on the pill and gives the
+  chip mixed case, as on a portrait. Existing posters are unchanged.
+- The landscape info line has its own **Separator** between the genre and
+  the year: Bullet, or the portrait's **Bar**
+  (`landscape_separator=bullet|pip`). Rating Separator still sets the one in
+  front of the score.
+
 ### Landscape rating separator
 
 - The landscape info line's score can be set off by the portrait's **Bar**

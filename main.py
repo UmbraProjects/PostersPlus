@@ -2214,6 +2214,9 @@ class RequestConfig:
     # portrait bar) or "star" ("★ 87", as Clean labels it).  The older
     # landscape_score_star=true means "star".
     landscape_rating_separator: str = "bullet"
+    # ...and between the other fields (genre, year): "bullet" or "pip", as
+    # minimalist_separator on a portrait.
+    landscape_separator: str = "bullet"
     landscape_info_center: bool = False       # that line centred on the poster, in its row
     # Portrait settings brought to landscape.  Each is a landscape setting of
     # its own, off (or as it was) by default, so a "{shape}" URL's landscape
@@ -2223,6 +2226,12 @@ class RequestConfig:
     #                                the release-status sash)
     #   landscape_badge_style      — the info pill: "glass" (the frosted glass it
     #                                has always been) | "black" | "silver" | "gold"
+    #   landscape_badge_shape      — the badge's outline: "pill" (round ends,
+    #                                capitals) | "chip" (portrait's side chip:
+    #                                rounded corners)
+    #   landscape_badge_case       — its label: "auto" (capitals on the pill,
+    #                                the label's own case on the chip, as the
+    #                                portrait chip has it) | "upper" | "mixed"
     #   landscape_badge_text_color — the dark pills' label colour
     #   landscape_winner_star      — a ★ on an award winner's pill
     #   landscape_logo_scale       — the logo's (or drawn title's) box, x0.5-1.5
@@ -2230,6 +2239,8 @@ class RequestConfig:
     #                                line, in place of the weighted score
     landscape_greyscale: bool = False
     landscape_badge_style: str = "glass"
+    landscape_badge_shape: str = "pill"
+    landscape_badge_case: str = "auto"
     landscape_badge_text_color: tuple[int, int, int] | None = None
     landscape_winner_star: bool = False
     landscape_logo_scale: float = 1.0
@@ -2758,6 +2769,8 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_
                               "label_font": fonts.DEFAULT_LABEL_FONT,
                               "quality_after_digital": False, "landscape_art_source": "tmdb",
                               "landscape_greyscale": False, "landscape_badge_style": "glass",
+                              "landscape_badge_shape": "pill", "landscape_badge_case": "auto",
+                              "landscape_separator": "bullet",
                               "landscape_badge_text_color": None, "landscape_winner_star": False,
                               "landscape_logo_scale": 1.0, "landscape_rating_badges": False,
                               "landscape_info_center": False,
@@ -2981,11 +2994,18 @@ def build_request_config(params: dict) -> RequestConfig:
         cfg.landscape_rating_separator = _lrsep
     elif _b("landscape_score_star", False):
         cfg.landscape_rating_separator = "star"
+    if (params.get("landscape_separator") or "").strip().lower() == "pip":
+        cfg.landscape_separator = "pip"
     cfg.landscape_info_center     = _b("landscape_info_center",     cfg.landscape_info_center)
     cfg.landscape_greyscale       = _b("landscape_greyscale",       cfg.landscape_greyscale)
     _ls_style = (params.get("landscape_badge_style") or "").strip().lower()
     if _ls_style in ("glass", "black", "silver", "gold"):
         cfg.landscape_badge_style = _ls_style
+    if (params.get("landscape_badge_shape") or "").strip().lower() == "chip":
+        cfg.landscape_badge_shape = "chip"
+    _ls_case = (params.get("landscape_badge_case") or "").strip().lower()
+    if _ls_case in ("upper", "mixed"):
+        cfg.landscape_badge_case = _ls_case
     cfg.landscape_badge_text_color = _parse_hex_color(params.get("landscape_badge_text_color"))
     cfg.landscape_winner_star     = _b("landscape_winner_star",     cfg.landscape_winner_star)
     cfg.landscape_logo_scale      = _f("landscape_logo_scale",      cfg.landscape_logo_scale, 0.5, 1.5)
