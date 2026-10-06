@@ -1114,16 +1114,24 @@ def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: li
         # with the sash and another row under it can take half the height.
         step, offset = max(2, unit // 3), 0.0
         limit = (height - half - start) if top else (start - half)
+        # The first line that takes the whole row; a row loses badges only
+        # when no line has room for all of them (main._draw_graphic_badges).
+        best: tuple[float, list] | None = None
         while offset <= limit:
             cy = start + offset if top else start - offset
             cols = _occupied_cols(now, before, max(0, int(cy - half)), min(height, int(cy + half) + 1))
             fitted = graphic_badges.fit(items, graphic_badges.free_run(cols, right, margin) - clear, gap)
-            if fitted:
-                row_w = graphic_badges.row_width(fitted, gap)
-                graphic_badges.draw_row(image, fitted, center_y=cy, gap=gap,
-                                        left_x=width - margin - row_w if right else margin)
+            if len(fitted) == len(items):
+                best = (cy, fitted)
                 break
+            if fitted and (best is None or len(fitted) > len(best[1])):
+                best = (cy, fitted)
             offset += step
+        if best:
+            cy, fitted = best
+            row_w = graphic_badges.row_width(fitted, gap)
+            graphic_badges.draw_row(image, fitted, center_y=cy, gap=gap,
+                                    left_x=width - margin - row_w if right else margin)
 
 
 def build_landscape(image: Image.Image, score: int | str, genre: str, cfg, *args, **kwargs) -> Image.Image:

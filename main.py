@@ -5759,29 +5759,41 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
             budget = graphic_badges.free_run(band_cols(cy), right, margin) - clear
             return graphic_badges.fit(items, budget, g_gap)
 
+        # The first line that takes the whole row.  Settling for the first
+        # line with room for any of it cut a row short against the edge of
+        # a logo's shadow, a few pixels above a line with room for all of it;
+        # only when no line has that does the row lose badges, on the line
+        # that keeps the most.
+        best: tuple[float, list] | None = None
         while offset <= limit:
             fitted = fits(offset)
-            if fitted and offset > 0:
-                # Stepped past the first line with room: walk back to it, so
-                # the gap to whatever is above (a ribbon, say) is the same on
-                # every poster rather than anywhere up to a step wider.  The
-                # same number of badges must still fit.
-                lo, hi = offset - step, offset
-                while hi - lo > 1:
-                    mid = (lo + hi) / 2
-                    if len(fits(mid)) >= len(fitted):
-                        hi = mid
-                    else:
-                        lo = mid
-                offset = hi
-                fitted = fits(offset)
-            if fitted:
-                cy = start + offset if top else start - offset
-                row_w = graphic_badges.row_width(fitted, g_gap)
-                graphic_badges.draw_row(image, fitted, center_y=cy, gap=g_gap,
-                                        left_x=width - margin - row_w if right else margin)
+            if len(fitted) == len(items):
                 break
+            if fitted and (best is None or len(fitted) > len(best[1])):
+                best = (offset, fitted)
             offset += step
+        else:
+            if best is None:
+                continue
+            offset, fitted = best
+        if offset > 0:
+            # Stepped past the first line with room: walk back to it, so
+            # the gap to whatever is above (a ribbon, say) is the same on
+            # every poster rather than anywhere up to a step wider.  The
+            # same number of badges must still fit.
+            lo, hi = max(0.0, offset - step), offset
+            while hi - lo > 1:
+                mid = (lo + hi) / 2
+                if len(fits(mid)) >= len(fitted):
+                    hi = mid
+                else:
+                    lo = mid
+            offset = hi
+            fitted = fits(offset)
+        cy = start + offset if top else start - offset
+        row_w = graphic_badges.row_width(fitted, g_gap)
+        graphic_badges.draw_row(image, fitted, center_y=cy, gap=g_gap,
+                                left_x=width - margin - row_w if right else margin)
 
 
 def _draw_logo_group(image: Image.Image, now: np.ndarray, before: np.ndarray, items: list,
