@@ -596,6 +596,7 @@ async def fetch_poster_metadata(
             "next_episode":          meta.get("next_episode"),
             "last_episode":          meta.get("last_episode"),
             "seasons":               meta.get("seasons", []),
+            "tmdb_type":             meta.get("tmdb_type"),
         }
         return (
             meta["genre_ids"],
@@ -732,6 +733,7 @@ async def fetch_poster_metadata(
     number_of_seasons    = data.get("number_of_seasons")
     number_of_episodes   = data.get("number_of_episodes")
     tmdb_status          = data.get("status")   # e.g. "Released", "In Production", "Returning Series"
+    tmdb_type            = data.get("type")     # TV only: "Scripted", "Miniseries", "Reality", ...
     vote_count           = data.get("vote_count")
     # The title's own aggregate score, straight from the same details call
     # already made for genre/year/credits — no extra API request. 0-10 scale,
@@ -855,6 +857,7 @@ async def fetch_poster_metadata(
             next_episode=next_episode,
             last_episode=last_episode,
             seasons=seasons,
+            tmdb_type=tmdb_type,
         )
     else:
         logger.info(f"TMDB metadata for tv {tmdb_id} not cached: Horror unsettled (Cinemeta unreachable)")
@@ -882,6 +885,7 @@ async def fetch_poster_metadata(
         "last_episode":         last_episode,
         "seasons":              seasons,
         "genres_unsettled":     _genres_unsettled,
+        "tmdb_type":            tmdb_type,
     }
 
     return genre_ids, is_textless, logos, release_year, title, poster_path, backdrop_path, tmdb_data
