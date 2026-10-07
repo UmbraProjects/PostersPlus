@@ -179,6 +179,7 @@ class LandscapeSettingsTests(unittest.TestCase):
     def test_defaults_leave_the_cache_key_alone(self):
         before = main._render_config_signature(main.build_request_config({"shape": "landscape"}))
         for name in ("landscape_greyscale", "landscape_badge_style", "landscape_badge_text_color",
+                     "landscape_badge_shape", "landscape_badge_case",
                      "landscape_winner_star", "landscape_logo_scale", "landscape_rating_badges",
                      "landscape_art_source", "quality_after_digital", "badge_quality_style"):
             self.assertNotIn(name, before)

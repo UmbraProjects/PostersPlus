@@ -10,6 +10,29 @@
   ones do) and missed it. TMDB's type is kept with the rest of a show's
   cached metadata, so a show cached before this picks it up when its
   metadata next refreshes.
+### Trending rank on landscape
+
+- Landscape posters can show a trending rank as the portrait's **Number** or
+  **Ribbon** in place of the `#N Today` badge, which then shows the next
+  label (`landscape_trending_style=number|ribbon`). The Trending Rank group
+  now shows in the landscape view and keeps its own values per shape, so a
+  `{shape}` URL's landscape side is unchanged until it picks a mark.
+  **Sash / Notch with Rank** applies to the badge: Do Nothing moves it clear
+  of the mark, Hide drops it, Opposite Side moves a top-corner badge across.
+  Landscape offers the two corners only.
+
+### Landscape badge shape and case
+
+- The landscape info badge has a **Badge Shape**: the **Pill** it has been,
+  or the portrait's side **Chip**, a rounded rectangle
+  (`landscape_badge_shape=pill|chip`). **Label Case**
+  (`landscape_badge_case=auto|upper|mixed`) sets the label in capitals or in
+  mixed case (`Oscar Winner`); Auto keeps capitals on the pill and gives the
+  chip mixed case, as on a portrait. Existing posters are unchanged.
+- The landscape info line has its own **Separator** between the genre and
+  the year: Bullet, or the portrait's **Bar**
+  (`landscape_separator=bullet|pip`). Rating Separator still sets the one in
+  front of the score.
 
 ### Landscape rating separator
 

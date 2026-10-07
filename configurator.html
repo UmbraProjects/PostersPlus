@@ -3048,6 +3048,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <option value="rating,year,genre">Rating · Year · Genre</option>
                 </select>
               </div>
+              <div class="field landscape-only">
+                <label class="field-label" data-tip="Glyph between the genre and the year, as Minimalist's Separator is on a portrait. The one in front of the score is Rating Separator's.">Separator</label>
+                <select class="segmented-source" id="cfg-landscape-sep" onchange="build(); queuePreviewReload()">
+                  <option value="bullet" selected>Bullet</option>
+                  <option value="pip">Bar</option>
+                </select>
+                <div class="segmented" data-for="cfg-landscape-sep"></div>
+              </div>
               <div class="field landscape-only" id="landscape-rating-sep-field">
                 <label class="field-label" data-tip="Glyph in front of the score, as Minimalist's Rating Separator is on a portrait. Bullet matches the rest of the line, Bar draws the portrait's bar, and Star labels the score the way Clean does (Genre • Year ★ 87). With Rating Badges on, the star gives way to a bullet, as the badges label the scores themselves.">Rating Separator</label>
                 <select class="segmented-source" id="cfg-landscape-rating-sep" onchange="build(); queuePreviewReload()">
@@ -3404,10 +3412,10 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
             </div>
 
-            <div class="cfg-sep portrait-only" id="sash-trending-group">
+            <div class="cfg-sep" id="sash-trending-group">
               <span class="group-title">Trending Rank</span>
               <div class="field" id="sash-trending-style-field">
-                <label class="field-label" data-tip="How a Trending rank shows. Sash Label: “#3 Today” in its place in the priority list. Number: a large silver numeral in the top corner. Ribbon: a ribbon hanging from the top edge. Number and Ribbon are drawn on top of the sash, whatever the mode, which moves on to the next label. They follow the Trending and Trending (Broad) entries in the priority list, anywhere in it. Portrait only.">Trending Rank</label>
+                <label class="field-label" data-tip="How a Trending rank shows. Sash Label: “#3 Today” in its place in the priority list. Number: a large silver numeral in the top corner. Ribbon: a ribbon hanging from the top edge. Number and Ribbon are drawn on top of the sash, whatever the mode, which moves on to the next label. They follow the Trending and Trending (Broad) entries in the priority list, anywhere in it. Set separately for portrait and landscape.">Trending Rank</label>
                 <select class="segmented-source" id="cfg-trending-style" onchange="updateTrendingStyleFields(); build(); queuePreviewReload()">
                   <option value="sash" selected>Sash Label</option>
                   <option value="number">Number</option>
@@ -3417,7 +3425,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               </div>
               <div id="sash-trending-mark-fields" style="display:none;">
                 <div class="field">
-                  <label class="field-label" data-tip="Which top corner the Trending number or ribbon takes. Under Notch (number only) hangs the number below the notch wherever it is drawn, centred or a side chip (Auto included), or at the top centre when there's no notch.">Trending Rank Side</label>
+                  <label class="field-label" data-tip="Which top corner the Trending number or ribbon takes. Under Notch (number only) hangs the number below the notch wherever it is drawn, centred or a side chip (Auto included), or at the top centre when there's no notch. Landscape has no notch, so it offers just the corners.">Trending Rank Side</label>
                   <select class="segmented-source" id="cfg-trending-side" onchange="updateTrendingStyleFields(); build(); queuePreviewReload()">
                     <option value="left" selected>Left</option>
                     <option value="center">Under Notch</option>
@@ -3434,7 +3442,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="segmented" data-for="cfg-trending-align"></div>
                 </div>
                 <div class="field">
-                  <label class="field-label" data-tip="What the sash or notch does on posters showing a Trending rank. Do Nothing: stays where it is set, even if it meets the rank. Hide: left off those posters. Opposite Side: moves to the other top corner, the diagonal sash across that corner and the notch as a side chip there. Posters without a rank keep the usual sash.">Sash / Notch with Rank</label>
+                  <label class="field-label" data-tip="What the sash or notch does on posters showing a Trending rank. Do Nothing: stays where it is set, even if it meets the rank. Hide: left off those posters. Opposite Side: moves to the other top corner, the diagonal sash across that corner and the notch as a side chip there. Posters without a rank keep the usual sash. On landscape this is the badge: Do Nothing moves it clear of the rank, and Opposite Side moves a top-corner badge to the other top corner.">Sash / Notch with Rank</label>
                   <select class="segmented-source" id="cfg-trending-sash" onchange="build(); queuePreviewReload()">
                     <option value="keep" selected>Do Nothing</option>
                     <option value="hide">Hide</option>
@@ -3684,6 +3692,21 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <option value="black">Pure Black</option>
                   <option value="silver">Black, Silver Trim</option>
                   <option value="gold">Black, Gold Trim</option>
+                </select>
+              </div>
+              <div class="field">
+                <label class="field-label" data-tip="Pill has fully round ends. Chip is the portrait's side chip: a rounded rectangle.">Badge Shape</label>
+                <select id="cfg-landscape-badge-shape" onchange="build(); queuePreviewReload()">
+                  <option value="pill" selected>Pill</option>
+                  <option value="chip">Chip</option>
+                </select>
+              </div>
+              <div class="field">
+                <label class="field-label" data-tip="Auto sets the Pill's label in capitals and keeps the Chip's in its own case, as the portrait chip does.">Label Case</label>
+                <select id="cfg-landscape-badge-case" onchange="build(); queuePreviewReload()">
+                  <option value="auto" selected>Auto</option>
+                  <option value="upper">Capitals</option>
+                  <option value="mixed">Mixed Case</option>
                 </select>
               </div>
               <div class="field" id="landscape-badge-text-color-field" style="display:none;">
@@ -6749,6 +6772,26 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     set('hide_rating', on('tog-hide-rating') ? 'true' : 'false');
     set('textless',    on('tog-textless')    ? 'true' : 'false');
     set('sash_mode',   v['cfg-sash-mode'] || 'sash');
+    // The trending rank mark: drawn apart from the sash, so whatever the mode.
+    // A landscape render reads these from the landscape_ names alone.
+    const trStyle = v['cfg-trending-style'] || 'sash';
+    if (trStyle !== 'sash') {
+      set('trending_style', trStyle);
+      if (Number(v['cfg-trending-scale']) !== 1) set('trending_scale', num('cfg-trending-scale'));
+      const side = v['cfg-trending-side'] || 'left';
+      if (side !== 'left') set('trending_side', side);
+      if ((v['cfg-trending-sash'] || 'keep') !== 'keep') set('trending_sash', v['cfg-trending-sash']);
+      if (trStyle === 'ribbon') {
+        const rs = v['cfg-trending-ribbon-style'] || 'charcoal';
+        if (rs !== 'charcoal') set('trending_ribbon_style', rs);
+        if (rs === 'frosted') {
+          set('trending_frost_opacity',    num('cfg-trending-frost-opacity'));
+          set('trending_frost_saturation', num('cfg-trending-frost-sat'));
+        }
+        if (on('tog-trending-label'))  set('trending_label', 'true');
+        if (on('tog-trending-corner')) set('trending_corner', 'true');
+      }
+    }
   }
   if (emitAll)       emitShared(pShared, '');
   if (emitLandscape) emitShared(lShared, 'landscape_');
@@ -6790,6 +6833,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     params.set('landscape_score_out_of_10', c('tog-landscape-score-10') ? 'true' : 'false');
     const _lrsep = vEl('cfg-landscape-rating-sep') || 'bullet';
     if (_lrsep !== 'bullet') params.set('landscape_rating_separator', _lrsep);
+    if (vEl('cfg-landscape-sep') === 'pip') params.set('landscape_separator', 'pip');
     if (c('tog-landscape-info-center')) params.set('landscape_info_center', 'true');
     // Portrait settings brought over; each left out at its default.
     if (c('tog-landscape-greyscale')) params.set('landscape_greyscale', 'true');
@@ -6799,6 +6843,9 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       const _lbtc = document.getElementById('cfg-landscape-badge-text-color').value.trim();
       if (/^[0-9a-fA-F]{6}$/.test(_lbtc)) params.set('landscape_badge_text_color', _lbtc);
     }
+    if (vEl('cfg-landscape-badge-shape') === 'chip') params.set('landscape_badge_shape', 'chip');
+    const _lbCase = vEl('cfg-landscape-badge-case') || 'auto';
+    if (_lbCase !== 'auto') params.set('landscape_badge_case', _lbCase);
     if (c('tog-landscape-winner-star')) params.set('landscape_winner_star', 'true');
     for (const [id, [param, def, dec]] of Object.entries(LANDSCAPE_BADGE_TUNING)) {
       const v = n(id);
@@ -7028,24 +7075,10 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       if (vEl('cfg-sash-side') === 'left') params.set('sash_side', 'left');
     }
   }
-  // Drawn apart from the sash, so it is emitted whatever the mode.
-  const _trStyle = vEl('cfg-trending-style');
-  if (emitAll && _trStyle !== 'sash') {
-    params.set('trending_style', _trStyle);
-    if (n('cfg-trending-scale') !== 1) params.set('trending_scale', n('cfg-trending-scale').toFixed(2));
-    if (vEl('cfg-trending-side') !== 'left') params.set('trending_side', vEl('cfg-trending-side'));
-    if (vEl('cfg-trending-side') === 'center' && vEl('cfg-trending-align') === 'edge') params.set('trending_align', 'edge');
-    if (vEl('cfg-trending-sash') !== 'keep') params.set('trending_sash', vEl('cfg-trending-sash'));
-    if (_trStyle === 'ribbon') {
-      if (vEl('cfg-trending-ribbon-style') !== 'charcoal') params.set('trending_ribbon_style', vEl('cfg-trending-ribbon-style'));
-      if (vEl('cfg-trending-ribbon-style') === 'frosted') {
-        params.set('trending_frost_opacity',    n('cfg-trending-frost-opacity').toFixed(2));
-        params.set('trending_frost_saturation', n('cfg-trending-frost-sat').toFixed(2));
-      }
-      if (c('tog-trending-label'))  params.set('trending_label', 'true');
-      if (c('tog-trending-corner')) params.set('trending_corner', 'true');
-    }
-  }
+  // The trending rank mark is kept per shape (emitShared); trending_align is
+  // the portrait's alone, for a number under its notch.
+  if (emitAll && pShared['cfg-trending-style'] === 'number' && pShared['cfg-trending-side'] === 'center'
+      && vEl('cfg-trending-align') === 'edge') params.set('trending_align', 'edge');
   // sash_priority is consumed not just by the diagonal sash but also by:
   //   - Compact rating mode (mode 4) — always pulls a sash label
   //   - Score Bar mode (mode 1) with Label Suffix = Info sash | Year + Info sash
@@ -8030,8 +8063,7 @@ function updateSashBadgeFields() {
 }
 
 function updateTrendingStyleFields() {
-  // Landscape keeps the sash label, so none of this shows there.
-  if (c('tog-landscape')) return;
+  const landscape = c('tog-landscape');
   const style = vEl('cfg-trending-style');
   document.getElementById('sash-trending-mark-fields').style.display = style !== 'sash' ? '' : 'none';
   document.getElementById('sash-trending-ribbon-style-field').style.display = style === 'ribbon' ? '' : 'none';
@@ -8040,11 +8072,12 @@ function updateTrendingStyleFields() {
   document.getElementById('sash-trending-label-row').style.display  = style === 'ribbon' ? '' : 'none';
   document.getElementById('sash-trending-corner-row').style.display = style === 'ribbon' ? '' : 'none';
   // Only the number hangs under the notch; the ribbon hangs from the top
-  // edge, so it is offered just the corners.
+  // edge, so it is offered just the corners, as landscape (no notch) is.
+  const corners = style === 'ribbon' || landscape;
   document.querySelectorAll('.segmented[data-for="cfg-trending-side"] .segmented-opt').forEach(btn => {
-    if (btn.dataset.value === 'center') btn.style.display = style === 'ribbon' ? 'none' : '';
+    if (btn.dataset.value === 'center') btn.style.display = corners ? 'none' : '';
   });
-  if (style === 'ribbon' && vEl('cfg-trending-side') === 'center') {
+  if (corners && vEl('cfg-trending-side') === 'center') {
     document.getElementById('cfg-trending-side').value = 'left';
     syncSegmented();
   }
@@ -8357,11 +8390,24 @@ const _SHARED_PARAM = {
   'cfg-badge-group2':          'badge_group2',
   'cfg-badge-group3':          'badge_group3',
   'cfg-badge-group4':          'badge_group4',
+  // The trending rank mark.  Landscape never falls back to the portrait's: it
+  // kept the "#N Today" label whatever the portrait mark was until it had one.
+  'cfg-trending-style':         'trending_style',
+  'cfg-trending-scale':         'trending_scale',
+  'cfg-trending-side':          'trending_side',
+  'cfg-trending-sash':          'trending_sash',
+  'cfg-trending-ribbon-style':  'trending_ribbon_style',
+  'cfg-trending-frost-opacity': 'trending_frost_opacity',
+  'cfg-trending-frost-sat':     'trending_frost_saturation',
+  'tog-trending-label':         'trending_label',
+  'tog-trending-corner':        'trending_corner',
 };
 const _SHARED_NO_FALLBACK = new Set(['badge_display_mode',
   'top_gradient', 'top_gradient_opacity', 'top_gradient_height',
   'bottom_gradient', 'bottom_gradient_opacity', 'bottom_gradient_height',
-  'top_vignette_sash_only', 'vignette_poster_color_top']);
+  'top_vignette_sash_only', 'vignette_poster_color_top',
+  'trending_style', 'trending_scale', 'trending_side', 'trending_sash', 'trending_ribbon_style',
+  'trending_frost_opacity', 'trending_frost_saturation', 'trending_label', 'trending_corner']);
 const _SHAPE_SHARED = Object.keys(_SHARED_PARAM);
 const _SHARED_ID = Object.fromEntries(Object.entries(_SHARED_PARAM).map(([id, param]) => [param, id]));
 const _LANDSCAPE_SHARED_DEFAULTS = {
@@ -8374,6 +8420,10 @@ const _LANDSCAPE_SHARED_DEFAULTS = {
   'tog-hide-genre': false, 'tog-hide-year': false, 'tog-hide-rating': false, 'tog-textless': false, 'cfg-sash-mode': 'sash',
   'cfg-badge-display-mode': '0', 'cfg-badge-group1': 'chip:4:video,audio,res,cert',
   'cfg-badge-group2': '', 'cfg-badge-group3': '', 'cfg-badge-group4': '',
+  'cfg-trending-style': 'sash', 'cfg-trending-scale': '1.00', 'cfg-trending-side': 'left',
+  'cfg-trending-sash': 'keep', 'cfg-trending-ribbon-style': 'charcoal',
+  'cfg-trending-frost-opacity': '0.75', 'cfg-trending-frost-sat': '1.20',
+  'tog-trending-label': false, 'tog-trending-corner': false,
 };
 const SHAPE_STASH_KEY = 'postersplus_shape_stash';
 let _shapeStash = { portrait: null, landscape: null };   // null = that shape's defaults
@@ -8501,7 +8551,6 @@ function updateShapeFields() {
   // Sash tab: the mode (drawn or not), the release-status filters and the
   // priority list are read; the rest styles the portrait sash / notch.
   for (const id of ['sash-cinema-greyscale-row', 'sash-winner-star-row', 'sash-text-color-field',
-                    'sash-trending-group', 'sash-trending-style-field', 'sash-trending-mark-fields',
                     'sash-muted-row', 'sash-poster-color-row', 'sash-style-field',
                     'sash-badge-offsets', 'sash-size-fields', 'sash-reference-row',
                     'sash-vignette-color-row', 'sash-badge-opacity-field',
@@ -8515,6 +8564,8 @@ function updateShapeFields() {
     el.style.display = landscape ? 'none' : '';
   }
   if (!landscape) updateSashBadgeFields();
+  // Per shape, and drawn on both: the stash writes it back silently.
+  updateTrendingStyleFields();
   // Hide Rating is kept per shape and the stash writes it back without firing
   // its change handler, so the rows it hides in the Rating tab are re-derived
   // on the way back in — otherwise they would still show landscape's answer.
@@ -9327,10 +9378,11 @@ function _buildPresetCard(grid, preset) {
 const _LANDSCAPE_ONLY_CONTROLS = ['cfg-landscape-art', ...LANDSCAPE_SOURCE_IDS, 'cfg-landscape-badge-pos',
                                   'cfg-landscape-badge-scale', 'cfg-landscape-info-scale',
                                   'cfg-landscape-color-link', 'tog-landscape-score-10',
-                                  'cfg-landscape-rating-sep', 'tog-landscape-info-center', 'cfg-landscape-logo-pos', 'cfg-landscape-logo-row',
+                                  'cfg-landscape-sep', 'cfg-landscape-rating-sep', 'tog-landscape-info-center', 'cfg-landscape-logo-pos', 'cfg-landscape-logo-row',
                                   'cfg-landscape-info-row', 'cfg-landscape-info-col',
                                   'tog-landscape-greyscale',
                                   'cfg-landscape-badge-style', 'cfg-landscape-badge-text-color',
+                                  'cfg-landscape-badge-shape', 'cfg-landscape-badge-case',
                                   'tog-landscape-winner-star', 'cfg-landscape-logo-scale',
                                   ...Object.keys(LANDSCAPE_BADGE_TUNING),
                                   'tog-landscape-rating-badges', 'tog-landscape-poster-crop'];
@@ -9764,6 +9816,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     { const _lrsep = (p.get('landscape_rating_separator') || '').toLowerCase();
       _setEl('cfg-landscape-rating-sep', ['bullet', 'pip', 'star'].includes(_lrsep) ? _lrsep
         : (!['', '0', 'false', 'no'].includes((p.get('landscape_score_star') || '').trim().toLowerCase()) ? 'star' : 'bullet')); }
+    _setEl('cfg-landscape-sep', (p.get('landscape_separator') || '').toLowerCase() === 'pip' ? 'pip' : 'bullet');
     _setEl('tog-landscape-info-center', p.get('landscape_info_center') || 'false');
     { const _llp = (p.get('landscape_logo_pos') || 'left').toLowerCase();
       _setEl('cfg-landscape-logo-row', _llp.startsWith('top_') ? 'top' : 'bottom');
@@ -9779,6 +9832,9 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     { const _lbtc = (p.get('landscape_badge_text_color') || '').replace('#', '').toUpperCase();
       document.getElementById('cfg-landscape-badge-text-color').value = _lbtc;
       _syncLandscapeBadgeColorPicker(); }
+    _setEl('cfg-landscape-badge-shape', p.get('landscape_badge_shape') === 'chip' ? 'chip' : 'pill');
+    _setEl('cfg-landscape-badge-case', ['upper', 'mixed'].includes(p.get('landscape_badge_case'))
+      ? p.get('landscape_badge_case') : 'auto');
     _setEl('tog-landscape-winner-star', p.get('landscape_winner_star') || 'false');
     for (const [id, [param, def, dec]] of Object.entries(LANDSCAPE_BADGE_TUNING))
       _setEl(id, p.get(param) || def.toFixed(dec));

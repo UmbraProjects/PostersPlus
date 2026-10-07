@@ -406,6 +406,23 @@ def _drop_shadow(image: Image.Image, mask: Image.Image, x: int, y: int,
     image.alpha_composite(shadow, (sx + left, sy + top))
 
 
+def _corner(h: int, chip: bool) -> int:
+    """Corner radius of a badge ``h`` tall: half its height for the pill (round
+    ends), or the portrait side chip's (landscape_badge_shape=chip)."""
+    from awards import _CHIP_RADIUS
+    return round(h * _CHIP_RADIUS) if chip else h // 2
+
+
+def _badge_caps(cfg) -> bool:
+    """Whether the badge label is set in capitals (landscape_badge_case): the
+    pill's always have been, and the chip keeps the label's own case, as the
+    portrait chip does, unless either is asked for."""
+    case = getattr(cfg, "landscape_badge_case", "auto")
+    if case == "auto":
+        return getattr(cfg, "landscape_badge_shape", "pill") != "chip"
+    return case == "upper"
+
+
 # The dark pills (landscape_badge_style), after portrait's black / silver /
 # gold notch: a near-black body, or the notch's dark vertical gradient with a
 # silver or gold rim, and a light label.
@@ -418,7 +435,7 @@ _DARK_OPACITY = 0.90
 
 def _dark_pill(image: Image.Image, box: tuple[int, int, int, int], style: str,
                ink: tuple[int, int, int] | None = None,
-               opacity: float = _DARK_OPACITY) -> tuple[int, int, int]:
+               opacity: float = _DARK_OPACITY, chip: bool = False) -> tuple[int, int, int]:
     """A black / silver / gold pill at ``box``.  Returns its ink colour:
     ``ink`` (landscape_badge_text_color) when given, else the style's own.
 
@@ -431,7 +448,7 @@ def _dark_pill(image: Image.Image, box: tuple[int, int, int, int], style: str,
     w, h = x1 - x0, y1 - y0
     if w <= 0 or h <= 0:
         return ink or _DARK_INK.get(style, (255, 255, 255))
-    mask = _cairo_pill_mask(w, h, h // 2)
+    mask = _cairo_pill_mask(w, h, _corner(h, chip))
     k = max(0.0, opacity) / _DARK_OPACITY
     if style == "black":
         body = Image.new("RGBA", (w, h), (10, 10, 12, 0))
@@ -446,8 +463,8 @@ def _dark_pill(image: Image.Image, box: tuple[int, int, int, int], style: str,
         body.putalpha(mask.point(lambda a: min(255, int(a * 235 * k) // 255)))
         bw = max(1, round(h * 0.06))
         inner = Image.new("L", (w, h), 0)
-        inner.paste(_cairo_pill_mask(max(1, w - 2 * bw), max(1, h - 2 * bw), max(1, (h - 2 * bw) // 2)),
-                    (bw, bw))
+        inner.paste(_cairo_pill_mask(max(1, w - 2 * bw), max(1, h - 2 * bw),
+                                     max(1, _corner(h - 2 * bw, chip))), (bw, bw))
         trim = Image.new("RGBA", (w, h), (*_TRIM[style], 0))
         trim.putalpha(ImageChops.subtract(mask, inner).point(lambda a: a * 215 // 255))
         body = Image.alpha_composite(body, trim)
@@ -460,7 +477,7 @@ def _dark_pill(image: Image.Image, box: tuple[int, int, int, int], style: str,
 def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
                 art: Image.Image, cfg,
                 source: tuple[float, float, float] | None = None,
-                ) -> tuple[int, int, int]:
+                chip: bool = False) -> tuple[int, int, int]:
     """Frosted pill carrying the poster's own colour.  Returns its ink colour.
 
     ``source`` replaces the colour the pill would sample for itself — the
@@ -515,7 +532,7 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
     # an edge and a staircase.  The border is the difference of two masks rather
     # than a stroked outline, so both of its edges are smooth — stroking would
     # only smooth the outer one.
-    mask = _cairo_pill_mask(w, h, h // 2)
+    mask = _cairo_pill_mask(w, h, _corner(h, chip))
     blurred.putalpha(mask)
     frost = Image.new("RGBA", (w, h), (*tint, 0))
     frost.putalpha(mask.point(lambda a: int(a * opacity)))
@@ -530,7 +547,7 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
         bw = max(1, round(h * _BORDER_RATIO))
         iw, ih = max(1, w - 2 * bw), max(1, h - 2 * bw)
         inner = Image.new("L", (w, h), 0)
-        inner.paste(_cairo_pill_mask(iw, ih, ih // 2), (bw, bw))
+        inner.paste(_cairo_pill_mask(iw, ih, max(1, _corner(ih, chip))), (bw, bw))
         ring = ImageChops.subtract(mask, inner)
 
         border = Image.new("RGBA", (w, h), (*_BORDER_RGB, 255))
@@ -636,12 +653,13 @@ def _draw_badge(image: Image.Image, text: str, position: str, art: Image.Image,
         y = hit[3] + gap if down else hit[1] - gap - bh
 
     style = getattr(cfg, "landscape_badge_style", "glass")
+    chip = getattr(cfg, "landscape_badge_shape", "pill") == "chip"
     if style in _DARK_INK:
         ink = _dark_pill(image, (x, y, x + bw, y + bh), style,
                          getattr(cfg, "landscape_badge_text_color", None),
-                         getattr(cfg, "landscape_badge_opacity", _DARK_OPACITY))
+                         getattr(cfg, "landscape_badge_opacity", _DARK_OPACITY), chip=chip)
     else:
-        ink = _glass_pill(image, (x, y, x + bw, y + bh), art, cfg, source=source)
+        ink = _glass_pill(image, (x, y, x + bw, y + bh), art, cfg, source=source, chip=chip)
     draw.text((x + pad_x, y + pad_y - round(2 * scale)), text, font=font,
               fill=(*ink, 245))
 
@@ -842,6 +860,7 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
                      logo_right: int | None = None,
                      out_of_10: bool = False,
                      rating_sep: str = "bullet",
+                     field_sep: str = "bullet",
                      align: str = "right",
                      logo_left: int | None = None,
                      bounds: tuple[float, float] | None = None,
@@ -885,6 +904,10 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
     score the way Clean does (`Genre • Year ★ 87`) and gives a lone score
     one of its own.  The star and the bar are the text's colour, not the
     bullets' — the star names the number, and a faint bar would vanish.
+
+    ``field_sep`` (landscape_separator) is the separator between the other
+    fields, genre and year, as Minimalist's Separator is on a portrait:
+    "bullet" or "pip", the same bar as the rating's.
 
     ``rating_items`` (landscape_rating_badges) puts those sites' scores,
     each behind its logo, where the score was, in ``badge_scale`` and
@@ -964,6 +987,8 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
             if rating_sep == "star" and part is score_part and run is None:
                 out.append(("★ " if i == 0 else star_sep, _MUTED))
             elif rating_sep == "pip" and part is score_part and i:
+                out.append((_PIP, _MUTED))
+            elif i and field_sep == "pip" and part is not score_part:
                 out.append((_PIP, _MUTED))
             elif i:
                 out.append((sep, _SEPARATOR))
@@ -1064,6 +1089,76 @@ def _draw_info_strip(image: Image.Image, genre_label: str,
 # poster's units, where 22 sits beside the side chip; here it is scaled to sit
 # beside the glass pill, whose text is _BADGE_FONT of the height.
 _GB_UNIT         = 0.062   # row height at the default size, of the height
+
+# The trending rank mark (trending_rank.py) is laid out as fractions of a
+# portrait poster's width.  Here it is drawn as for a portrait this fraction
+# of the canvas height wide — sized off height, as everything on this canvas
+# is — so its numeral's ink is about a sixth of the height.  The numeral
+# stands in the badge's column, its head on the badge's top line; the ribbon
+# hangs from the top edge, in from the corner as on a portrait.
+_RANK_UNIT       = 0.90
+
+
+def _rank_mark(cfg, discovery_meta, priority: list[str]) -> tuple[int | None, list[str], object]:
+    """(rank, priority, cfg) with a trending rank mark: the rank it draws
+    (None without one), the sash priority the badge picks from — the trending
+    slots dropped, as the mark shows the rank — and the config the badge
+    draws with, per trending_sash: hidden, or moved to the top corner the
+    mark leaves free."""
+    from discovery import TRENDING_SLOTS, shown_trending_rank
+    if cfg.trending_style == "sash" or discovery_meta is None:
+        return None, priority, cfg
+    rank = shown_trending_rank(discovery_meta, priority)
+    priority = [s for s in priority if s not in TRENDING_SLOTS]
+    if rank is None:
+        return None, priority, cfg
+    if cfg.trending_sash == "hide":
+        cfg = dataclasses.replace(cfg, sash_mode="hidden")
+    elif (cfg.trending_sash == "opposite"
+          and getattr(cfg, "landscape_badge_pos", "top_left") in ("top_left", "top_right")):
+        cfg = dataclasses.replace(cfg, landscape_badge_pos="top_left" if _rank_right(cfg) else "top_right")
+    return rank, priority, cfg
+
+
+def _rank_right(cfg) -> bool:
+    # No notch to hang under on this canvas, so "center" is the left corner.
+    return cfg.trending_side == "right"
+
+
+def _rank_layout(size: tuple[int, int], cfg, rank: int, media_kind: str | None) -> tuple:
+    """(footprint, args) of the rank's mark on a canvas of *size*: its
+    trending_rank (body, extent), and what it is drawn with, minus the frost
+    tint.  Known before anything is drawn, so a top-row logo or info line on
+    its side can stand clear of it."""
+    import trending_rank
+    width, height = size
+    args = dict(right=_rank_right(cfg), scale=cfg.trending_scale, unit=height * _RANK_UNIT)
+    if cfg.trending_style == "ribbon":
+        label = None
+        if cfg.trending_label and media_kind in trending_rank.KIND_LABELS:
+            label = upper_label(translate_sash(trending_rank.KIND_LABELS[media_kind],
+                                               cfg.label_lang), cfg.label_lang)
+        args.update(corner=cfg.trending_corner)
+        footprint = trending_rank.ribbon_footprint(width, rank, label=bool(label), **args)
+        args.update(label=label, style=cfg.trending_ribbon_style,
+                    frost_opacity=cfg.trending_frost_opacity,
+                    frost_saturation=cfg.trending_frost_saturation,
+                    frost_reference=cfg.frost_reference, text_color=cfg.sash_text_color)
+        return footprint, args
+    # In the badge's column, its head on the badge's top line.
+    right = args.pop("right")
+    args.update(top=int(height * _BADGE_TOP), align="right" if right else "left",
+                center_x=width - int(width * _RIGHT_PAD) if right else int(width * _SIDE_PAD))
+    return trending_rank.number_footprint(width, rank, **args), args
+
+
+def _draw_rank(image: Image.Image, cfg, rank: int, args: dict,
+               tint: tuple[float, float, float] | None) -> Image.Image:
+    """The rank as cfg.trending_style's mark, laid out by _rank_layout."""
+    import trending_rank
+    if cfg.trending_style == "ribbon":
+        return trending_rank.draw_rank_ribbon(image, rank, tint_rgb=tint, **args)
+    return trending_rank.draw_rank_number(image, rank, **args)
 
 
 def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: list[str],
@@ -1178,6 +1273,7 @@ def _build_landscape(
     badge_logos: tuple = (None, None),
     cinema_run=None,
     ratings: dict | None = None,
+    media_kind: str | None = None,
     **_ignored,
 ) -> Image.Image:
     """Render the landscape poster.  Mirrors ``build_poster``'s call shape so the
@@ -1212,10 +1308,13 @@ def _build_landscape(
                                              or cfg.vignette_poster_color_top):
         from awards import dominant_frost_rgb
         shared = tuple(float(c) for c in dominant_frost_rgb(art))
+    # A trending rank drawn as a number or ribbon: the badge moves on to the
+    # next label, and may be hidden or moved (trending_sash).
+    rank, sash_priority, cfg = _rank_mark(cfg, discovery_meta, cfg.sash_priority)
     # Picked again where the badge is drawn; here only for "Vignette Only On Sash".
     sash_shown = not cfg.top_vignette_sash_only or (
         cfg.sash_mode != "hidden" and discovery_meta is not None
-        and pick_sash(discovery_meta, cfg.sash_priority) is not None)
+        and pick_sash(discovery_meta, sash_priority) is not None)
     band_tint = _draw_vignette(image, art, cfg, source=shared, sash_shown=sash_shown)
     badge_source = band_tint if link == "badge_follows_vignette" else shared
     # What the overlays are measured against, for the graphic badges to lay
@@ -1277,6 +1376,7 @@ def _build_landscape(
             scale=getattr(cfg, "landscape_info_scale", 1.0),
             out_of_10=getattr(cfg, "landscape_score_out_of_10", False),
             rating_sep=getattr(cfg, "landscape_rating_separator", "bullet"),
+            field_sep=getattr(cfg, "landscape_separator", "bullet"),
             align=info_col, order=getattr(cfg, "meta_order", ""), snug=info_center,
             rating_items=rating_items, badge_scale=getattr(cfg, "rating_badge_scale", "native"),
             badge_style=getattr(cfg, "rating_badge_style", "color"), **where)
@@ -1295,6 +1395,13 @@ def _build_landscape(
     logo_baseline = None
     logo_scale = max(0.5, min(1.5, float(getattr(cfg, "landscape_logo_scale", 1.0) or 1.0)))
     logo_top = int(height * _BADGE_TOP) if top_row else None
+    # The rank mark's corner: a top-row logo or info line on its side hangs
+    # below it rather than under it.
+    rank_layout = _rank_layout((width, height), cfg, rank, media_kind) if rank is not None else None
+    rank_side = "right" if rank is not None and _rank_right(cfg) else "left"
+    below_rank = (rank_layout[0][0][3] + int(height * _STACK_GAP)) if rank_layout else None
+    if top_row and below_rank and align == rank_side:
+        logo_top = max(logo_top, below_rank)
     if stacked and not top_row:
         info_box = _strip(bounds=full)
         if info_box:
@@ -1339,6 +1446,8 @@ def _build_landscape(
                           + (int(height * _STACK_GAP) if logo_box else 0))
     elif not stacked and not centre_beside_logo:
         where = {"top": int(height * _BADGE_TOP)} if info_row == "top" else {}
+        if where and below_rank and info_col == rank_side:
+            where["top"] = max(where["top"], below_rank)
         if info_row != logo_row:
             info_box = _strip(bounds=full, **where)
         else:
@@ -1354,12 +1463,29 @@ def _build_landscape(
                     lo = max(lo, logo_box[2] + edge_gap) if align != "right" else lo
             info_box = _strip(bounds=(lo, hi), **where)
 
+    # The rank mark, in its top corner before the badge, which keeps clear
+    # of it like the logo.
+    rank_box = None
+    if rank_layout is not None:
+        tint = None
+        if cfg.trending_style == "ribbon" and cfg.trending_ribbon_style == "frosted":
+            from awards import dominant_frost_rgb
+            tint = badge_source or tuple(float(c) for c in dominant_frost_rgb(art))
+        pre = np.asarray(image) if before is not None else None
+        (rank_box, extent), rank_args = rank_layout
+        image = _draw_rank(image, cfg, rank, rank_args, tint)
+        if before is not None:
+            from main import _claim_footprint
+            _claim_footprint(before, pre, np.asarray(image), rank_box, extent)
+
     badge_position = None
     if cfg.sash_mode != "hidden" and discovery_meta is not None:
-        sash_result = pick_sash(discovery_meta, cfg.sash_priority)
+        sash_result = pick_sash(discovery_meta, sash_priority)
         if sash_result is not None:
             label, _sash_type = sash_result
-            label = upper_label(translate_sash(label, cfg.label_lang), cfg.label_lang)
+            label = translate_sash(label, cfg.label_lang)
+            if _badge_caps(cfg):
+                label = upper_label(label, cfg.label_lang)
             # A win wears portrait's Winner Star (sash_winner_star) as a ★.
             if getattr(cfg, "landscape_winner_star", False) and _sash_type == "win":
                 label = f"★ {label}"
@@ -1377,7 +1503,7 @@ def _build_landscape(
                         source=badge_source,
                         logo_align=align, logo_baseline=logo_baseline,
                         logo_box=logo_box, logo_top_row=top_row,
-                        obstacles=(logo_box, info_box))
+                        obstacles=(logo_box, info_box, rank_box))
 
     # Drawn last because they lay themselves out around everything else.
     if graphic:
