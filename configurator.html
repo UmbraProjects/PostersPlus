@@ -7332,30 +7332,52 @@ const COPY_TEMPLATE_KEY = 'postersplus_copy_template';
 // those are the code's own on every instance (the one an operator can change,
 // the logo language, is dropped below). Spelling every parameter out made a
 // default config ~2100 characters, past Discord's 2000-character message
-// limit. Nothing identifying goes with it: the host is a
-// reserved .invalid name, so a share pasted into a client by mistake fails
-// outright instead of reaching anyone's instance, and keys, the access key
-// and the selected title are dropped. So are the viewer's own choices —
+// limit. Only known public origins travel; private or unknown instances use
+// the public fallback. Keys, the access key and the selected title are
+// dropped. So are the viewer's own choices —
 // language, client and resolution belong to whoever imports it.
 const COPY_TEMPLATE_SHARE = { id: 'share', name: 'Share settings', ...COPY_SHAPE_REQUIRED, ...COPY_SHAPE_DUAL };
-const SHARE_ORIGIN = 'https://share.postersplus.invalid';
+const SHARE_ORIGIN = 'https://postersplus.cc';
+const SHARE_PUBLIC_ORIGINS = new Set([
+  SHARE_ORIGIN,
+  'https://postersplus.slokker.cc',
+  'https://postersplus.stremio.ru',
+  'https://postersplus.elfhosted.com',
+]);
+const SHARE_LEGACY_ORIGIN = 'https://share.postersplus.invalid';
 const _SHARE_DROP  = ['tmdb_id', 'imdb_id', 'stremio_id', 'type', 'access_key', 'tmdb_key',
                       'mdblist_key', 'logo_language', 'primary_client', 'resolution'];
 
+function shareOrigin() {
+  try {
+    const url = new URL(vEl('cfg-domain'));
+    if (url.protocol === 'https:' && SHARE_PUBLIC_ORIGINS.has(url.origin)) return url.origin;
+  } catch (_) {}
+  return SHARE_ORIGIN;
+}
+
 function buildShareUrl() {
+  const origin = shareOrigin();
   const url = buildBaseParams({ usePlaceholders: true, templateId: 'share',
-                                domainOverride: SHARE_ORIGIN });
+                                domainOverride: origin });
   const q = url.indexOf('?');
   const p = new URLSearchParams(q < 0 ? '' : url.slice(q + 1));
   _SHARE_DROP.forEach(k => p.delete(k));
+  p.set('share', '1');
   // The plain list, not the "default,..." diff: the recipient's default order
   // may not be this server's.
   if (p.has('sash_priority')) p.set('sash_priority', getSashPriorityParam({ compact: false }));
-  return decodePlaceholders(`${SHARE_ORIGIN}/poster?${p.toString()}`);
+  return decodePlaceholders(`${origin}/poster?${p.toString()}`);
 }
 
 function isShareUrl(raw) {
-  try { return new URL(raw).origin === SHARE_ORIGIN; } catch { return false; }
+  try {
+    const url = new URL(raw);
+    // Old shares used a reserved host; public hosts also serve normal posters,
+    // so new shares need an explicit marker to request settings-only import.
+    return url.protocol === 'https:' && (url.origin === SHARE_LEGACY_ORIGIN
+      || (SHARE_PUBLIC_ORIGINS.has(url.origin) && url.searchParams.get('share') === '1'));
+  } catch { return false; }
 }
 
 /** The template a plain left-click copies: Discover+ if that was picked last,
@@ -7435,7 +7457,7 @@ function renderCopyMenu() {
     share.className = 'menu-item';
     share.id = 'copy-share';
     share.setAttribute('role', 'menuitem');
-    share.title = 'Copies these settings for someone else to import — no domain, keys or title.';
+    share.title = 'Copies these settings for someone else to import — no private domain, keys or title.';
     share.textContent = COPY_TEMPLATE_SHARE.name;
     share.onclick = copyShare;
     menu.appendChild(share);

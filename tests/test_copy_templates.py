@@ -8,7 +8,10 @@ was the last pick, and right-click (or a long press) opens the menu.
 """
 
 from pathlib import Path
+import json
 import re
+import shutil
+import subprocess
 import unittest
 from unittest import mock
 
@@ -217,16 +220,132 @@ class CopyButtonBehaviourTests(unittest.TestCase):
 
 
 class ShareSettingsTests(unittest.TestCase):
-    """Share settings hands the look to someone else, so it must carry nothing
-    that identifies the sender's instance or unlocks their accounts."""
+    """Share settings must not expose private instances or account keys."""
 
     @classmethod
     def setUpClass(cls):
         cls.html = Path("configurator.html").read_text(encoding="utf-8")
 
-    def test_host_is_a_reserved_name_that_never_resolves(self):
-        self.assertIn("const SHARE_ORIGIN = 'https://share.postersplus.invalid';", self.html)
-        self.assertIn("domainOverride: SHARE_ORIGIN", self.html)
+    def run_share_js(self, body):
+        """Exercise the page's URL code with Node's real URL parser."""
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node.js is required for share URL behaviour tests")
+        start = self.html.index("const SHARE_ORIGIN")
+        end = self.html.index("/** The template a plain left-click", start)
+        apply_start = self.html.index("function applyImport()")
+        apply_end = self.html.index("\n}\n", apply_start) + 2
+        decode_start = self.html.index("function decodePlaceholders(")
+        decode_end = self.html.index("\n}\n", decode_start) + 2
+        script = "const assert = require('node:assert/strict');\n" + "\n".join((
+            self.html[start:end], self.html[apply_start:apply_end],
+            self.html[decode_start:decode_end], body,
+        ))
+        result = subprocess.run([node, "-"], input=script, text=True,
+                                capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_public_origins_are_preserved_and_everything_else_falls_back(self):
+        public = ["https://postersplus.cc", "https://postersplus.slokker.cc",
+                  "https://postersplus.stremio.ru", "https://postersplus.elfhosted.com"]
+        cases = [(host, host) for host in public]
+        cases += [(host + "/", host) for host in public]
+        cases += [("HTTPS://POSTERSPLUS.SLOKKER.CC:443/", public[1]),
+                  ("https://user:secret@postersplus.slokker.cc/private?access_key=secret#private",
+                   public[1])]
+        unknown = ["https://private.example", "http://localhost:8000", "https://192.168.1.2",
+                   "https://[::1]", "", "not a URL", "postersplus.slokker.cc",
+                   "//postersplus.slokker.cc", "https://", "https://[broken",
+                   "https://postersplus.slokker.cc:bad", "null",
+                   "blob:https://postersplus.slokker.cc/id", "file:///postersplus.slokker.cc",
+                   "https://share.postersplus.invalid"]
+        for host in public:
+            unknown += [host.replace("https:", "http:"), host + ":8443", host + ".evil.test",
+                        host.replace("https://", "https://private."), host + "@evil.test",
+                        host + ".", "https://evil.test/?next=" + host]
+        cases += [(host, public[0]) for host in unknown]
+        self.run_share_js("const cases = " + json.dumps(cases) + ";\n" + r"""
+            let domain;
+            function vEl(id) { assert.equal(id, 'cfg-domain'); return domain; }
+            function buildBaseParams(options) {
+              assert.equal(options.domainOverride, shareOrigin());
+              assert.equal(options.usePlaceholders, true);
+              assert.equal(options.templateId, 'share');
+              return options.domainOverride + '/poster?shape={shape}&rating_mode=2';
+            }
+            for (const [input, expected] of cases) {
+              domain = input;
+              const output = new URL(buildShareUrl());
+              assert.equal(output.origin, expected, input);
+              assert.equal(output.pathname, '/poster');
+              assert.equal(output.username, '');
+              assert.equal(output.password, '');
+              assert.equal(output.hash, '');
+              assert.deepEqual([...output.searchParams],
+                [['shape', '{shape}'], ['rating_mode', '2'], ['share', '1']]);
+              assert.equal(isShareUrl(output.href), true);
+            }
+        """)
+
+    def test_share_generation_filters_sensitive_parameters(self):
+        self.run_share_js(r"""
+            function vEl() { return 'https://private.example'; }
+            function buildBaseParams() {
+              const p = new URLSearchParams({
+                tmdb_id: '123', imdb_id: 'tt123', stremio_id: 'kitsu:123', type: 'movie',
+                access_key: 'private', tmdb_key: 'secret', mdblist_key: 'secret',
+                logo_language: 'fr', primary_client: 'nuvio', resolution: '2000',
+                shape: '{shape}', rating_mode: '2', landscape_rating_mode: '3',
+                sash_priority: 'default,awards', share: '0'
+              });
+              p.append('access_key', 'another-secret');
+              return 'https://private.example/poster?' + p;
+            }
+            function getSashPriorityParam(options) {
+              assert.deepEqual(options, {compact: false});
+              return 'awards,imdb';
+            }
+            assert.equal(buildShareUrl(), 'https://postersplus.cc/poster?shape={shape}'
+              + '&rating_mode=2&landscape_rating_mode=3&sash_priority=awards%2Cimdb&share=1');
+        """)
+
+    def test_shared_and_normal_urls_take_the_correct_import_path(self):
+        self.run_share_js(r"""
+            let raw, imported, remembered, closed;
+            const document = {getElementById: () => ({value: raw})};
+            function importUrl(url, options) { imported = {url, options}; return true; }
+            function _rememberImport(url) { remembered = url; }
+            function closeImportModal() { closed = true; }
+            const cases = [];
+            for (const origin of SHARE_PUBLIC_ORIGINS) {
+              cases.push([origin + '/poster?share=1&rating_mode=2', true]);
+              // Templates and concrete titles both remain normal poster imports.
+              for (const query of ['tmdb_id=123&type=movie', 'shape={shape}',
+                                   'rating_mode=2', 'share=0', 'share=true', 'share=']) {
+                cases.push([origin + '/poster?' + query, false]);
+              }
+              cases.push([origin + '.evil.test/poster?share=1', false]);
+              cases.push([origin + ':8443/poster?share=1', false]);
+              cases.push(['blob:' + origin + '/poster?share=1', false]);
+            }
+            cases.push(['https://share.postersplus.invalid/poster?shape={shape}', true],
+                       ['https://share.postersplus.invalid/poster?share=0', true],
+                       ['https://share.postersplus.invalid.evil.test/poster', false],
+                       ['http://share.postersplus.invalid/poster', false],
+                       ['blob:https://share.postersplus.invalid/poster', false],
+                       ['https://private.example/poster?tmdb_id=123', false],
+                       ['not a URL', false]);
+            for (const [url, share] of cases) {
+              assert.equal(isShareUrl(url), share, url);
+              raw = '  ' + url + '  ';
+              closed = false;
+              applyImport();
+              assert.deepEqual(imported, {url, options: share
+                ? {settingsOnly: true, share: true} : {}}, url);
+              assert.equal(remembered, url);
+              assert.equal(closed, true);
+            }
+        """)
 
     def test_keys_ids_and_personal_choices_are_dropped(self):
         start = self.html.index("const _SHARE_DROP")
