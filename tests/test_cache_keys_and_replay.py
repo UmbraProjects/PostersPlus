@@ -2,6 +2,7 @@
 bookkeeping around them."""
 
 import asyncio
+from contextlib import ExitStack
 import unittest
 from unittest import mock
 
@@ -32,6 +33,35 @@ class RenderSignatureTests(unittest.TestCase):
         self.assertNotEqual(self._sig(), self._sig(textless="true"))
         self.assertNotEqual(self._sig(badge_height="40"), self._sig(badge_height="41"))
         self.assertNotEqual(self._sig(), self._sig(shape="landscape"))
+
+    def test_share_marker_is_excluded_and_reuses_the_composite_key(self):
+        with ExitStack() as stack:
+            for name, value in {
+                'ACCESS_KEY': None, 'SERVER_TMDB_KEY': 'test-key',
+                'DISABLE_COMPOSITE_CACHE': False, 'TEXTLESS_TEXT_DETECTION': False,
+                'IMDB_DATASET_ENABLED': False, 'ANIME_SOURCES_ENABLED': False,
+            }.items():
+                stack.enter_context(mock.patch.object(main._cfg, name, value))
+            stack.enter_context(mock.patch.object(main, '_settle_title_identity',
+                new=mock.AsyncMock(return_value=('123', 'movie', False, 'tt123', False))))
+            stack.enter_context(mock.patch.object(main.art_overrides, 'refresh'))
+            stack.enter_context(mock.patch.object(main, '_revisions_applying', return_value=[]))
+            lookup = stack.enter_context(mock.patch.object(main, 'get_cached_final_poster_l1',
+                return_value=(b'cached-poster', 9999999999, False)))
+            build = stack.enter_context(mock.patch.object(main, 'build_request_config',
+                wraps=main.build_request_config))
+            client = TestClient(main.app)
+            for shape in ('portrait', 'landscape'):
+                keys = []
+                for marker in ({}, {'share': '1'}, {'share': '0'}):
+                    response = client.get('/poster', params={
+                        'tmdb_id': '123', 'shape': shape, 'rating_display_mode': '2', **marker,
+                    })
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.content, b'cached-poster')
+                    self.assertNotIn('share', build.call_args.args[0])
+                    keys.append(lookup.call_args.args[0])
+                self.assertEqual(len(set(keys)), 1, keys)
 
 
 class NewSettingsKeepOldKeysTests(unittest.TestCase):

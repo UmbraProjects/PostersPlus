@@ -71,6 +71,7 @@ LOG_DIR               = "/app/cache/logs"
 
 # Environment
 
+PUBLIC_SHARE_ORIGIN   = _env('PUBLIC_SHARE_ORIGIN', "", group='Access & serving', kind='url', label='Public share origin', help="Explicitly declare this instance public for Share settings by setting its HTTPS origin, e.g. https://posters.example.com (no path, credentials, query or fragment). Blank keeps the instance private and shares use https://postersplus.cc. Shared URLs used directly in clients send requests to that public server and use its configuration and resources. Set only for an instance intended for public use without an access key; this does not change access controls.", placeholder='https://posters.example.com').strip()
 PUBLIC_URL            = _env('PUBLIC_URL', "", group='Access & serving', kind='url', label='Public URL', help="The address clients reach this instance on, e.g. https://posters.example.com. Used for the poster links the trending catalogs addon hands out. Blank derives it from each request's Host / X-Forwarded-Host / X-Forwarded-Proto headers, which works behind most proxies but lets a forged header change the links in a response a shared cache might keep.", placeholder='https://posters.example.com', advanced=True).strip().rstrip("/")
 ACCESS_KEY            = _env('ACCESS_KEY', "", group='Access & serving', kind='secret', label='Access key', help='Shared secret every poster and configurator request must carry as access_key. Leave blank for open access.') or None
 # For operators who protect the configurator with a separate login (Authelia,
