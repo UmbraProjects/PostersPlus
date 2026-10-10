@@ -59,9 +59,9 @@ a module reads a setting from `os.environ` behind the registry's back.
 
 ## Before opening a PR
 
-The configurator URL behavior tests require Node.js on `PATH` (available on the
-existing `ubuntu-latest` CI runner). Missing Node fails those tests with an
-installation hint rather than silently skipping their coverage.
+The configurator URL behavior tests use Node.js on `PATH`. CI explicitly installs
+Node.js 24 LTS; locally, those tests skip with an installation hint if Node is
+unavailable. Use `python3 -m pytest tests/ -q -rs` to see skip reasons.
 
 ```bash
 python3 -m pytest tests/ -q

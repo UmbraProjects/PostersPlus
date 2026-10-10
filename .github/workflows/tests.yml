@@ -34,6 +34,11 @@ jobs:
           python-version: '3.11'
           cache: pip
 
+      - name: Set up Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '24'
+
       - name: Install cairo headers and GL libraries
         # pycairo builds from source against the cairo headers, as in the image's
         # builder stage.  skia-python needs libEGL/libGL present to load (the
