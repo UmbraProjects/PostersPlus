@@ -317,8 +317,21 @@ class RatingBadgeKindsTests(unittest.TestCase):
         kinds = rb.parse_kinds("imdb:m,tomatoes,kitsu:a")
         self.assertEqual(rb.for_kind("imdb,tomatoes,kitsu", kinds, "m"), "imdb,tomatoes")
         self.assertEqual(rb.for_kind("imdb,tomatoes,kitsu", kinds, "t"), "tomatoes")
-        self.assertEqual(rb.for_kind("imdb,tomatoes,kitsu", kinds, "a"), "tomatoes,kitsu")
+        self.assertEqual(rb.for_kind("imdb,tomatoes,kitsu", kinds, "s"), "tomatoes,kitsu")
         self.assertEqual(rb.for_kind("imdb", "", "t"), "imdb")
+
+    def test_anime_films_and_series_apart(self):
+        # "a" is both anime kinds, and both are still written "a".
+        self.assertEqual(rb.parse_kinds("imdb:tm,kitsu:a,anilist:sf"), "imdb:mt,kitsu:a,anilist:a")
+        self.assertEqual(rb.parse_kinds("imdb:mta"), "")
+        self.assertEqual(rb.parse_kinds("imdb:mts,letterboxd:fm"), "imdb:mts,letterboxd:mf")
+        kinds = rb.parse_kinds("letterboxd:mf,imdb:ts")
+        self.assertEqual(rb.for_kind("letterboxd,imdb", kinds, "f"), "letterboxd")
+        self.assertEqual(rb.for_kind("letterboxd,imdb", kinds, "s"), "imdb")
+        self.assertEqual(rb.for_kind("letterboxd,imdb", kinds, "m"), "letterboxd")
+        self.assertEqual(rb.for_kind("letterboxd,imdb", "kitsu:a", "s"), "letterboxd,imdb")
+        self.assertEqual(rb.for_kind("kitsu", "kitsu:a", "f"), "kitsu")
+        self.assertEqual(rb.for_kind("kitsu", "kitsu:a", "t"), "")
 
     def test_config_and_cache_key(self):
         cfg = main.build_request_config({"rating_badges": "imdb:m,tomatoes"})

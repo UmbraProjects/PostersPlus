@@ -145,7 +145,7 @@ def _anime_row(entry: dict) -> dict | None:
         "imdb_id": mapped.imdb_id if mapped is not None else None,
         ("title" if is_movie else "name"): title,
         ("release_date" if is_movie else "first_air_date"): date,
-        "poster_url": poster.get("small") or poster.get("medium") or poster.get("original"),
+        "poster_url": anime.kitsu_image_url(poster.get("small") or poster.get("medium") or poster.get("original")),
         "anime_id": f"kitsu:{kitsu_id}",
         "anime_label": _label(place),
         # A season of something TMDB has, listed under it when it is among

@@ -4,6 +4,11 @@
 
 ### Fixes
 
+- Rating badges can be limited to **Anime Movie** and **Anime TV** separately:
+  the single **Anime** toggle is now two, so Letterboxd can show on anime
+  films and IMDb on anime series (`rating_badges=letterboxd:mf,imdb:ts`).
+  Before, both counted every anime title as "Anime", so the badge order
+  decided which one an anime series got. An existing `:a` still means both.
 - Landscape frosted graphic badges (quality chips, cinema disc) follow the
   Badge Settings' glass **Opacity** and **Colour Saturation**. They were
   reading the portrait notch's, which landscape doesn't show. The two

@@ -12319,9 +12319,12 @@ async def get_poster(
                 _bp_args["fallback_title"] = _own_title
         if rcfg.rating_badge_kinds:
             # Anime by the rule the weights use: requested by anime id, or
-            # carrying a score from an anime site.
-            _rb_kind = ("a" if is_anime or (isinstance(ratings_dict, dict) and is_anime_rated(ratings_dict))
-                        else "t" if type in ("tv", "series") else "m")
+            # carrying a score from an anime site; film or series as the
+            # weights split it too.
+            _series = type in ("tv", "series")
+            _rb_kind = (("s" if _series else "f")
+                        if is_anime or (isinstance(ratings_dict, dict) and is_anime_rated(ratings_dict))
+                        else "t" if _series else "m")
             _render_cfg = dataclasses.replace(_render_cfg, rating_badges=rating_badges.for_kind(
                 rcfg.rating_badges, rcfg.rating_badge_kinds, _rb_kind))
         if not _is_landscape:
@@ -12526,6 +12529,12 @@ async def get_poster(
             )
             raise HTTPException(status_code=404, detail="Poster image not found on TMDB")
         _raise_if_client_key_rejected(exc, effective_tmdb_key, f"tmdb_id={tmdb_id}")
+        if is_anime and 400 <= status < 500 and anime.is_provider_image(str(exc.request.url)):
+            # The anime provider's art url stopped being served (Kitsu's
+            # signed urls expire): ask the provider again next time rather
+            # than fail the same way for the cache window.  Only its own
+            # art: a Fanart or TVDB 404 isn't mended by asking Kitsu again.
+            anime.forget_metadata(anime_namespace, anime_id)
         logger.error(f"Upstream HTTP {status} for tmdb_id={tmdb_id}: {exc}")
         raise HTTPException(status_code=502, detail=f"Upstream error {status}")
     except Exception as exc:

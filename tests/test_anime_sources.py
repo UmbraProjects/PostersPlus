@@ -822,3 +822,52 @@ class MalIdDispatchTests(unittest.TestCase):
         with self.assertRaises(self.HTTPException) as ctx:
             self.resolve("", "", "", "abc")
         self.assertEqual(ctx.exception.detail, "Invalid mal_id")
+
+
+class KitsuSignedUrlTests(unittest.IsolatedAsyncioTestCase):
+    """Kitsu's image urls are presigned for 15 minutes; the bucket is public,
+    so the bare url is the one kept (Apothecary Diaries 502'd on a cached
+    signed url four days old)."""
+
+    SIGNED = ("https://kitsu-production-media.s3.us-west-002.backblazeb2.com/anime/50021/"
+              "poster_image/abc.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=900"
+              "&X-Amz-Signature=f00")
+    BARE = "https://kitsu-production-media.s3.us-west-002.backblazeb2.com/anime/50021/poster_image/abc.jpg"
+
+    def setUp(self):
+        self._real_get = anime.get_cached_tvdb_json
+        self.store: dict = {}
+        anime.get_cached_tvdb_json = lambda key: self.store.get(key)
+
+    def tearDown(self):
+        anime.get_cached_tvdb_json = self._real_get
+
+    def test_url(self):
+        self.assertEqual(anime.kitsu_image_url(self.SIGNED), self.BARE)
+        unsigned = "https://media.kitsu.app/anime/poster_images/1/original.jpg"
+        self.assertEqual(anime.kitsu_image_url(unsigned), unsigned)
+        self.assertIsNone(anime.kitsu_image_url(None))
+
+    def test_provider_image_hosts(self):
+        self.assertTrue(anime.is_provider_image(self.SIGNED))
+        self.assertTrue(anime.is_provider_image("https://media.kitsu.app/anime/poster_images/1/original.jpg"))
+        self.assertTrue(anime.is_provider_image("https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/x.jpg"))
+        self.assertFalse(anime.is_provider_image("https://assets.fanart.tv/fanart/tv/1/x.jpg"))
+        self.assertFalse(anime.is_provider_image("https://image.tmdb.org/t/p/original/x.jpg"))
+
+    def test_normalised_poster_and_cover_are_bare(self):
+        _, _, _, poster, td = anime._normalise_kitsu({"attributes": {
+            "titles": {}, "posterImage": {"original": self.SIGNED},
+            "coverImage": {"original": self.SIGNED}}})
+        self.assertEqual(poster, self.BARE)
+        self.assertEqual(td["anime_banner"], self.BARE)
+
+    async def test_a_row_cached_signed_reads_bare(self):
+        td = anime._blank_tmdb_data()
+        td.update(anime_score=80.0, anime_banner=self.SIGNED)
+        self.store[anime._cache_key("kitsu", 50021)] = {
+            "genre_ids": [16], "release_year": "2023", "title": "T",
+            "poster_path": self.SIGNED, "tmdb_data": td}
+        result = await anime.fetch_anime_metadata(_FakeClient(AssertionError("no fetch")), "kitsu", 50021)
+        self.assertEqual(result[5], self.BARE)
+        self.assertEqual(result[7]["anime_banner"], self.BARE)

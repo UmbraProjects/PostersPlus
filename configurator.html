@@ -1408,7 +1408,7 @@
 
   /* Rating badges: which kinds of title each site shows on.  Small enough to
      sit in the row beside the name rather than take a row of their own. */
-  .rb-kinds { display: flex; gap: 3px; flex-shrink: 0; }
+  .rb-kinds { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 3px; }
   .rb-kind {
     font-family: var(--mono);
     font-size: 8.5px;
@@ -6258,10 +6258,14 @@ function setRatingBadges(ids) {
   buildRatingBadgeList(); updateRatingFields(); build(); queuePreviewReload();
 }
 
-// Which kinds of title each badge shows on, as rating_badges spells them
-// ("m", "t", "a").  Only narrowed sites are stored ("imdb:mt,kitsu:a"); a site
-// that isn't listed shows on all three.
-const RATING_BADGE_KINDS = [['m', 'Movie'], ['t', 'TV'], ['a', 'Anime']];
+// Which kinds of title each badge shows on, as rating_badges spells them:
+// "m", "t", and anime films "f" and series "s" ("a", from before anime was
+// split, is both, and is how both are written).  Only narrowed sites are
+// stored ("imdb:mts,kitsu:fs"); a site that isn't listed shows on all four.
+const RATING_BADGE_KINDS = [['m', 'Movie', 'movies'], ['t', 'TV', 'TV shows'],
+                            ['f', 'Anime Movie', 'anime movies'], ['s', 'Anime TV', 'anime series']];
+const RATING_BADGE_ALL = 'mtfs';
+const rbKindSet = k => RATING_BADGE_ALL.split('').filter(c => k.replace('a', 'fs').includes(c)).join('');
 function ratingBadgeKinds() {
   const out = {};
   for (const entry of (vEl('cfg-rating-badge-kinds') || '').split(',')) {
@@ -6272,10 +6276,10 @@ function ratingBadgeKinds() {
 }
 function setRatingBadgeKind(id, kind, on) {
   const all = ratingBadgeKinds();
-  const now = new Set((all[id] ?? 'mta').split(''));
+  const now = new Set((all[id] ?? RATING_BADGE_ALL).split(''));
   on ? now.add(kind) : now.delete(kind);
   const kinds = RATING_BADGE_KINDS.map(([k]) => k).filter(k => now.has(k)).join('');
-  if (kinds === 'mta') delete all[id]; else all[id] = kinds;
+  if (kinds === RATING_BADGE_ALL) delete all[id]; else all[id] = kinds;
   document.getElementById('cfg-rating-badge-kinds').value =
     Object.entries(all).map(([p, k]) => `${p}:${k}`).join(',');
   buildRatingBadgeList(); build(); queuePreviewReload();
@@ -6284,7 +6288,7 @@ function setRatingBadgeKind(id, kind, on) {
 function ratingBadgesParam() {
   const kinds = ratingBadgeKinds();
   return ratingBadgeSources(vEl('cfg-rating-badges'))
-    .map(id => kinds[id] !== undefined ? `${id}:${kinds[id]}` : id).join(',');
+    .map(id => kinds[id] !== undefined ? `${id}:${kinds[id].replace('fs', 'a')}` : id).join(',');
 }
 
 function buildRatingBadgeList() {
@@ -6303,9 +6307,9 @@ function buildRatingBadgeList() {
       ${active ? `<span class="sash-drag-handle" title="Drag to reorder">⠿</span>
       <span class="sash-rank">${idx + 1}</span>` : ''}
       <span class="sash-label">${src.label}</span>
-      ${active ? `<span class="rb-kinds">${RATING_BADGE_KINDS.map(([k, name]) =>
-        `<button class="rb-kind${(kinds[src.id] ?? 'mta').includes(k) ? ' on' : ''}" data-kind="${k}"
-                 title="Show on ${name === 'Anime' ? 'anime' : name + 's'}">${name}</button>`).join('')}</span>` : ''}
+      ${active ? `<span class="rb-kinds">${RATING_BADGE_KINDS.map(([k, name, tip]) =>
+        `<button class="rb-kind${(kinds[src.id] ?? RATING_BADGE_ALL).includes(k) ? ' on' : ''}" data-kind="${k}"
+                 title="Show on ${tip}">${name}</button>`).join('')}</span>` : ''}
       ${active ? `<button class="sash-disable-btn" title="Remove">✕</button>`
                : (full ? '' : `<button class="sash-enable-btn" title="Add">+</button>`)}
     `;
@@ -10230,8 +10234,8 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     // The kinds ride on the same parameter ("imdb:mt"); keep only narrowed ones.
     _setEl('cfg-rating-badge-kinds', (p.get('rating_badges') || '').toLowerCase().split(',')
       .map(t => t.trim().split(':')).filter(([id, k]) => k !== undefined && ratingBadgeSources(id).length)
-      .map(([id, k]) => [id, ['m', 't', 'a'].filter(c => k.includes(c)).join('')])
-      .filter(([, k]) => k !== 'mta').map(([id, k]) => `${id}:${k}`).join(','));
+      .map(([id, k]) => [id, rbKindSet(k)])
+      .filter(([, k]) => k !== RATING_BADGE_ALL).map(([id, k]) => `${id}:${k}`).join(','));
     _setEl('cfg-rating-badge-scale', p.get('rating_badge_scale') === 'normalized' ? 'normalized' : 'native');
     _setEl('cfg-rating-badge-max', ['1', '2', '3', '4', '5'].includes(p.get('rating_badge_max')) ? p.get('rating_badge_max') : '0');
     _setEl('cfg-rating-badge-style', p.get('rating_badge_style') === 'mono' ? 'mono' : 'color');

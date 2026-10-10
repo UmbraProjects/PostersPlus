@@ -87,7 +87,7 @@ async def _kitsu_cover(client: httpx.AsyncClient, namespace: str, anime_id: int)
     if resp.status_code != 200:
         raise _Transient(f"Kitsu {resp.status_code}")
     attrs = (resp.json().get("data") or {}).get("attributes") or {}
-    return (attrs.get("coverImage") or {}).get("original")
+    return anime.kitsu_image_url((attrs.get("coverImage") or {}).get("original"))
 
 
 async def _vetted_cover(client: httpx.AsyncClient, tmdb_id: str, url: str) -> bool:
@@ -192,4 +192,4 @@ async def season_art(client: httpx.AsyncClient, *, namespace: str, anime_id: int
                 _inflight.pop(key, None)
                 if not fut.done():
                     fut.set_result(cached)
-    return (cached or {}).get("path")
+    return anime.kitsu_image_url((cached or {}).get("path"))

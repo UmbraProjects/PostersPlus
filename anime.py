@@ -28,6 +28,7 @@ Design notes
 import asyncio
 import time
 import hashlib
+from urllib.parse import urlsplit
 import logging
 
 import httpx
@@ -35,6 +36,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 from cache import (
+    delete_cached_tvdb_json,
     get_cached_tvdb_json,
     set_cached_tvdb_json,
 )
@@ -602,7 +604,7 @@ def _normalise_kitsu(data: dict) -> tuple:
     poster = attrs.get("posterImage") or {}
     # Kitsu's `original` is typically 550x780, the only source across these
     # providers that doesn't need upscaling to the 500x750 canvas.
-    poster_url = poster.get("original") or poster.get("large")
+    poster_url = kitsu_image_url(poster.get("original") or poster.get("large"))
 
     tmdb_data = _blank_tmdb_data()
     tmdb_data["original_title"]     = original_title
@@ -616,7 +618,7 @@ def _normalise_kitsu(data: dict) -> tuple:
     tmdb_data["anime_media_type"]   = (
         "movie" if (attrs.get("subtype") or "") in _MOVIE_FORMATS else "series"
     )
-    tmdb_data["anime_banner"]       = (attrs.get("coverImage") or {}).get("original")
+    tmdb_data["anime_banner"]       = kitsu_image_url((attrs.get("coverImage") or {}).get("original"))
 
     # averageRating is a percentage delivered as a string ("82.53").
     raw_score = attrs.get("averageRating")
@@ -643,6 +645,28 @@ _METADATA_VERSION = "v2"
 
 def _cache_key(namespace: str, anime_id: int) -> str:
     return f"anime:{_METADATA_VERSION}:{namespace}:{anime_id}"
+
+
+def kitsu_image_url(url: str | None) -> str | None:
+    """*url* without the presigned-request query Kitsu now puts on its image
+    urls.  The signature lasts 15 minutes (X-Amz-Expires=900), so a url
+    cached with it 401s soon after; the bucket is public, and the bare url
+    serves the same file for as long as the image is Kitsu's."""
+    if url and "X-Amz-" in url:
+        return url.split("?", 1)[0]
+    return url
+
+
+def is_provider_image(url: str) -> bool:
+    """Whether *url* is Kitsu's or AniList's own image hosting."""
+    host = urlsplit(url).hostname or ""
+    return "kitsu" in host or host.endswith("anilist.co")
+
+
+def forget_metadata(namespace: str, anime_id: int) -> None:
+    """Drop the cached row, so the next request asks the provider again —
+    for when the art it names stops being served."""
+    delete_cached_tvdb_json(_cache_key(namespace, anime_id))
 
 
 def poster_cache_key(namespace: str, anime_id: int, url: str) -> str:
@@ -708,15 +732,20 @@ async def fetch_anime_metadata(
         if cached.get("__miss__"):
             logger.info(f"{namespace} negative cache hit for {anime_id}")
             return None
+        # Rows cached before kitsu_image_url carry signed urls that have
+        # long expired: cleaned here rather than every row fetched again.
+        tmdb_data = cached["tmdb_data"]
+        if tmdb_data and "anime_banner" in tmdb_data:
+            tmdb_data = {**tmdb_data, "anime_banner": kitsu_image_url(tmdb_data["anime_banner"])}
         hit = (
             cached["genre_ids"],
             False,
             [],
             cached["release_year"],
             cached["title"],
-            cached["poster_path"],
+            kitsu_image_url(cached["poster_path"]),
             None,
-            cached["tmdb_data"],
+            tmdb_data,
         )
         # A new show has no score for its first days (Kitsu waits for enough
         # ratings, AniList for its first episodes), and the metadata is kept
