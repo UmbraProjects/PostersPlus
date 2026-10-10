@@ -18,6 +18,7 @@ from unittest import mock
 from zoneinfo import ZoneInfo
 
 import cache
+import config
 import main
 import tmdb
 
@@ -171,15 +172,15 @@ class TmdbRankTests(unittest.TestCase):
 class EnsureSnapshotTests(_TempDb):
     def setUp(self):
         super().setUp()
-        self._src = (tmdb.TRENDING_SOURCE_MOVIE, tmdb.TRENDING_SOURCE_TV)
-        tmdb.TRENDING_SOURCE_MOVIE = tmdb.TRENDING_SOURCE_TV = ""
+        self._src = (config.TRENDING_SOURCE_MOVIE, config.TRENDING_SOURCE_TV)
+        config.TRENDING_SOURCE_MOVIE = config.TRENDING_SOURCE_TV = ""
         # TMDB's own lists, without the anime split's marker on them.
         self._split = mock.patch.object(tmdb, "anime_split", lambda: False)
         self._split.start()
 
     def tearDown(self):
         self._split.stop()
-        tmdb.TRENDING_SOURCE_MOVIE, tmdb.TRENDING_SOURCE_TV = self._src
+        config.TRENDING_SOURCE_MOVIE, config.TRENDING_SOURCE_TV = self._src
         super().tearDown()
 
     def test_a_current_snapshot_is_not_refetched(self):
@@ -193,7 +194,7 @@ class EnsureSnapshotTests(_TempDb):
     def test_an_expired_snapshot_is_refetched(self):
         self._store("movie", {"5": 1}, time.time() - 2 * 86400)
 
-        async def _ids(client, key, endpoint, details_out=None):
+        async def _ids(client, key, endpoint, details_out=None, **_kw):
             return ["7", "5"]
 
         with mock.patch.object(tmdb, "_fetch_tmdb_trending_ids", side_effect=_ids):
@@ -202,11 +203,11 @@ class EnsureSnapshotTests(_TempDb):
         self.assertAlmostEqual(expires_at, time.time() + 86400, delta=2)
 
     def test_warming_does_not_replace_a_current_custom_snapshot(self):
-        tmdb.TRENDING_SOURCE_MOVIE = "https://example.com/list.json"
+        config.TRENDING_SOURCE_MOVIE = "https://example.com/list.json"
         sig = tmdb.trending_source_signature("movie")
         self._store("movie", {"5": 1}, time.time() - 60, sig=sig)
 
-        async def _source(client, media_type, details_out=None):
+        async def _source(client, media_type, details_out=None, **_kw):
             return ["9", "5"] if media_type == "movie" else None
 
         async def _list(*a, **k):
@@ -226,17 +227,17 @@ class RetryTests(_TempDb):
 
     def setUp(self):
         super().setUp()
-        self._src = (tmdb.TRENDING_SOURCE_MOVIE, tmdb.TRENDING_SOURCE_TV)
-        tmdb.TRENDING_SOURCE_MOVIE = tmdb.TRENDING_SOURCE_TV = ""
+        self._src = (config.TRENDING_SOURCE_MOVIE, config.TRENDING_SOURCE_TV)
+        config.TRENDING_SOURCE_MOVIE = config.TRENDING_SOURCE_TV = ""
 
     def tearDown(self):
-        tmdb.TRENDING_SOURCE_MOVIE, tmdb.TRENDING_SOURCE_TV = self._src
+        config.TRENDING_SOURCE_MOVIE, config.TRENDING_SOURCE_TV = self._src
         super().tearDown()
 
     def _tmdb(self, results):
         calls = []
 
-        async def _ids(client, key, endpoint, details_out=None):
+        async def _ids(client, key, endpoint, details_out=None, **_kw):
             calls.append(1)
             return results.pop(0)
 
@@ -271,7 +272,7 @@ class RetryTests(_TempDb):
         self.assertEqual(entry[0], {"anilist:1": 1})
 
     def _source(self, outcomes):
-        tmdb.TRENDING_SOURCE_MOVIE = "https://example.com/list.json"
+        config.TRENDING_SOURCE_MOVIE = "https://example.com/list.json"
         calls = []
 
         async def _get(url, timeout, follow_redirects):

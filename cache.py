@@ -7,6 +7,7 @@ import threading
 import tempfile
 import time
 import json
+from urllib.parse import parse_qsl
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -924,7 +925,11 @@ def invalidate_trending_turnover(media_type: str, changed_ids: "set[str]") -> in
     them in Python the way the per-title calls did, and deletes the matches in
     one transaction.  Returns the number of rows deleted.
 
-    *media_type* is the snapshot's.  A TMDB id is matched against the key's
+    *media_type* is the snapshot's storage key: the endpoint, or
+    "<endpoint>@<parts>" for a list visitors chose (trending_lists).  Only the
+    composites that rank on that list are dropped, read off the trending_list
+    each was requested with, once any chosen list is stored; until then every
+    composite ranks on the operator's lists.  A TMDB id is matched against the key's
     tail, with "tv" and "series" treated as one.  The anime lists' ids are
     "anilist:<id>" (or TMDB ids, from a custom source), and any anime poster
     carries their rank, whatever id it was asked for by: each AniList id is
@@ -933,6 +938,8 @@ def invalidate_trending_turnover(media_type: str, changed_ids: "set[str]") -> in
     """
     if not changed_ids:
         return 0
+    list_key = media_type
+    media_type = list_key.partition("@")[0]
     prefixes: tuple[str, ...] = ()
     tail_ids = set(changed_ids)
     tv_like = media_type in ("tv", "series", "anime")
@@ -961,24 +968,46 @@ def invalidate_trending_turnover(media_type: str, changed_ids: "set[str]") -> in
             (k,) for (k,) in get_db().execute("SELECT cache_key FROM final_poster_cache")
             if _match(k)
         ]
+        params_of: dict[str, str] = {}
+        if "@" in list_key or any("@" in k for k in trending_list_keys()):
+            import trending_lists
+
+            def _ranks_here(params: str) -> bool:
+                raw = dict(parse_qsl(params or "", keep_blank_values=True)).get(trending_lists.PARAM)
+                return trending_lists.parse(raw).key(media_type) == list_key
+
+            kept = []
+            for (k,) in keys:
+                row = get_db().execute(
+                    "SELECT request_params FROM final_poster_cache WHERE cache_key = ?", (k,)
+                ).fetchone()
+                params = row[0] if row and row[0] else ""
+                if _ranks_here(params):
+                    kept.append((k,))
+                    params_of[k] = params
+            keys = kept
         # Kept for the trending loop to render again warm: once deleted, these
         # are no longer there for its scan to find.
         with _turnover_replay_lock:
             for (k,) in keys:
                 if len(_turnover_replay) >= _TURNOVER_REPLAY_MAX:
                     break
-                row = get_db().execute(
-                    "SELECT request_params FROM final_poster_cache WHERE cache_key = ?", (k,)
-                ).fetchone()
-                if row and row[0]:
-                    _turnover_replay[k] = row[0]
+                if k in params_of:
+                    params = params_of[k]
+                else:
+                    row = get_db().execute(
+                        "SELECT request_params FROM final_poster_cache WHERE cache_key = ?", (k,)
+                    ).fetchone()
+                    params = row[0] if row and row[0] else ""
+                if params:
+                    _turnover_replay[k] = params
         if keys:
             with _db_lock:
                 get_db().executemany("DELETE FROM final_poster_cache WHERE cache_key = ?", keys)
                 get_db().commit()
         logger.info(
             f"Invalidated {len(keys)} cached posters for {len(changed_ids)} "
-            f"{media_type} trending changes"
+            f"{list_key} trending changes"
         )
         return len(keys)
     except Exception as exc:
@@ -1552,13 +1581,46 @@ def get_cached_trending_details(media_type: str) -> dict[str, dict]:
 
 def expire_trending_snapshot(media_type: str) -> None:
     """Mark *media_type*'s snapshot expired, so the next request rebuilds it.
-    Kept, not deleted: the rebuild diffs against it to invalidate what moved."""
+    Kept, not deleted: the rebuild diffs against it to invalidate what moved.
+    Aged by a full TTL rather than zeroed, so it is past its expiry while
+    prune_trending_choices still sees when it was built."""
     try:
         with _db_lock:
-            get_db().execute("UPDATE trending_cache SET cached_at = 0 WHERE media_type = ?", (media_type,))
+            get_db().execute(
+                "UPDATE trending_cache SET cached_at = MIN(cached_at, ?) - ? WHERE media_type = ?",
+                (int(time.time()), TRENDING_CACHE_DURATION * 86400 + 1, media_type),
+            )
             get_db().commit()
     except Exception as exc:
         logger.error(f"Trending snapshot expire error: {exc}")
+
+
+def trending_list_keys() -> list[str]:
+    """Every stored trending list's key (see trending_lists)."""
+    try:
+        return [k for (k,) in get_db().execute("SELECT media_type FROM trending_cache")]
+    except Exception as exc:
+        logger.error(f"Trending list keys read error: {exc}")
+        return []
+
+
+def prune_trending_choices(max_age_secs: int) -> int:
+    """Delete the visitor-chosen lists ("<endpoint>@...") not rebuilt for
+    *max_age_secs*: nobody has asked for them since.  One asked for again is
+    simply built again.  The operator's lists are never pruned."""
+    try:
+        with _db_lock:
+            cur = get_db().execute(
+                "DELETE FROM trending_cache WHERE media_type LIKE '%@%' AND cached_at < ?",
+                (int(time.time()) - max_age_secs,),
+            )
+            get_db().commit()
+        if cur.rowcount:
+            logger.info(f"Pruned {cur.rowcount} chosen trending list(s) nobody asked for lately")
+        return cur.rowcount
+    except Exception as exc:
+        logger.error(f"Trending list prune error: {exc}")
+        return 0
 
 
 def set_cached_trending_snapshot(

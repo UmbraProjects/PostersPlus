@@ -186,7 +186,7 @@ class PublicBaseTests(unittest.TestCase):
     def _catalog(self, headers):
         seen = {}
 
-        async def _stub(key, ctype, cid, extra, poster_cfg):
+        async def _stub(key, ctype, cid, extra, poster_cfg, lists=None):
             seen["base"] = poster_cfg[0]
             return JSONResponse({"metas": []})
         cfg_seg = main._ADDON_CFG_PREFIX + "e30"

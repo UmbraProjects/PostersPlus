@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### Fixes
+
+- Landscape frosted graphic badges (quality chips, cinema disc) follow the
+  Badge Settings' glass **Opacity** and **Colour Saturation**. They were
+  reading the portrait notch's, which landscape doesn't show. The two
+  sliders now show whenever frosted chips or the disc are on, even with a
+  dark info badge, which hides them otherwise.
+
+### Choose your trending lists
+
+- The Trending Catalogs Addon has a **Choose Lists** button. Tick any number
+  of sources for Movies, Series, Anime and Anime Movies, and each becomes a
+  catalog of its own: **TMDB** Today and This Week, **IMDb** Most Popular,
+  **Trakt** Trending (and Trending Digital for movies), **SIMKL** Today and
+  This Week, **JustWatch** and **Rotten Tomatoes** Popular, **Television
+  Stats**, the US **Top 10s** of Netflix, Prime Video, Apple TV+, Disney+,
+  Paramount+ and HBO Max, and for anime AniList, SIMKL and Trakt. None of them
+  needs a key. The addon numbers each catalog's posters by that catalog's
+  own list, so every row it draws agrees. Posters drawn through your poster
+  URL instead (AIOMetadata's poster pattern, Nuvio's override) can show only
+  one rank, so with two or more lists ticked for a type, **Poster URL** marks
+  the one they rank on.
+  Untick everything to drop a type's catalog. **Not out at home yet** leaves
+  unreleased titles off every list.
+- The pick rides in the poster URL (`trending_list=m:imdb.tmdb,h:1`, the
+  ranking list first) and in the addon URL as a `tl-<pick>` segment. Each
+  source's catalog has its own id (`pp.trending.movie.imdb`); the instance's
+  own list keeps the plain one, so an install that picks nothing is unchanged.
+- Only the menu can be picked from, so the lists an instance builds are
+  bounded by it, not by its visitors: everyone who picks alike shares one
+  list, built when first asked for and refreshed when it is due, and a pick
+  nobody has asked for in a week is dropped. Only the ranking lists key a
+  render, so extra catalogs don't split the poster cache.
+- IMDb and Trakt are read from the MDBList user snoak's daily mirrors of them
+  (as are JustWatch, Rotten Tomatoes, Television Stats and the Top 10s),
+  since IMDb blocks scripts and Trakt needs an API key; SIMKL from its own
+  hourly lists.
+- Operators: `TRENDING_LIST_CHOICE` (on by default) turns the picking off,
+  `TRENDING_LIST_SOURCES` chooses which public lists are offered, and
+  `TRENDING_SOURCE_CHOICES` adds lists of their own as `type|Name|URL`.
+
 ### Trending rank on landscape
 
 - Landscape posters can show a trending rank as the portrait's **Number** or

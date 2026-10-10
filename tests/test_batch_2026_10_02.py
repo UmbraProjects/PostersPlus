@@ -13,6 +13,7 @@ import numpy as np
 from PIL import Image
 
 import graphic_badges as gb
+import config
 import main
 import tmdb
 import trending_rank
@@ -170,17 +171,17 @@ class HideUnreleasedTests(unittest.TestCase):
         self.assertNotIn("date", tmdb._trending_item_details({"title": "X", "year": 2020}))
 
     def test_signature_changes_with_the_setting(self):
-        with mock.patch.object(tmdb, "TRENDING_HIDE_UNRELEASED", True), \
-             mock.patch.object(tmdb, "TRENDING_SOURCE_MOVIE", ""), \
+        with mock.patch.object(config, "TRENDING_HIDE_UNRELEASED", True), \
+             mock.patch.object(config, "TRENDING_SOURCE_MOVIE", ""), \
              mock.patch.object(tmdb, "anime_split", lambda: False):
             self.assertEqual(tmdb.trending_source_signature("movie"), "tmdb+released")
             self.assertEqual(tmdb.trending_source_signature("anime"), "anilist+released")  # never -anime
             self.assertEqual(tmdb.trending_source_signature("anime_movie"), "anilist-films+released-home")
-        with mock.patch.object(tmdb, "TRENDING_SOURCE_MOVIE", ""), \
+        with mock.patch.object(config, "TRENDING_SOURCE_MOVIE", ""), \
              mock.patch.object(tmdb, "anime_split", lambda: False):
             self.assertEqual(tmdb.trending_source_signature("movie"), "tmdb")
         # Leaving anime to its own lists rebuilds the movie and TV ones.
-        with mock.patch.object(tmdb, "TRENDING_SOURCE_MOVIE", ""), \
+        with mock.patch.object(config, "TRENDING_SOURCE_MOVIE", ""), \
              mock.patch.object(tmdb, "anime_split", lambda: True):
             self.assertEqual(tmdb.trending_source_signature("movie"), TMDB_SIG)
             self.assertEqual(tmdb.trending_source_signature("anime"), "anilist")
@@ -294,7 +295,7 @@ class AnimeRankLookupTests(_AddonTest):
                          [("anilist:3", "movie", "Film")])
 
     def test_a_custom_anime_source_is_tmdb_ids(self):
-        with mock.patch.object(tmdb, "TRENDING_SOURCE_ANIME", "https://example.com/list.json"):
+        with mock.patch.object(config, "TRENDING_SOURCE_ANIME", "https://example.com/list.json"):
             self._store_with_details("anime", ["100"], {"100": {"name": "Show", "imdb_id": "tt0000100"}},
                                      tmdb.trending_source_signature("anime"))
             resp = self.client.get("/trending/sekrit/catalog/series/pp.trending.anime.json")
@@ -366,17 +367,17 @@ class OneListPerTitleTests(_TempTable):
         self.assertIsNotNone(cache.get_cached_trending_snapshot_entry("tv", include_stale=True))
 
     def test_tmdb_list_is_built_after_the_anime_ones(self):
-        async def anilist(client, details_out=None, films=False, limit=None):
+        async def anilist(client, details_out=None, films=False, limit=None, **_kw):
             return [] if films else ["anilist:5"]
 
-        async def tmdb_ids(client, key, endpoint, details_out=None):
+        async def tmdb_ids(client, key, endpoint, details_out=None, **_kw):
             for i in ("500", "8"):
                 details_out[i] = {"lang": "ko"}
             return ["500", "8"]
         with mock.patch.object(tmdb, "anime_split", lambda: True), \
-             mock.patch.object(tmdb, "TRENDING_SOURCE_TV", ""), \
-             mock.patch.object(tmdb, "TRENDING_SOURCE_ANIME", ""), \
-             mock.patch.object(tmdb, "TRENDING_SOURCE_ANIME_MOVIE", ""), \
+             mock.patch.object(config, "TRENDING_SOURCE_TV", ""), \
+             mock.patch.object(config, "TRENDING_SOURCE_ANIME", ""), \
+             mock.patch.object(config, "TRENDING_SOURCE_ANIME_MOVIE", ""), \
              mock.patch("anime.fetch_anilist_trending", anilist), \
              mock.patch.object(tmdb, "_fetch_tmdb_trending_ids", tmdb_ids), \
              mock.patch.object(tmdb, "_TRENDING_RETRY_DELAY_SECS", 0):

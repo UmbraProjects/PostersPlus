@@ -1965,6 +1965,31 @@
     justify-content: flex-end;
   }
   .report-subject { margin-top: 6px; font-size: 12px; color: var(--text-secondary); }
+  /* Choose Lists: the picked lists under the addon URL, and the modal's rows. */
+  .trending-lists-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    margin-top: var(--gap-label);
+  }
+  .trending-lists-row .field-hint { margin: 0; min-width: 0; }
+  .trending-lists-fields {
+    display: flex; flex-direction: column; gap: 14px;
+    max-height: 58vh; overflow-y: auto; padding-right: 4px;
+  }
+  .trending-lists-fields .field { margin: 0; }
+  .tl-opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px; }
+  .tl-opt {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+    padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    font-size: 12px; color: var(--text-secondary);
+  }
+  .tl-opt.on { border-color: var(--gold-dim); color: var(--text-primary); }
+  .tl-opt input { accent-color: var(--gold); margin: 0; }
+  .tl-opt-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .tl-rank { cursor: pointer; }
+  .tl-opt-name em { font-style: normal; color: var(--text-secondary); }
+  .tl-rank { display: none; align-items: center; gap: 4px; font-size: 10px; color: var(--text-secondary); }
+  /* Only a choice once a type has two lists ticked. */
+  .tl-opts.multi .tl-opt.on .tl-rank { display: inline-flex; }
   .report-cats { display: flex; flex-direction: column; gap: 6px; }
   .report-cats label {
     display: flex; align-items: center; gap: 10px; cursor: pointer;
@@ -2446,6 +2471,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <input type="text" id="trending-catalogs-url" readonly onclick="this.select()">
                 <button type="button" class="btn-search" id="trending-copy-btn" onclick="copyTrendingUrl()">Copy</button>
               </div>
+              <!-- Shown while the operator lets visitors pick (TRENDING_LIST_CHOICE). -->
+              <div class="trending-lists-row" id="trending-lists-row" style="display:none;">
+                <div class="field-hint" id="trending-lists-summary"></div>
+                <button type="button" class="btn-search" onclick="openTrendingListsModal()">Choose Lists</button>
+              </div>
+              <!-- The pick, as trending_list= (see trending_lists.py): a setting
+                   like any other, so it is saved, shared and imported with them. -->
+              <input type="text" id="cfg-trending-list" hidden value="">
             </div>
             <div class="cfg-sep">
             <span class="group-title">Presentation</span>
@@ -3819,7 +3852,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
             </div>
             <!-- The mode itself (badge_display_mode): Graphic Badges or nothing.
                  Kept as the per-shape control the toggle drives. -->
-            <select id="cfg-badge-display-mode" style="display:none" onchange="updateBadgeModeHint(); build(); queuePreviewReload()">
+            <select id="cfg-badge-display-mode" style="display:none" onchange="updateBadgeModeHint(); updateLandscapeBadgeFields(); build(); queuePreviewReload()">
               <option value="0">Hidden</option>
               <option value="7" selected>Graphic Badges</option>
             </select>
@@ -3994,8 +4027,8 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <div class="sash-list" id="gb-badge-list"></div>
               </div>
               <div class="field" id="gb-cinema-style-field" style="display:none">
-                <label class="field-label" data-tip="The Cinema badge shows on a film that is still in cinemas, or not out yet, without taking the sash: a small disc with the day it reaches home (its first digital or disc release), month over day. Without a date it shows a popcorn bucket for a film in cinemas, or a clapperboard for one still in production. A series that hasn't aired yet shows its premiere date, or the clapperboard. Auto picks the disc's tone from what it sits on: white to silver over dark art, black to grey over light. Frosted is the frosted notch's glass, the poster blurred under its tint at the notch's frost opacity.">Cinema Badge Style</label>
-                <select id="cfg-badge-cinema-style" onchange="build(); queuePreviewReload()">
+                <label class="field-label" data-tip="The Cinema badge shows on a film that is still in cinemas, or not out yet, without taking the sash: a small disc with the day it reaches home (its first digital or disc release), month over day. Without a date it shows a popcorn bucket for a film in cinemas, or a clapperboard for one still in production. A series that hasn't aired yet shows its premiere date, or the clapperboard. Auto picks the disc's tone from what it sits on: white to silver over dark art, black to grey over light. Frosted is the frosted notch's glass, the poster blurred under its tint at the notch's frost opacity; on landscape, the badge's glass Opacity and Colour Saturation.">Cinema Badge Style</label>
+                <select id="cfg-badge-cinema-style" onchange="updateLandscapeBadgeFields(); build(); queuePreviewReload()">
                   <option value="auto" selected>Auto (Light / Dark)</option>
                   <option value="frosted">Frosted</option>
                 </select>
@@ -4026,8 +4059,8 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </label>
               </div>
               <div class="field" id="gb-quality-style-field" style="display:none">
-                <label class="field-label" data-tip="How the quality badges (Video, Audio and Resolution) are drawn. Solid: filled boxes for 4K, HD and HDR, and the bare Dolby and DTS marks. Frosted: each on a chip of the frosted notch's glass, the poster blurred under its tint at the notch's frost opacity, with the mark or label in the tint's ink.">Quality Badge Style</label>
-                <select id="cfg-badge-quality-style" onchange="build(); queuePreviewReload()">
+                <label class="field-label" data-tip="How the quality badges (Video, Audio and Resolution) are drawn. Solid: filled boxes for 4K, HD and HDR, and the bare Dolby and DTS marks. Frosted: each on a chip of the frosted notch's glass, the poster blurred under its tint at the notch's frost opacity (on landscape, the badge's glass Opacity and Colour Saturation), with the mark or label in the tint's ink.">Quality Badge Style</label>
+                <select id="cfg-badge-quality-style" onchange="updateLandscapeBadgeFields(); build(); queuePreviewReload()">
                   <option value="solid" selected>Solid</option>
                   <option value="frosted">Frosted</option>
                 </select>
@@ -4316,6 +4349,21 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
     <div class="import-modal-btns">
       <button class="btn btn-reset" onclick="closeImportModal()">Cancel</button>
       <button class="btn btn-primary" onclick="applyImport()">Import</button>
+    </div>
+  </div>
+</div>
+<div class="import-modal" id="trending-lists-modal" onclick="if(event.target===this)closeTrendingListsModal()">
+  <div class="import-modal-box" style="max-width:640px;">
+    <div>
+      <div class="import-modal-title">Trending lists</div>
+      <div class="report-subject">Each list you tick is a catalog of its own in the Trending addon, and the addon numbers each row's posters by that row's own list. Where your poster URL draws them instead (AIOMetadata's poster pattern, Nuvio's override), one poster can only show one rank: with two or more lists ticked, pick it with <b>Poster URL</b>. Copy the addon URL and your poster URL again after changing these.</div>
+    </div>
+    <div class="trending-lists-fields" id="trending-lists-fields"></div>
+    <div class="report-msg err" id="trending-lists-msg" hidden></div>
+    <div class="import-modal-btns">
+      <button class="btn btn-reset" onclick="resetTrendingListsModal()">Instance Defaults</button>
+      <button class="btn btn-reset" onclick="closeTrendingListsModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="applyTrendingLists()">Apply</button>
     </div>
   </div>
 </div>
@@ -4608,6 +4656,7 @@ const _BACK_MODALS = {
   'import-modal':   () => closeImportModal(),
   'whatsnew-modal': () => closeWhatsNew(),
   'report-modal':   () => closeReportModal(),
+  'trending-lists-modal': () => closeTrendingListsModal(),
 };
 
 // Back gesture / button: close the topmost layer instead of leaving the page.
@@ -5099,7 +5148,7 @@ function migrateLegacyBadgeMode(p) {
 // The Show Badges toggle is the mode: Graphic Badges or nothing.
 function setBadgesShown(on) {
   _setEl('cfg-badge-display-mode', on ? '7' : '0');
-  updateBadgeModeHint(); build(); queuePreviewReload();
+  updateBadgeModeHint(); updateLandscapeBadgeFields(); build(); queuePreviewReload();
 }
 
 // ── Graphic badge groups ────────────────────────────────────────────────────
@@ -6406,6 +6455,8 @@ function trendingAddonConfigSegment() {
   if (qIdx < 0) return '';
   const p = new URLSearchParams(url.slice(qIdx + 1));
   _ADDON_CFG_IDENTITY.forEach(k => p.delete(k));
+  // The picked lists have their own "tl-" segment (updateTrendingCatalogsField).
+  p.delete('trending_list');
   for (const [k, v] of [...p]) if (v.includes('{')) p.delete(k);
   if (c('tog-trending-only')) {
     // Only the rank: the catalog lists ranks 1 to the broad count, so both
@@ -6449,8 +6500,166 @@ function updateTrendingCatalogsField() {
   const domain = (vEl('cfg-domain') || window.location.origin).replace(/\/$/, '');
   const ak = vEl('cfg-access-key');
   const cfg = trendingAddonConfigSegment();
+  // The picked lists ride in their own segment, so a metadata addon that
+  // draws its own posters (and so is sent no settings) still gets them.
+  const tl = currentTrendingList();
   document.getElementById('trending-catalogs-url').value =
-    `${domain}/trending/${ak ? encodeURIComponent(ak) + '/' : ''}${cfg ? cfg + '/' : ''}manifest.json`;
+    `${domain}/trending/${ak ? encodeURIComponent(ak) + '/' : ''}${tl ? 'tl-' + tl + '/' : ''}`
+    + `${cfg ? cfg + '/' : ''}manifest.json`;
+  const caps = serverCaps.trending_lists;
+  document.getElementById('trending-lists-row').style.display = caps && caps.enabled ? '' : 'none';
+  if (caps && caps.enabled) {
+    document.getElementById('trending-lists-summary').textContent = trendingListSummary(parseTrendingList(tl));
+  }
+}
+
+// ── Trending lists (trending_list=) ───────────────────────────────────────────
+// The sources picked for each list from the instance's menu (/server-caps
+// trending_lists), each one a catalog of its own in the addon, and whether
+// titles not out at home are left off.  The first source of a list is the one
+// posters rank on.  Written as only what differs from the instance's own
+// choice, "m:imdb.tmdb_week,h:1" ("m:none" for no catalog), the way the server
+// canonicalises it (trending_lists.TrendingLists.token), so a pick of the
+// instance's lists is no parameter at all and shares its cached posters.
+const _TL_ENDPOINTS = ['movie', 'tv', 'anime', 'anime_movie'];
+const _TL_LETTER = { movie: 'm', tv: 't', anime: 'a', anime_movie: 'f' };
+const _TL_NAMES  = { movie: 'Movies', tv: 'Series', anime: 'Anime', anime_movie: 'Anime Movies' };
+// { movie: [ranking source, ...other catalogs], ..., home }
+function parseTrendingList(raw) {
+  const caps = serverCaps.trending_lists;
+  if (!caps) return null;
+  const out = { home: !!caps.home_default };
+  for (const e of _TL_ENDPOINTS) out[e] = [caps.lists[e].default];
+  for (const part of String(raw || '').toLowerCase().split(',')) {
+    const [k, v] = part.split(':').map(x => (x || '').trim());
+    if (k === 'h') { if (v === '0' || v === '1') out.home = v === '1'; continue; }
+    const e = _TL_ENDPOINTS.find(x => _TL_LETTER[x] === k);
+    if (!e) continue;
+    if (v === 'none') { out[e] = []; continue; }
+    const offered = new Set(caps.lists[e].choices.map(ch => ch.id));
+    const picks = [...new Set((v || '').split('.').map(x => x.trim()).filter(x => offered.has(x)))]
+      .slice(0, caps.max_picks || 8);
+    if (picks.length) out[e] = picks;
+  }
+  return out;
+}
+function trendingListToken(pick) {
+  const caps = serverCaps.trending_lists;
+  if (!caps || !caps.enabled || !pick) return '';
+  const parts = [];
+  for (const e of _TL_ENDPOINTS) {
+    const picks = pick[e] || [];
+    if (picks.length === 1 && picks[0] === caps.lists[e].default) continue;
+    parts.push(`${_TL_LETTER[e]}:${picks.length ? picks.join('.') : 'none'}`);
+  }
+  if (pick.home !== !!caps.home_default) parts.push(`h:${pick.home ? 1 : 0}`);
+  return parts.join(',');
+}
+// The saved pick, re-read against the menu: a choice the instance no longer
+// offers is dropped, as the server would read it.
+function currentTrendingList() {
+  if (!serverCaps.trending_lists) return vEl('cfg-trending-list');
+  return trendingListToken(parseTrendingList(vEl('cfg-trending-list')));
+}
+function _tlName(e, id) {
+  return (serverCaps.trending_lists.lists[e].choices.find(ch => ch.id === id) || {}).name || id;
+}
+function trendingListSummary(pick) {
+  const caps = serverCaps.trending_lists;
+  if (!pick || !caps) return '';
+  const lists = _TL_ENDPOINTS.filter(e => caps.lists[e].choices.length > 1 || !pick[e].length).map(e =>
+    `${_TL_NAMES[e]}: ${pick[e].length ? pick[e].map(id => _tlName(e, id)).join(', ') : 'none'}`);
+  return lists.join(' · ') + (pick.home ? ' · Out at home only' : '');
+}
+function _fillTrendingListsModal(pick) {
+  const caps = serverCaps.trending_lists;
+  const esc = t => String(t).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+  const rows = _TL_ENDPOINTS.map(e => {
+    const picked = new Set(pick[e]);
+    const opts = caps.lists[e].choices.map(ch => `
+        <div class="tl-opt">
+          <label class="tl-opt-name">
+            <input type="checkbox" data-tl="${e}" value="${esc(ch.id)}"${picked.has(ch.id) ? ' checked' : ''}
+                   onchange="_tlSync('${e}')">
+            <span>${esc(ch.name)}${ch.id === caps.lists[e].default ? ' <em>(default)</em>' : ''}</span>
+          </label>
+          <label class="tl-rank" title="Posters drawn through your poster URL show their rank on this list, in every row">
+            <input type="radio" name="tl-rank-${e}" value="${esc(ch.id)}"${pick[e][0] === ch.id ? ' checked' : ''}>Poster URL
+          </label>
+        </div>`).join('');
+    return `
+    <div class="field">
+      <label class="field-label" data-tip="Each list ticked is a catalog of its own, its posters numbered by that list. Posters drawn through your poster URL show their rank on the one marked Poster URL, in every row.">${_TL_NAMES[e]}</label>
+      <div class="tl-opts" id="tl-opts-${e}">${opts}</div>
+    </div>`;
+  });
+  rows.push(`
+    <div class="field">
+      <label class="field-label" for="tl-home" data-tip="Leave off films still in cinemas or not out yet, series whose first episode hasn't aired and anime not yet airing. The rest are ranked 1, 2, 3 without gaps.">Not Out at Home Yet</label>
+      <select id="tl-home">
+        <option value="0"${pick.home ? '' : ' selected'}>Include${caps.home_default ? '' : ' (default)'}</option>
+        <option value="1"${pick.home ? ' selected' : ''}>Leave Off${caps.home_default ? ' (default)' : ''}</option>
+      </select>
+    </div>`);
+  document.getElementById('trending-lists-fields').innerHTML = rows.join('');
+  document.getElementById('trending-lists-msg').hidden = true;
+  _TL_ENDPOINTS.forEach(_tlSync);
+}
+// The Poster URL choice is offered on ticked lists only (shown once two are), and one of them always
+// has it; ticking stops at the most catalogs a list may have.
+function _tlSync(e) {
+  const box = document.getElementById(`tl-opts-${e}`);
+  if (!box) return;
+  const max = serverCaps.trending_lists.max_picks || 8;
+  const ticks = [...box.querySelectorAll('input[type="checkbox"]')];
+  const on = ticks.filter(t => t.checked);
+  ticks.forEach(t => {
+    t.disabled = !t.checked && on.length >= max;
+    const radio = t.closest('.tl-opt').querySelector('input[type="radio"]');
+    radio.disabled = !t.checked;
+    if (!t.checked) radio.checked = false;
+    t.closest('.tl-opt').classList.toggle('on', t.checked);
+  });
+  if (on.length && !box.querySelector('input[type="radio"]:checked')) {
+    on[0].closest('.tl-opt').querySelector('input[type="radio"]').checked = true;
+  }
+  box.classList.toggle('multi', on.length > 1);
+}
+function openTrendingListsModal() {
+  if (!serverCaps.trending_lists) return;
+  _fillTrendingListsModal(parseTrendingList(vEl('cfg-trending-list')));
+  const modal = document.getElementById('trending-lists-modal');
+  if (modal.classList.contains('open')) return;
+  modal.classList.add('open');
+  _pushModalState('trending-lists-modal');
+}
+function closeTrendingListsModal() {
+  document.getElementById('trending-lists-modal').classList.remove('open');
+  _popModalState('trending-lists-modal');
+}
+function resetTrendingListsModal() {
+  _fillTrendingListsModal(parseTrendingList(''));
+}
+function applyTrendingLists() {
+  const pick = { home: vEl('tl-home') === '1' };
+  for (const e of _TL_ENDPOINTS) {
+    const box = document.getElementById(`tl-opts-${e}`);
+    const on = [...box.querySelectorAll('input[type="checkbox"]:checked')].map(t => t.value);
+    const rank = box.querySelector('input[type="radio"]:checked')?.value;
+    // The ranking list first, the rest in the menu's order.
+    pick[e] = rank && on.includes(rank) ? [rank, ...on.filter(id => id !== rank)] : on;
+  }
+  // An addon with no catalog at all is one clients refuse.
+  if (_TL_ENDPOINTS.every(e => !pick[e].length)) {
+    const msg = document.getElementById('trending-lists-msg');
+    msg.textContent = 'Tick at least one list.';
+    msg.hidden = false;
+    return;
+  }
+  document.getElementById('cfg-trending-list').value = trendingListToken(pick);
+  closeTrendingListsModal();
+  build();
+  queuePreviewReload();
 }
 
 async function copyTrendingUrl() {
@@ -6703,6 +6912,9 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   else if (landscape) params.set('shape', 'landscape');
   params.set('primary_client', vEl('cfg-primary-client') || 'stremio_desktop_web');
   for (const [k, v] of Object.entries(_legacyInsets)) params.set(k, v);
+  // Both shapes rank on the same lists.
+  const _tl = currentTrendingList();
+  if (_tl) params.set('trending_list', _tl);
   if (accKey)         params.set('access_key',  accKey);
   // A client that has no "{tmdb_key}" / "{mdblist_key}" of its own would send
   // the placeholder verbatim, so it gets the key typed here instead.
@@ -8099,9 +8311,13 @@ function updateRatingBadgeRows() {
 function updateLandscapeBadgeFields() {
   const glass = (vEl('cfg-landscape-badge-style') || 'glass') === 'glass';
   document.getElementById('landscape-badge-text-color-field').style.display = glass ? 'none' : '';
-  // The glass's two sliders, or the dark body's opacity: as on the portrait notch.
-  document.getElementById('landscape-badge-glass-opacity-field').style.display = glass ? '' : 'none';
-  document.getElementById('landscape-badge-saturation-field').style.display    = glass ? '' : 'none';
+  // The glass's two sliders, or the dark body's opacity: as on the portrait
+  // notch.  Frosted graphic badges (quality chips, cinema disc) take the glass
+  // sliders too (landscape._build_landscape), whatever the badge's own style.
+  const frostedExtras = c('tog-landscape') && vEl('cfg-badge-display-mode') === '7'
+    && [vEl('cfg-badge-quality-style'), vEl('cfg-badge-cinema-style')].includes('frosted');
+  document.getElementById('landscape-badge-glass-opacity-field').style.display = glass || frostedExtras ? '' : 'none';
+  document.getElementById('landscape-badge-saturation-field').style.display    = glass || frostedExtras ? '' : 'none';
   document.getElementById('landscape-badge-opacity-field').style.display       = glass ? 'none' : '';
 }
 
@@ -9395,7 +9611,7 @@ const _BOTH_SHAPES_CONTROLS = new Set([
   'tog-release-cinema-only', 'tog-release-dates', 'tog-anime-weights',
   'tog-hide-unreleased-rating', 'cfg-meta-order', 'cfg-label-font', 'cfg-original-labels',
   'cfg-primary-client', 'cfg-resolution', 'cfg-domain', 'cfg-access-key', 'cfg-tmdb-key', 'cfg-mdblist-key',
-  'cfg-search-query',
+  'cfg-search-query', 'cfg-trending-list',
 ]);
 function _snapshotControls(ids) {
   const out = {};
@@ -9433,6 +9649,8 @@ function loadPreset(preset) {
   // shape reads: the other shape's own controls are put back afterwards.
   const landscape = (preset.shape || 'portrait') === 'landscape';
   const keep = _snapshotControls(landscape ? _portraitOnlyControlIds() : _LANDSCAPE_ONLY_CONTROLS);
+  // A preset is a look; which lists rank the posters stays the visitor's.
+  keep['cfg-trending-list'] = vEl('cfg-trending-list');
   importUrl(url, { settingsOnly: true, preserveClientInsets: true });
   for (const [cid, v] of Object.entries(keep)) _setEl(cid, typeof v === 'boolean' ? String(v) : v);
   if (landscape) {
@@ -9904,6 +10122,8 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('sash_length_ratio')) _setEl('cfg-sash-length',      p.get('sash_length_ratio'));
   if (p.has('sash_height_ratio')) _setEl('cfg-sash-height',      p.get('sash_height_ratio'));
   _setEl('cfg-sash-side', p.get('sash_side') === 'left' ? 'left' : 'right');
+  // Kept as written: currentTrendingList() reads it against the menu.
+  _setEl('cfg-trending-list', p.get('trending_list') || '');
   _setEl('cfg-trending-style', ['number', 'ribbon'].includes(p.get('trending_style')) ? p.get('trending_style') : 'sash');
   _setEl('cfg-trending-scale', p.get('trending_scale') || '1.00');
   _setEl('cfg-trending-side', ['right', 'center'].includes(p.get('trending_side')) ? p.get('trending_side') : 'left');

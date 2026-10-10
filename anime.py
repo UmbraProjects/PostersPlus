@@ -349,11 +349,12 @@ _ANILIST_TRENDING_PAGE = 50
 
 async def fetch_anilist_trending(
     client: httpx.AsyncClient, details_out: dict | None = None, films: bool = False,
-    limit: int | None = None,
+    limit: int | None = None, hide_unreleased: bool | None = None,
 ) -> "list[str] | None":
     """AniList's trending anime series (or with *films*, anime films) as
     ``anilist:<id>`` keys, in rank order, up to *limit* (the broad trending
-    count by default).
+    count by default), without what hasn't started airing when
+    *hide_unreleased* (TRENDING_HIDE_UNRELEASED by default).
     None when AniList could not be read.
 
     For the trending catalogs addon: the anime catalogs and the rank printed
@@ -362,7 +363,9 @@ async def fetch_anilist_trending(
     from config import TRENDING_BROAD_FETCH_COUNT, TRENDING_FETCH_COUNT, TRENDING_HIDE_UNRELEASED
     limit = limit or max(TRENDING_FETCH_COUNT, TRENDING_BROAD_FETCH_COUNT)
     # AniList drops what hasn't started airing itself; null filters nothing.
-    status_not = "NOT_YET_RELEASED" if TRENDING_HIDE_UNRELEASED else None
+    if hide_unreleased is None:
+        hide_unreleased = TRENDING_HIDE_UNRELEASED
+    status_not = "NOT_YET_RELEASED" if hide_unreleased else None
     ids: list[str] = []
     page = 1
     logger.info(f"External API Call: AniList trending anime {'films' if films else 'series'}")

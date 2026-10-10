@@ -66,7 +66,7 @@ class _TruncateUrlFilter(logging.Filter):
     # The trending addon takes the access key as a path segment
     # (/trending/<key>/manifest.json), where a query-param pattern can't see
     # it; the 80-character truncation keeps it, as it comes first.
-    _PATH_KEY_RE = re.compile(r'(/trending/)(?!cfg-|manifest\.json|catalog/)[^/\s?\'\"]+')
+    _PATH_KEY_RE = re.compile(r'(/trending/)(?!cfg-|tl-|manifest\.json|catalog/)[^/\s?\'\"]+')
 
     @classmethod
     def _redact(cls, value):
@@ -866,6 +866,7 @@ from awards import _SIDE_MARGIN as awards_side_margin, side_chip_band, _notch_he
 import graphic_badges
 import rating_badges
 import trending_rank
+import trending_lists
 import awards as _awards_mod
 if not _awards_mod._HAS_SKIA:
     # Still correct, just ~3x slower per sash — worth saying once, since the
@@ -879,6 +880,7 @@ from cache import (
     get_cached_trending_snapshot_entry,
     pop_trending_turnover_replay,
     get_cached_trending_details,
+    prune_trending_choices,
     next_trending_fetch_at,
     get_cached_movie_release_info,
     get_cached_quality,
@@ -1486,14 +1488,16 @@ def _check_type(val: str) -> None:
 
 
 async def _anime_or_tmdb_rank(client: httpx.AsyncClient, keys: list[str], tmdb_id: str | None,
-                              tmdb_key: str, media_type: str) -> "tuple[int | None, float | None]":
+                              tmdb_key: str, media_type: str,
+                              lists: "trending_lists.TrendingLists | None" = None,
+                              ) -> "tuple[int | None, float | None]":
     """An anime poster's rank: its place on the anime list, else (for a title
     the TMDB lists keep, such as Chinese animation) its TMDB rank.  The
     expiry is the anime list's unless the TMDB rank is the one shown."""
     rank, expires_at = await fetch_anime_trending_rank_entry(client, keys, tmdb_key,
-                                                             film=media_type == "movie")
+                                                             film=media_type == "movie", lists=lists)
     if rank is None and tmdb_id:
-        t_rank, t_expires = await fetch_trending_rank_entry(client, tmdb_id, tmdb_key, media_type)
+        t_rank, t_expires = await fetch_trending_rank_entry(client, tmdb_id, tmdb_key, media_type, lists)
         if t_rank is not None:
             return t_rank, t_expires
         # Unranked on both: kept until the sooner list changes.  An anime list
@@ -2300,6 +2304,9 @@ class RequestConfig:
     trending_scale:    float = 1.0      # number / ribbon size against its default
     trending_label:    bool  = False    # ribbon: FILM / SERIES / ANIME under the rank
     trending_corner:   bool  = False    # ribbon: nested into the corner, not inset from it
+    # The trending lists the rank is read from, as trending_lists' canonical
+    # token: "" for the operator's, else only where the visitor's pick differs.
+    trending_list:     str   = ""
     trending_ribbon_style: str = "charcoal"  # ribbon: "charcoal" or a notch style (frosted/black/silver/gold)
     trending_frost_opacity:    float = 0.75  # frosted ribbon: frost layer opacity (0.0–1.0)
     trending_frost_saturation: float = 1.2   # frosted ribbon: colour-cast strength (0 = grey)
@@ -2765,6 +2772,7 @@ _LANDSCAPE_BADGE_TUNING: dict[str, tuple[float, float]] = {
 }
 
 _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "rating_badges": "", "rating_badge_scale": "native",
+                              "trending_list": "",
                               "rating_badge_style": "color",
                               "cinema_greyscale_without_sash": False, "trending_style": "sash",
                               "trending_scale": 1.0, "trending_label": False, "trending_corner": False,
@@ -3084,6 +3092,10 @@ def build_request_config(params: dict) -> RequestConfig:
     _tsash_raw = (params.get("trending_sash") or "").strip().lower()
     if _tsash_raw in ("keep", "hide", "opposite"):
         cfg.trending_sash = _tsash_raw
+    # Canonical, so spellings of one pick (and a pick of the operator's own
+    # lists) share a composite.
+    # Only the lists posters rank on: the other catalogs picked don't change a render.
+    cfg.trending_list = trending_lists.parse(params.get(trending_lists.PARAM)).rank_token()
     cfg.wait_for_quality        = _b("wait_for_quality",        cfg.wait_for_quality)
     cfg.greyscale_no_quality    = _b("greyscale_no_quality",    cfg.greyscale_no_quality)
     cfg.quality_after_digital   = _b("quality_after_digital",   cfg.quality_after_digital)
@@ -6658,6 +6670,9 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
     still correct.  The same check makes this safe to run in every worker.
     """
     logger.info("Starting scheduled trending fetch cycle")
+    # Lists visitors picked are rebuilt when next asked for, not here: the
+    # loop keeps only the operator's warm, and drops the picks gone quiet.
+    await asyncio.to_thread(prune_trending_choices, _TRENDING_CHOICE_MAX_AGE)
 
     # Build the set of trending (tmdb_id, type) pairs. TV titles are cached under
     # both "tv" and "series" (Stremio uses "series"), so include both variants.
@@ -6711,6 +6726,10 @@ async def _run_trending_fetch_cycle(client: httpx.AsyncClient) -> None:
         replay=turnover,
     )
     logger.info(f"Trending fetch cycle completed. Regenerated {regenerated_count} posters.")
+
+
+# A list a visitor picked that nobody has asked for in this long is deleted.
+_TRENDING_CHOICE_MAX_AGE = 7 * 86400
 
 
 def _trending_endpoints() -> tuple[str, ...]:
@@ -7384,7 +7403,49 @@ def _trending_addon_guard(key: str | None) -> None:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
 
-def _trending_addon_manifest(base: str) -> dict:
+def _trending_catalog_specs(lists: "trending_lists.TrendingLists") -> "list[tuple[str, str, str, str, str]]":
+    """(catalog id, Stremio type, list, source, name) of each catalog *lists*
+    picks: one per source picked for a list, its ranking one first.  The
+    operator's source keeps the list's plain id, so an install that picks
+    nothing has the catalogs it always had; another source's id names it
+    ("pp.trending.movie.imdb"), whatever else was picked beside it."""
+    out = []
+    for cid, ctype, endpoint, name in _TRENDING_CATALOGS:
+        picks = lists.catalogs(endpoint)
+        for source in picks:
+            plain = source == trending_lists.default_source(endpoint)
+            out.append((
+                cid if plain else f"{cid}.{source}", ctype, endpoint, source,
+                name if plain and len(picks) == 1
+                else f"{name} · {trending_lists.source_name(endpoint, source)}",
+            ))
+    return out
+
+
+def _resolve_trending_catalog(cid: str, ctype: str) -> "tuple[str, str] | None":
+    """(list, source) a catalog id names, or None.  Read from the id alone,
+    so a page URL a client built works whatever the manifest it came from."""
+    for base, base_type, endpoint, _name in sorted(_TRENDING_CATALOGS, key=lambda c: -len(c[0])):
+        if base_type != ctype:
+            continue
+        if cid == base:
+            return endpoint, trending_lists.default_source(endpoint)
+        if cid.startswith(base + "."):
+            # Only what a visitor may pick: with TRENDING_LIST_CHOICE off,
+            # none but the operator's own list is built for anyone.
+            source = cid[len(base) + 1:]
+            if source in trending_lists.pickable(endpoint):
+                return endpoint, source
+    return None
+
+
+def _trending_addon_manifest(base: str, lists: "trending_lists.TrendingLists | None" = None) -> dict:
+    lists = lists or trending_lists.default()
+    specs = _trending_catalog_specs(lists)
+    if not specs:
+        # A pick of no catalog at all: an addon with none is one clients
+        # refuse, so it gets the operator's.
+        specs = _trending_catalog_specs(trending_lists.default())
     return {
         "id": "community.postersplus.trending",
         "version": "1.1.0",
@@ -7400,7 +7461,7 @@ def _trending_addon_manifest(base: str) -> dict:
         "types": ["movie", "series"],
         "catalogs": [
             {"type": ctype, "id": cid, "name": name, "extra": [{"name": "skip"}]}
-            for cid, ctype, _endpoint, name in _TRENDING_CATALOGS
+            for cid, ctype, _endpoint, _source, name in specs
         ],
         "behaviorHints": {"configurable": False},
     }
@@ -7504,19 +7565,22 @@ async def _trending_catalog_meta(
     # custom source too) is a TMDB id of the list's kind.
     by_anilist = entry_id.startswith("anilist:")
     kind = trending_kind(endpoint)
-    if not by_anilist and not detail.get("name") and _cfg.SERVER_TMDB_KEY:
+    if (not by_anilist and not (detail.get("name") and detail.get("poster"))
+            and (poster_cfg is None or not detail.get("name")) and _cfg.SERVER_TMDB_KEY):
         # A snapshot written before details were stored (or a source whose
-        # rows carry no title) has only ids.  Replacing it early would move
-        # ranks under posters already cached, so fill the gaps from the TMDB
-        # metadata the poster renders cache anyway.
+        # rows carry no title, or no art, as MDBList's) has only ids; the art
+        # is only wanted where the row isn't drawn by Posters+.  Replacing it
+        # early would move ranks under posters already cached, so fill the
+        # gaps from the TMDB metadata the poster renders cache anyway.
         async with sem:
             try:
                 (_g, _t, _l, year, title, poster_path, _b, _d) = await _coalesced_fetch_poster_metadata(
                     client, entry_id, _cfg.SERVER_TMDB_KEY, kind, _cfg.DEFAULT_LOGO_LANGUAGE,
                 )
-                detail = {**detail, **{k: v for k, v in {
+                # Gaps only: what the list's own row says stays.
+                detail = {**{k: v for k, v in {
                     "name": title, "year": year, "poster": poster_path,
-                }.items() if v}}
+                }.items() if v}, **detail}
             except Exception as exc:
                 logger.warning(f"Trending catalog: no TMDB details for {endpoint} {entry_id}: {exc}")
     imdb_id = None
@@ -7561,18 +7625,27 @@ async def _trending_catalog_meta(
 async def _trending_catalog(
     key: str | None, ctype: str, cid: str, extra: str | None,
     poster_cfg: "tuple[str, list, str | None] | None" = None,
+    lists: "trending_lists.TrendingLists | None" = None,
 ) -> JSONResponse:
-    spec = next((c for c in _TRENDING_CATALOGS if c[0] == cid and c[1] == ctype), None)
+    spec = _resolve_trending_catalog(cid, ctype)
     if spec is None:
         raise HTTPException(status_code=404, detail="Unknown catalog")
-    endpoint = spec[2]
+    endpoint, source = spec
     extras = dict(parse_qsl(extra or "", keep_blank_values=True))
     try:
         skip = max(0, int(extras.get("skip") or 0))
     except ValueError:
         skip = 0
 
-    entry = await ensure_trending_snapshot(_HTTP_CLIENT, _cfg.SERVER_TMDB_KEY, endpoint)
+    # This catalog's own list: its source, ranked as the posters in it are.
+    lists = (lists or trending_lists.default()).for_catalog(endpoint, source)
+    if poster_cfg is not None:
+        base, settings, poster_key = poster_cfg
+        settings = [(k, v) for k, v in settings if k != trending_lists.PARAM]
+        if lists.token():
+            settings.append((trending_lists.PARAM, lists.token()))
+        poster_cfg = (base, settings, poster_key)
+    entry = await ensure_trending_snapshot(_HTTP_CLIENT, _cfg.SERVER_TMDB_KEY, endpoint, lists)
     if entry is None:
         # Nothing to rank against right now; ask to be retried soon.
         return JSONResponse({"metas": []}, headers={**_ADDON_HEADERS, "Cache-Control": "public, max-age=300"})
@@ -7584,7 +7657,7 @@ async def _trending_catalog(
     limit = max(_cfg.TRENDING_FETCH_COUNT, _cfg.TRENDING_BROAD_FETCH_COUNT)
     ordered = [entry_id for entry_id, _rank in sorted(rankings.items(), key=lambda kv: kv[1])][:limit]
     ordered = ordered[skip:]
-    details = get_cached_trending_details(endpoint)
+    details = get_cached_trending_details(lists.key(endpoint))
     # Every poster URL names the list it was cut from (see _addon_poster_url).
     version = _list_version(rankings)
     sem = asyncio.Semaphore(8)
@@ -7604,32 +7677,48 @@ async def _trending_catalog(
     )
 
 
+# The visitor's pick of lists rides in its own "tl-<trending_list>" segment
+# (see trending_lists), apart from the poster settings: a metadata addon
+# that draws the posters itself is sent no "cfg-" segment, and its rows must
+# still be the lists the visitor picked.
+_ADDON_LISTS_PREFIX = "tl-"
+
+
 @app.get("/trending/{rest:path}")
 async def trending_addon(rest: str, request: Request):
-    """Every addon path: an optional access key segment and an optional
-    "cfg-" settings segment, then manifest.json or catalog/<type>/<id>[/<extra>].json.
-    Parsed by hand because either leading segment may be absent."""
+    """Every addon path: an optional access key segment, an optional "tl-"
+    lists segment and an optional "cfg-" settings segment, then manifest.json
+    or catalog/<type>/<id>[/<extra>].json.  Parsed by hand because any
+    leading segment may be absent."""
     segs = rest.split("/")
     if segs[-1] == "manifest.json":
         prefix, tail = segs[:-1], None
-    elif "catalog" in segs[:3]:
+    elif "catalog" in segs[:4]:
         at = segs.index("catalog")
         prefix, tail = segs[:at], segs[at + 1:]
     else:
         raise HTTPException(status_code=404, detail="Not Found")
 
-    key = cfg_seg = None
+    key = cfg_seg = lists_seg = None
     for seg in prefix:
         if seg.startswith(_ADDON_CFG_PREFIX) and cfg_seg is None:
             cfg_seg = seg
-        elif key is None and seg and not seg.startswith(_ADDON_CFG_PREFIX):
+        elif seg.startswith(_ADDON_LISTS_PREFIX) and lists_seg is None:
+            lists_seg = seg
+        elif key is None and seg and not seg.startswith((_ADDON_CFG_PREFIX, _ADDON_LISTS_PREFIX)):
             key = seg
         else:
             raise HTTPException(status_code=404, detail="Not Found")
     _trending_addon_guard(key)
 
+    settings = _decode_addon_cfg(cfg_seg) if cfg_seg is not None else None
+    # The lists segment, else a trending_list among the poster settings.
+    lists = trending_lists.parse(
+        lists_seg[len(_ADDON_LISTS_PREFIX):] if lists_seg is not None
+        else dict(settings or []).get(trending_lists.PARAM))
+
     if tail is None:
-        response = JSONResponse(_trending_addon_manifest(_public_base(request)), headers=_ADDON_HEADERS)
+        response = JSONResponse(_trending_addon_manifest(_public_base(request), lists), headers=_ADDON_HEADERS)
         if not _cfg.PUBLIC_URL:
             response.headers["Vary"] = _FORWARDED_VARY
         return response
@@ -7642,9 +7731,11 @@ async def trending_addon(rest: str, request: Request):
         raise HTTPException(status_code=404, detail="Not Found")
 
     poster_cfg = None
-    if cfg_seg is not None:
-        poster_cfg = (_public_base(request), _decode_addon_cfg(cfg_seg), key)
-    response = await _trending_catalog(key, ctype, cid, extra, poster_cfg)
+    if settings is not None:
+        # The posters rank on the list the row was cut from, whatever the
+        # settings said (see _trending_catalog).
+        poster_cfg = (_public_base(request), settings, key)
+    response = await _trending_catalog(key, ctype, cid, extra, poster_cfg, lists)
     if poster_cfg is not None and not _cfg.PUBLIC_URL:
         response.headers["Vary"] = _FORWARDED_VARY
     return response
@@ -7679,6 +7770,8 @@ async def server_caps(request: Request, access_key: str = ""):
         "trending_fetch_timezone": _cfg.TRENDING_FETCH_TIMEZONE,
         "trending_next_refresh_hours": next_refresh_hours,
         "trending_catalogs_enabled": _cfg.TRENDING_CATALOGS_ENABLED,
+        # The lists a visitor may pick from (trending_list=, Choose Lists).
+        "trending_lists":        trending_lists.caps(),
         "watchlist":             watchlist.status(),
         # Lets the configurator leave out any parameter already at its default.
         # A generated URL was running ~1500 characters, most of it restating
@@ -8034,6 +8127,16 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
         rev=32,
         applies=lambda cfg: (cfg.logo_language.split("-", 1)[0] in ("ar", "fa", "ur")
                              or bool({"ar", "fa", "ur"} & set(cfg.original_labels.split(",")))),
+        stale=lambda cfg, facts: True,
+    ),
+    # 33: Landscape frosted graphic badges (quality chips, cinema disc) take
+    #     the landscape badges' glass Opacity and Colour Saturation, not the
+    #     portrait notch's hidden ones.
+    _RenderRevision(
+        rev=33,
+        applies=lambda cfg: (cfg.shape == "landscape" and cfg.landscape_graphic_badges
+                             and (graphic_badges.wants_frost(cfg.badge_quality_style)
+                                  or graphic_badges.wants_frost(cfg.badge_cinema_style))),
         stale=lambda cfg, facts: True,
     ),
 )
@@ -11392,7 +11495,9 @@ async def get_poster(
         _anime_rank_keys = _anime_trending_keys(anime_namespace, anime_id, type, tmdb_id,
                                                 imdb_id or effective_imdb_id or "",
                                                 has_tmdb_id) if anime_split() else []
-        _trending_by_tmdb = bool(has_tmdb_id and (effective_tmdb_key or trending_source_url(type)))
+        # The visitor's pick of lists (trending_list=), the operator's by default.
+        _trending_lists = trending_lists.parse(rcfg.trending_list)
+        _trending_by_tmdb = bool(has_tmdb_id and (effective_tmdb_key or _trending_lists.url(type)))
         (
             image,
             logo,
@@ -11414,9 +11519,9 @@ async def get_poster(
             # anime lists instead, which the TMDB ones leave it to, so the
             # rank is its position in the Trending Anime (Movies) row.
             _anime_or_tmdb_rank(client, _anime_rank_keys, tmdb_id if _trending_by_tmdb else None,
-                                effective_tmdb_key, type)
+                                effective_tmdb_key, type, _trending_lists)
             if _anime_rank_keys
-            else fetch_trending_rank_entry(client, tmdb_id, effective_tmdb_key, type)
+            else fetch_trending_rank_entry(client, tmdb_id, effective_tmdb_key, type, _trending_lists)
             if _trending_by_tmdb
             else _resolved((None, None)),
         )

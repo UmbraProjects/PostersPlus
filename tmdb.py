@@ -13,6 +13,7 @@ import httpx
 import numpy as np
 
 import cinemeta
+import trending_lists
 import tvdb
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ from cache import (
     get_cached_trending_snapshot_entry,
     set_cached_trending_snapshot,
     expire_trending_snapshot,
+    trending_list_keys,
     get_cached_tmdb_poster,
     set_cached_tmdb_poster,
     get_cached_tmdb_logo,
@@ -84,12 +86,7 @@ from config import (
     CINEMA_ASSUMED_DIGITAL_DAYS,
     CINEMA_POPULAR_VOTES,
     CINEMA_POPULAR_DIGITAL_DAYS,
-    TRENDING_SOURCE_MOVIE,
-    TRENDING_SOURCE_TV,
-    TRENDING_SOURCE_ANIME,
-    TRENDING_SOURCE_ANIME_MOVIE,
     TRENDING_SOURCE_MAX_ITEMS,
-    TRENDING_HIDE_UNRELEASED,
     TRENDING_HIDE_GENRES,
     TRENDING_HIDE_MIXED_GENRES,
     TRENDING_FETCH_COUNT,
@@ -1951,11 +1948,7 @@ ANIME_ENDPOINTS = ("anime", "anime_movie")
 
 def trending_source_url(media_type: str) -> str:
     """Configured trending source for *media_type*, or "" when unset."""
-    if media_type == "anime":
-        return TRENDING_SOURCE_ANIME
-    if media_type == "anime_movie":
-        return TRENDING_SOURCE_ANIME_MOVIE
-    return TRENDING_SOURCE_TV if media_type in ("tv", "series") else TRENDING_SOURCE_MOVIE
+    return trending_lists.operator_url(trending_lists.endpoint_of(media_type))
 
 
 def trending_kind(endpoint: str) -> str:
@@ -1990,7 +1983,7 @@ def sanitise_source_url(url: str) -> str:
     return f"{parsed.scheme}://{host}{parsed.path}"
 
 
-def trending_source_signature(media_type: str) -> str:
+def trending_source_signature(media_type: str, lists: "trending_lists.TrendingLists | None" = None) -> str:
     """Identity of the trending source, so a cached snapshot from a different
     one is discarded rather than served until its TTL lapses.
 
@@ -2000,18 +1993,19 @@ def trending_source_signature(media_type: str) -> str:
     """
     # Hiding unreleased titles, or leaving anime to its own lists, makes a
     # different list from the same source: one stored without it is rebuilt.
-    out = "+released" if TRENDING_HIDE_UNRELEASED else ""
+    lists = lists or trending_lists.default()
+    out = "+released" if lists.home else ""
     if out and media_type == "anime_movie":
         out += "-home"            # AniList's films checked against TMDB's dates too
     if TRENDING_HIDE_GENRES:
         out += ("-genres:" if TRENDING_HIDE_MIXED_GENRES else "-onlygenres:") + ",".join(TRENDING_HIDE_GENRES)
     if media_type not in ANIME_ENDPOINTS and anime_split():
         out += _ANIME_SPLIT_MARK
-    url = _normalise_trending_url(trending_source_url(media_type))
+    url = _normalise_trending_url(lists.url(media_type))
     if not url and media_type in ANIME_ENDPOINTS:
         return ("anilist" if media_type == "anime" else "anilist-films") + out
     if not url:
-        return "tmdb" + out
+        return ("tmdb-week" if lists.week(media_type) else "tmdb") + out
     return "url:" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:16] + out
 
 
@@ -2080,6 +2074,66 @@ def _trending_item_details(item: dict) -> dict:
     return out
 
 
+def _simkl_date(raw) -> str:
+    """SIMKL's "MM/DD/YYYY" as TMDB's "YYYY-MM-DD", "" when unreadable."""
+    m = re.fullmatch(r"(\d{2})/(\d{2})/(\d{4})", str(raw or "").strip())
+    return f"{m.group(3)}-{m.group(1)}-{m.group(2)}" if m else ""
+
+
+def _simkl_item_details(item: dict) -> dict:
+    """Name, year, IMDb id, poster and release date of one SIMKL row."""
+    ids = item.get("ids") or {}
+    date = _simkl_date(item.get("release_date"))
+    poster = str(item.get("poster") or "")
+    out = {
+        "name": item.get("title"),
+        "year": date[:4] or None,
+        "imdb_id": ids.get("imdb") if str(ids.get("imdb") or "").startswith("tt") else None,
+        "poster": f"https://simkl.in/posters/{poster}_m.jpg" if re.fullmatch(r"[0-9a-f/]+", poster) else None,
+        "lang": item.get("original_language"),
+    }
+    out = {k: v for k, v in out.items() if v}
+    if "release_date" in item:
+        # As on a TMDB row: a title with no date yet is not out.
+        out["date"] = date
+    return out
+
+
+def _parse_simkl_payload(items: list, media_type: str, details_out: dict | None = None) -> list[str]:
+    """Ids from one of SIMKL's trending files (data.simkl.in), in array order:
+    a row's "rank" is SIMKL's all-time rank, not its place on the list.
+
+    An anime list is keyed by AniList id where SIMKL knows it, as AniList's
+    own list is, so an anime poster finds its rank by whichever id it was
+    asked for; SIMKL's anime are split into series and films by anime_type."""
+    anime = media_type in ANIME_ENDPOINTS
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        ids = item.get("ids") or {}
+        if anime and (str(item.get("anime_type") or "").lower() == "movie") != (media_type == "anime_movie"):
+            continue
+        tmdb_id = str(ids.get("tmdb") or "")
+        anilist = str(ids.get("anilist") or "")
+        if anime and anilist.isascii() and anilist.isdigit():
+            key = f"anilist:{anilist}"
+        elif tmdb_id.isascii() and tmdb_id.isdigit():
+            key = tmdb_id
+        else:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+        if details_out is not None and key not in details_out:
+            details_out[key] = _simkl_item_details(item)
+        if len(out) >= TRENDING_SOURCE_MAX_ITEMS:
+            break
+    return out
+
+
 def _parse_trending_payload(payload, media_type: str, details_out: dict | None = None) -> list[str]:
     """Extract an ordered list of TMDB ids from a trending payload.
 
@@ -2091,7 +2145,13 @@ def _parse_trending_payload(payload, media_type: str, details_out: dict | None =
     MDBList rows carry ``mediatype`` ("movie"/"show"), so a mixed list is
     filtered down to the type being asked for.  TMDB's own multi-type payloads
     use the same key with the same values, so one filter covers both.
+
+    SIMKL's trending files, a bare array whose rows carry an "ids" object,
+    are read by _parse_simkl_payload.
     """
+    if isinstance(payload, list) and any(
+            isinstance(row, dict) and isinstance(row.get("ids"), dict) for row in payload[:5]):
+        return _parse_simkl_payload(payload, media_type, details_out)
     if isinstance(payload, dict):
         items = payload.get("results")
         ranked = False
@@ -2140,6 +2200,7 @@ async def fetch_trending_source_ids(
     client: httpx.AsyncClient,
     media_type: str,
     details_out: dict | None = None,
+    url: str | None = None,
 ) -> list[str] | None:
     """Ordered TMDB ids from the operator's trending source.
 
@@ -2147,16 +2208,24 @@ async def fetch_trending_source_ids(
     an empty list when a source IS configured but could not be used — the caller
     must treat that as "no trending this cycle" rather than reverting to TMDB,
     so a broken config is visible instead of silently working.
+
+    *url* is a source a visitor chose (trending_lists) in place of the
+    operator's, "" for none.
     """
-    url = trending_source_url(media_type)
+    operator_url = trending_source_url(media_type)
+    url = operator_url if url is None else url
     if not url:
         return None
+    # The operator's source keeps the cooldown it always had; a chosen one
+    # has its own, so one broken list doesn't silence the others.
+    cooldown = media_type if url == operator_url else (
+        f"{media_type}:" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:12])
     resolved = _normalise_trending_url(url)
     # Only ever log the sanitised form: the configured URL can carry a token or
     # basic-auth credentials, and this runs on the request path.
     shown = sanitise_source_url(resolved)
 
-    failed_at = _trending_source_failed_at.get(media_type)
+    failed_at = _trending_source_failed_at.get(cooldown)
     if failed_at is not None and time.monotonic() - failed_at < _TRENDING_SOURCE_RETRY_SECS:
         return []
 
@@ -2183,31 +2252,32 @@ async def fetch_trending_source_ids(
             )
             await asyncio.sleep(_TRENDING_RETRY_DELAY_SECS)
     if error is not None:
-        _trending_source_failed_at[media_type] = time.monotonic()
+        _trending_source_failed_at[cooldown] = time.monotonic()
         logger.error(
             f"Trending source fetch failed ({shown}): {error} — "
             f"no trending data will be served for {media_type} this cycle"
         )
         return []
     if not ids:
-        _trending_source_failed_at[media_type] = time.monotonic()
+        _trending_source_failed_at[cooldown] = time.monotonic()
         logger.error(
             f"Trending source for {media_type} ({shown}) yielded no usable "
             "TMDB ids — check the list is not empty and its entries carry "
             "numeric TMDB ids. No trending data will be served this cycle."
         )
         return []
-    _trending_source_failed_at.pop(media_type, None)
+    _trending_source_failed_at.pop(cooldown, None)
     logger.info(f"Trending source for {media_type}: {len(ids)} titles from {shown}")
     return ids
 
 
 async def _fetch_tmdb_trending_ids(
     client: httpx.AsyncClient, tmdb_key: str, endpoint: str,
-    details_out: dict | None = None,
+    details_out: dict | None = None, *, window: str = "day", home: bool | None = None,
 ) -> list[str] | None:
-    """TMDB's day-trending ids for *endpoint*, pages 1-5 (1-10 when unreleased
-    titles or anime are left out, to have as many after), in rank order.
+    """TMDB's trending ids for *endpoint* over *window* ("day" or "week"),
+    pages 1-5 (1-10 when unreleased titles (*home*) or anime are left out, to
+    have as many after), in rank order.
 
     The pages are fetched concurrently, and TMDB's list can shift between those
     requests, so a title can turn up on two pages. The first appearance wins
@@ -2217,12 +2287,15 @@ async def _fetch_tmdb_trending_ids(
     """
     # Anime is a fifth of TV's list, and unreleased films a good share of
     # movies': twice the pages keeps the broad sash's ranks filled after.
-    pages_n = 10 if (TRENDING_HIDE_UNRELEASED or TRENDING_HIDE_GENRES or anime_split()) else 5
-    logger.info(f"External API Call: Refreshing TMDB trending snapshot (pages 1-{pages_n} concurrent)")
+    if home is None:
+        home = trending_lists.default().home
+    pages_n = 10 if (home or TRENDING_HIDE_GENRES or anime_split()) else 5
+    logger.info(f"External API Call: Refreshing TMDB trending {endpoint}/{window} snapshot "
+                f"(pages 1-{pages_n} concurrent)")
 
     async def _fetch_page(page: int) -> list[dict]:
         resp = await client.get(
-            f"https://api.themoviedb.org/3/trending/{endpoint}/day",
+            f"https://api.themoviedb.org/3/trending/{endpoint}/{window}",
             params={"api_key": tmdb_key, "page": page},
         )
         resp.raise_for_status()
@@ -2267,15 +2340,16 @@ async def _read_twice(read, label: str):
     return result
 
 
-def _anime_list_tmdb_ids(kind: str) -> set[str]:
+def _anime_list_tmdb_ids(kind: str, lists: "trending_lists.TrendingLists | None" = None) -> set[str]:
     """The TMDB ids (of *kind*, "tv" or "movie") of every title on the stored
-    anime lists: AniList entries through the id mapping, and a custom
-    source's TMDB ids as they are."""
+    anime lists (*lists*' own, the operator's by default): AniList entries
+    through the id mapping, and a custom source's TMDB ids as they are."""
     import anime_ids
+    lists = lists or trending_lists.default()
     out: set[str] = set()
     anilist: set[int] = set()
     for endpoint in ANIME_ENDPOINTS:
-        entry = get_cached_trending_snapshot_entry(endpoint, include_stale=True)
+        entry = get_cached_trending_snapshot_entry(lists.key(endpoint), include_stale=True)
         for key in (entry[0] if entry else {}):
             if key.startswith("anilist:"):
                 if key[8:].isdigit():
@@ -2290,13 +2364,22 @@ def _expire_overlapping_lists() -> None:
     """After an anime list is rebuilt: a movie or TV list still holding one of
     its titles is rebuilt too, on its next read, so no title is on two lists
     with two ranks.  The TMDB lists build the anime ones first, so this only
-    happens when an anime list is refreshed on its own."""
-    for endpoint in ("movie", "tv"):
-        entry = get_cached_trending_snapshot_entry(endpoint)
+    happens when an anime list is refreshed on its own.  Every stored movie
+    and TV list is checked, a visitor's choice against its own anime lists."""
+    keys = {"movie", "tv"} | {k for k in trending_list_keys() if k.partition("@")[0] in ("movie", "tv")}
+    on_anime: dict[tuple, set[str]] = {}
+    for key in sorted(keys):
+        endpoint, lists = trending_lists.from_key(key)
+        entry = get_cached_trending_snapshot_entry(key)
         # None while a scheduled refresh rebuilds it anyway: nothing to check.
-        if entry and set(entry[0]) & _anime_list_tmdb_ids(endpoint):
-            logger.info(f"Trending {endpoint}: holds titles now on an anime list — rebuilding it")
-            expire_trending_snapshot(endpoint)
+        if not entry:
+            continue
+        memo = (endpoint, lists.anime, lists.anime_movie, lists.home)
+        if memo not in on_anime:
+            on_anime[memo] = _anime_list_tmdb_ids(endpoint, lists)
+        if set(entry[0]) & on_anime[memo]:
+            logger.info(f"Trending {key}: holds titles now on an anime list — rebuilding it")
+            expire_trending_snapshot(key)
 
 
 def _without_anime(endpoint: str, ids: list[str], details: dict[str, dict],
@@ -2326,15 +2409,30 @@ def _without_anime(endpoint: str, ids: list[str], details: dict[str, dict],
     return kept
 
 
+def _note_tmdb_date(detail: dict, meta) -> None:
+    """A row's release (or first air) date from its title's TMDB metadata,
+    where the row had none: what _released_only judges a series by."""
+    if "date" not in detail:
+        detail["date"] = str((meta[7] or {}).get("tmdb_release_date") or "")
+
+
+# Titles whose genres are looked up at once.
+_GENRE_BATCH = 50
+
+
 async def _without_hidden_genres(
     client: httpx.AsyncClient, tmdb_key: str, endpoint: str,
-    ids: list[str], details: dict[str, dict],
+    ids: list[str], details: dict[str, dict], limit: int | None = None,
 ) -> list[str]:
     """*ids* without the titles TRENDING_HIDE_GENRES hides.  Genres come off
     the list's own rows (TMDB's and AniList's carry them); a row without them
     (a custom source's) is looked up in the title metadata the posters cache,
     and kept when that fails, so a hiccup doesn't empty the row.  Numbered
-    after this, so the ranks have no gaps."""
+    after this, so the ranks have no gaps.
+
+    Read in batches, stopping once *limit* are kept: a long source (SIMKL's
+    500 rows, none with genres) costs lookups only for as much of it as the
+    list will hold."""
     hidden = set(TRENDING_HIDE_GENRES)
     if not hidden:
         return ids
@@ -2355,15 +2453,23 @@ async def _without_hidden_genres(
                 return None
         genre_ids = list(meta[0])
         detail["genres"] = genre_ids
+        _note_tmdb_date(detail, meta)
         details[entry_id] = detail
         return genre_ids
 
     from config import genre_hidden
-    genres = await asyncio.gather(*(genres_of(i) for i in ids))
-    kept = [i for i, g in zip(ids, genres)
-            if g is None or not genre_hidden(g, hidden, TRENDING_HIDE_MIXED_GENRES)]
-    if len(kept) < len(ids):
-        logger.info(f"Trending {endpoint}: left out {len(ids) - len(kept)} title(s) of hidden genres")
+    kept: list[str] = []
+    checked = 0
+    for start in range(0, len(ids), _GENRE_BATCH):
+        batch = ids[start:start + _GENRE_BATCH]
+        checked += len(batch)
+        genres = await asyncio.gather(*(genres_of(i) for i in batch))
+        kept += [i for i, g in zip(batch, genres)
+                 if g is None or not genre_hidden(g, hidden, TRENDING_HIDE_MIXED_GENRES)]
+        if limit is not None and len(kept) >= limit:
+            break
+    if len(kept) < checked:
+        logger.info(f"Trending {endpoint}: left out {checked - len(kept)} title(s) of hidden genres")
     return kept
 
 
@@ -2382,9 +2488,10 @@ async def _released_only(
     release dates, the same ones its release-status sash reads, so "Cinema"
     and "Production" films are dropped.  An AniList film ("anilist:<id>") is
     judged by its TMDB film through the id mapping.  A series is out once its first
-    episode has aired, by the date on its trending row.  A title that can't
-    be checked (a failed fetch, a custom source's row with no date) is kept:
-    a hiccup shouldn't empty the row."""
+    episode has aired, by the date on its trending row, else (an MDBList row
+    has none) its TMDB first air date; an AniList series by its row's date.
+    A title that can't be checked (a failed fetch, a row with no date and no
+    TMDB key) is kept: a hiccup shouldn't empty the row."""
     limit = max(TRENDING_FETCH_COUNT, TRENDING_BROAD_FETCH_COUNT)
     today = _date.today()
     # AniList films are judged by the TMDB film the id mapping gives each, the
@@ -2394,18 +2501,31 @@ async def _released_only(
     tmdb_film = anime_ids.tmdb_films_for_anilist(
         {int(i[8:]) for i in ids if i.startswith("anilist:") and i[8:].isdigit()})
 
+    def aired_by(date: str) -> bool:
+        aired = _parse_tmdb_date(date)
+        return aired is not None and aired <= today
+
     async def out_at_home(entry_id: str) -> bool:
         detail = details.get(entry_id) or {}
         if entry_id.startswith("anilist:"):
             film = tmdb_film.get(int(entry_id[8:])) if entry_id[8:].isdigit() else None
             if film is None:
-                return True
+                # A series (SIMKL's anime rows are keyed so), or a film the
+                # mapping doesn't know: by its own row's date where it has
+                # one, else on the list's word that it is out.
+                return aired_by(detail["date"]) if "date" in detail else True
             entry_id, detail = str(film), {}
         if trending_kind(endpoint) == "tv":
             if "date" not in detail:
-                return True
-            aired = _parse_tmdb_date(detail["date"])
-            return aired is not None and aired <= today
+                if not tmdb_key:
+                    return True
+                try:
+                    _note_tmdb_date(detail, await fetch_poster_metadata(client, entry_id, tmdb_key, "tv"))
+                except Exception as exc:
+                    logger.warning(f"Trending: air date check failed for series {entry_id}: {exc}")
+                    return True
+                details[entry_id] = detail
+            return aired_by(detail["date"])
         if not tmdb_key:
             return True
         try:
@@ -2440,58 +2560,70 @@ async def ensure_trending_snapshot(
     client: httpx.AsyncClient,
     tmdb_key: str,
     endpoint: str,
+    lists: "trending_lists.TrendingLists | None" = None,
 ) -> "tuple[dict[str, int], float] | None":
     """The current (rankings, expires_at) for *endpoint*, fetched only if the
     stored snapshot has expired or came from another source.
 
+    *lists* is the visitor's choice of lists (trending_list=), the operator's
+    by default.  Each choice is stored under its own key (see
+    trending_lists.TrendingLists.key), shared by everyone who chose it.
+
     Concurrent callers share one fetch.  None when there is nothing to rank
     against: the source failed, or TMDB is the source and there is no key.
     """
-    source_sig = trending_source_signature(endpoint)
+    lists = lists or trending_lists.default()
+    key = lists.key(endpoint)
+    source_sig = trending_source_signature(endpoint, lists)
 
-    entry = get_cached_trending_snapshot_entry(endpoint, source_sig)
+    entry = get_cached_trending_snapshot_entry(key, source_sig)
     if entry is not None:
         return entry
 
-    inflight_event = _trending_inflight.get(endpoint)
+    inflight_event = _trending_inflight.get(key)
     if inflight_event is not None:
         await inflight_event.wait()
-        entry = get_cached_trending_snapshot_entry(endpoint, source_sig)
+        entry = get_cached_trending_snapshot_entry(key, source_sig)
         if entry is not None:
             return entry
 
     event_to_set = asyncio.Event()
-    _trending_inflight[endpoint] = event_to_set
+    _trending_inflight[key] = event_to_set
     details: dict[str, dict] = {}
+    source_url = lists.url(endpoint)
     try:
-        if endpoint in ANIME_ENDPOINTS and not trending_source_url(endpoint):
+        if endpoint in ANIME_ENDPOINTS and not source_url:
             # AniList's list, for the trending catalogs addon.  A failed read
             # is not retried for a while: every anime poster would otherwise
             # try again, against a rate limit the anime art fetches share.
-            if _trending_cooling_down(endpoint):
+            # One cooldown for every choice: they all read the same AniList.
+            cooldown_key = endpoint if key == endpoint else f"{endpoint}:h{int(lists.home)}"
+            if _trending_cooling_down(cooldown_key):
                 return None
             from anime import fetch_anilist_trending
             films = endpoint == "anime_movie"
             # AniList calls a film released once it is in cinemas, so leaving
             # out what isn't home yet checks each one's TMDB dates (below) and
             # needs more of the list to have as many after.
-            check_home = films and TRENDING_HIDE_UNRELEASED
+            check_home = films and lists.home
             want = max(TRENDING_FETCH_COUNT, TRENDING_BROAD_FETCH_COUNT) * (
                 2 if (check_home or TRENDING_HIDE_GENRES) else 1)
-            ids = await _read_twice(lambda: fetch_anilist_trending(client, details, films=films, limit=want),
+            ids = await _read_twice(lambda: fetch_anilist_trending(client, details, films=films, limit=want,
+                                                                   hide_unreleased=lists.home),
                                     f"AniList {endpoint}")
             if not ids:
-                _trending_source_failed_at[endpoint] = time.monotonic()
+                _trending_source_failed_at[cooldown_key] = time.monotonic()
                 return None
-            _trending_source_failed_at.pop(endpoint, None)
-            ids = await _without_hidden_genres(client, tmdb_key, endpoint, ids, details)
+            _trending_source_failed_at.pop(cooldown_key, None)
+            ids = await _without_hidden_genres(client, tmdb_key, endpoint, ids, details,
+                                               limit=want)
             if check_home:
                 ids = await _released_only(client, tmdb_key, endpoint, ids, details)
             ids = ids[:max(TRENDING_FETCH_COUNT, TRENDING_BROAD_FETCH_COUNT)]
             rankings = {entry_id: position for position, entry_id in enumerate(ids, start=1)}
-            await asyncio.to_thread(set_cached_trending_snapshot, endpoint, rankings, source_sig, details)
+            await asyncio.to_thread(set_cached_trending_snapshot, key, rankings, source_sig, details)
             await asyncio.to_thread(_expire_overlapping_lists)
-            return get_cached_trending_snapshot_entry(endpoint, source_sig) or (
+            return get_cached_trending_snapshot_entry(key, source_sig) or (
                 rankings, time.time() + 86400
             )
 
@@ -2499,7 +2631,7 @@ async def ensure_trending_snapshot(
         # A configured-but-broken source serves no ranks, so the sash
         # goes quiet instead of falling back to TMDB and looking like
         # the config worked.
-        source_ids = await fetch_trending_source_ids(client, endpoint, details)
+        source_ids = await fetch_trending_source_ids(client, endpoint, details, url=source_url)
         if source_ids is not None:
             if not source_ids:
                 # Deliberately NOT cached.  Writing an empty snapshot
@@ -2512,13 +2644,15 @@ async def ensure_trending_snapshot(
         else:
             if not tmdb_key:
                 return None
+            window = "week" if lists.week(endpoint) else "day"
             # Its own cooldown key: a custom source for this type is not in
             # play here, so the two never share one.
-            cooldown_key = f"tmdb:{endpoint}"
+            cooldown_key = f"tmdb:{endpoint}" + (":week" if window == "week" else "")
             if _trending_cooling_down(cooldown_key):
                 return None
             ids = await _read_twice(
-                lambda: _fetch_tmdb_trending_ids(client, tmdb_key, endpoint, details),
+                lambda: _fetch_tmdb_trending_ids(client, tmdb_key, endpoint, details,
+                                                 window=window, home=lists.home),
                 f"TMDB {endpoint}",
             )
             if not ids:
@@ -2529,21 +2663,25 @@ async def ensure_trending_snapshot(
         if endpoint not in ANIME_ENDPOINTS and anime_split():
             # The anime lists first, so their titles can be left off this one.
             for anime_endpoint in ANIME_ENDPOINTS:
-                await ensure_trending_snapshot(client, tmdb_key, anime_endpoint)
-            ids = _without_anime(endpoint, ids, details, _anime_list_tmdb_ids(trending_kind(endpoint)))
-        ids = await _without_hidden_genres(client, tmdb_key, endpoint, ids, details)
-        if TRENDING_HIDE_UNRELEASED:
+                await ensure_trending_snapshot(client, tmdb_key, anime_endpoint, lists)
+            ids = _without_anime(endpoint, ids, details,
+                                 _anime_list_tmdb_ids(trending_kind(endpoint), lists))
+        # Twice the list's length while unreleased titles are left out after.
+        limit = max(TRENDING_FETCH_COUNT, TRENDING_BROAD_FETCH_COUNT)
+        ids = await _without_hidden_genres(client, tmdb_key, endpoint, ids, details,
+                                           limit=limit * (2 if lists.home else 1))
+        if lists.home:
             ids = await _released_only(client, tmdb_key, endpoint, ids, details)
         rankings = {entry_id: position for position, entry_id in enumerate(ids, start=1)}
-        await asyncio.to_thread(set_cached_trending_snapshot, endpoint, rankings, source_sig, details)
+        await asyncio.to_thread(set_cached_trending_snapshot, key, rankings, source_sig, details)
         if endpoint in ANIME_ENDPOINTS:
             await asyncio.to_thread(_expire_overlapping_lists)
-        return get_cached_trending_snapshot_entry(endpoint, source_sig) or (
+        return get_cached_trending_snapshot_entry(key, source_sig) or (
             rankings, time.time() + 86400
         )
     finally:
         event_to_set.set()
-        _trending_inflight.pop(endpoint, None)
+        _trending_inflight.pop(key, None)
 
 
 async def fetch_trending_rank_entry(
@@ -2551,14 +2689,12 @@ async def fetch_trending_rank_entry(
     tmdb_id: str,
     tmdb_key: str,
     media_type: str = "movie",
+    lists: "trending_lists.TrendingLists | None" = None,
 ) -> "tuple[int | None, float | None]":
     """(rank, expires_at): the title's rank and when the snapshot it came from
     is replaced.  A poster that prints the rank is cached until then."""
-    endpoint = (
-        media_type if media_type in ANIME_ENDPOINTS
-        else "tv" if media_type in ("tv", "series") else "movie"
-    )
-    entry = await ensure_trending_snapshot(client, tmdb_key, endpoint)
+    endpoint = trending_lists.endpoint_of(media_type)
+    entry = await ensure_trending_snapshot(client, tmdb_key, endpoint, lists)
     if entry is None:
         return None, None
     snapshot, expires_at = entry
@@ -2576,12 +2712,13 @@ async def fetch_anime_trending_rank_entry(
     keys: list[str],
     tmdb_key: str,
     film: bool = False,
+    lists: "trending_lists.TrendingLists | None" = None,
 ) -> "tuple[int | None, float | None]":
     """(rank, expires_at) on the anime series (or *film*) list: the best rank
     any of *keys* holds there.  The keys are every id the poster's title goes
     by — "anilist:<id>" for each AniList entry it maps to, and its TMDB id for
     a source that ranks by TMDB id."""
-    entry = await ensure_trending_snapshot(client, tmdb_key, "anime_movie" if film else "anime")
+    entry = await ensure_trending_snapshot(client, tmdb_key, "anime_movie" if film else "anime", lists)
     if entry is None:
         return None, None
     snapshot, expires_at = entry

@@ -152,6 +152,18 @@ How long a *provisional* poster is kept: one rendered with a piece missing — q
 
 Default: `172800`
 
+### `TRENDING_SOURCE_CHOICES`
+
+More trending lists visitors may pick in the configurator's Choose Lists, while `TRENDING_LIST_CHOICE` is on. Comma-separated `type|Name|URL` entries, where `type` is `movie`, `tv`, `anime` or `anime_movie` and the URL is an MDBList list page or a TMDB-shaped JSON endpoint, as for `TRENDING_SOURCE_MOVIE`:
+
+```
+TRENDING_SOURCE_CHOICES=movie|Trakt Trending|https://mdblist.com/lists/<user>/<movie-list>,tv|Trakt Trending|https://mdblist.com/lists/<user>/<show-list>
+```
+
+The name is what visitors see, and its slug (`trakt-trending`) is what their URLs carry, so a list's URL can be changed without breaking them. Each entry is one more list for that type: it is fetched only once someone picks it, refreshed when it is due, and dropped after a week nobody asks for it. A pick that is later removed from here falls back to the instance's own list.
+
+Default: (empty)
+
 ### `TRENDING_SOURCE_MAX_ITEMS`
 
 Cap on entries taken from a custom trending source (default 500).

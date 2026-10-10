@@ -210,7 +210,7 @@ class TrendingGenreFilterTests(unittest.TestCase):
         rows = [{"id": 1, "genre_ids": [10749]}, {"id": 2, "genre_ids": [28]},
                 {"id": 3, "genre_ids": [27]}]
 
-        async def tmdb_ids(client, key, endpoint, details_out=None):
+        async def tmdb_ids(client, key, endpoint, details_out=None, **_kw):
             for row in rows:
                 details_out[str(row["id"])] = tmdb._trending_item_details(row)
             return [str(r["id"]) for r in rows]
