@@ -7325,33 +7325,30 @@ const COPY_TEMPLATE_NEUTRAL = { id: '', name: '', ...COPY_SHAPE_REQUIRED };
 const COPY_TEMPLATE_KEY = 'postersplus_copy_template';
 
 // Share settings: the look, for someone else to import into their own
-// configurator — not a URL any client is given. It goes out in the "{shape}"
-// form so the portrait and landscape settings both travel, leaving out what
+// configurator or use in a client supporting the Default template. It uses
+// the "{shape}" form so both layouts travel, leaving out what
 // is at its default like any copied URL. That is safe across instances: the
 // import fills an absent parameter from the importing server's defaults, and
 // those are the code's own on every instance (the one an operator can change,
 // the logo language, is dropped below). Spelling every parameter out made a
 // default config ~2100 characters, past Discord's 2000-character message
-// limit. Only known public origins travel; private or unknown instances use
-// the public fallback. Keys, the access key and the selected title are
+// limit. Only an operator-configured public origin travels; private instances
+// use the public fallback. Keys, the access key and the selected title are
 // dropped. So are the viewer's own choices —
 // language, client and resolution belong to whoever imports it.
-const COPY_TEMPLATE_SHARE = { id: 'share', name: 'Share settings', ...COPY_SHAPE_REQUIRED, ...COPY_SHAPE_DUAL };
+const COPY_TEMPLATE_SHARE = { id: 'share', name: 'Share settings', ...COPY_SHAPE_OPTIMAL, ...COPY_SHAPE_DUAL };
 const SHARE_ORIGIN = 'https://postersplus.cc';
-const SHARE_PUBLIC_ORIGINS = new Set([
-  SHARE_ORIGIN,
-  'https://postersplus.slokker.cc',
-  'https://postersplus.stremio.ru',
-  'https://postersplus.elfhosted.com',
-]);
 const SHARE_LEGACY_ORIGIN = 'https://share.postersplus.invalid';
 const _SHARE_DROP  = ['tmdb_id', 'imdb_id', 'stremio_id', 'type', 'access_key', 'tmdb_key',
                       'mdblist_key', 'logo_language', 'primary_client', 'resolution'];
 
 function shareOrigin() {
   try {
-    const url = new URL(vEl('cfg-domain'));
-    if (url.protocol === 'https:' && SHARE_PUBLIC_ORIGINS.has(url.origin)) return url.origin;
+    // Fail closed until capabilities load. Never infer public status from
+    // the address used to open this page, including private/proxy aliases.
+    const url = new URL(serverCaps.public_share_origin);
+    if (url.protocol === 'https:' && !url.username && !url.password
+        && url.pathname === '/' && !url.search && !url.hash) return url.origin;
   } catch (_) {}
   return SHARE_ORIGIN;
 }
@@ -7362,7 +7359,11 @@ function buildShareUrl() {
                                 domainOverride: origin });
   const q = url.indexOf('?');
   const p = new URLSearchParams(q < 0 ? '' : url.slice(q + 1));
+  // Keep the template's generic identity placeholders, never concrete title IDs.
+  const identity = [...p].filter(([k, v]) =>
+    ['tmdb_id', 'imdb_id', 'stremio_id', 'type'].includes(k) && /^\{[a-z_]+\??\}$/.test(v));
   _SHARE_DROP.forEach(k => p.delete(k));
+  identity.forEach(([k, v]) => p.set(k, v));
   p.set('share', '1');
   // The plain list, not the "default,..." diff: the recipient's default order
   // may not be this server's.
@@ -7373,10 +7374,13 @@ function buildShareUrl() {
 function isShareUrl(raw) {
   try {
     const url = new URL(raw);
+    // Match importUrl's endpoint check, including reverse-proxy prefixes.
+    if (!url.pathname.endsWith('/poster') && !url.pathname.endsWith('/poster/')) return false;
     // Old shares used a reserved host; public hosts also serve normal posters,
     // so new shares need an explicit marker to request settings-only import.
+    // The marker selects import behavior; it does not establish trust in a host.
     return url.protocol === 'https:' && (url.origin === SHARE_LEGACY_ORIGIN
-      || (SHARE_PUBLIC_ORIGINS.has(url.origin) && url.searchParams.get('share') === '1'));
+      || url.searchParams.get('share') === '1');
   } catch { return false; }
 }
 
@@ -9089,7 +9093,7 @@ const PRESETS = [
 const USER_PRESETS_KEY = 'postersplus_user_presets';
 const USER_PRESETS_MAX = 30;
 const PRESET_TAB_KEY   = 'postersplus_preset_tab';
-const _PRESET_DROPPED  = new Set(['tmdb_id', 'imdb_id', 'type', 'stremio_id', 'anilist_id', 'kitsu_id', 'mal_id', '_ts']);
+const _PRESET_DROPPED  = new Set(['tmdb_id', 'imdb_id', 'type', 'stremio_id', 'anilist_id', 'kitsu_id', 'mal_id', '_ts', 'share']);
 let _presetTab = null;
 let _presetSaving = false;
 

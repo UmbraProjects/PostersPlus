@@ -8,6 +8,7 @@ was the last pick, and right-click (or a long press) opens the menu.
 """
 
 from pathlib import Path
+from html.parser import HTMLParser
 import json
 import re
 import shutil
@@ -226,70 +227,113 @@ class ShareSettingsTests(unittest.TestCase):
     def setUpClass(cls):
         cls.html = Path("configurator.html").read_text(encoding="utf-8")
 
-    def run_share_js(self, body):
-        """Exercise the page's URL code with Node's real URL parser."""
+    def run_share_js(self, body, extra=()):
+        """Use Node's parser to extract complete declarations, including nested
+        blocks, comments, regexes and template literals; no comment boundaries."""
         node = shutil.which("node")
-        if not node:
-            self.skipTest("Node.js is required for share URL behaviour tests")
-        start = self.html.index("const SHARE_ORIGIN")
-        end = self.html.index("/** The template a plain left-click", start)
-        apply_start = self.html.index("function applyImport()")
-        apply_end = self.html.index("\n}\n", apply_start) + 2
-        decode_start = self.html.index("function decodePlaceholders(")
-        decode_end = self.html.index("\n}\n", decode_start) + 2
-        script = "const assert = require('node:assert/strict');\n" + "\n".join((
-            self.html[start:end], self.html[apply_start:apply_end],
-            self.html[decode_start:decode_end], body,
-        ))
+        self.assertIsNotNone(node, "Node.js is required: install Node.js and put node on PATH")
+
+        class Scripts(HTMLParser):
+            inside = False
+            source = ""
+
+            def handle_starttag(self, tag, attrs):
+                if tag == "script":
+                    self.inside = True
+
+            def handle_endtag(self, tag):
+                if tag == "script":
+                    self.inside = False
+                    self.source += "\n"
+
+            def handle_data(self, data):
+                if self.inside:
+                    self.source += data
+
+        scripts = Scripts()
+        scripts.feed(self.html)
+        names = ["SHARE_ORIGIN", "SHARE_LEGACY_ORIGIN", "_SHARE_DROP", "shareOrigin",
+                 "buildShareUrl", "isShareUrl", "applyImport", "decodePlaceholders", *extra]
+        script = "const source = " + json.dumps(scripts.source) + ";\n"
+        script += r"""
+            const assert = require('node:assert/strict');
+            const vm = require('node:vm');
+            new vm.Script(source); // Also syntax-check the entire page.
+            function declaration(name) {
+              const match = new RegExp('^(?:(?:async )?function |const |let )'
+                + name + '\\b', 'm').exec(source);
+              assert.ok(match, 'Missing declaration: ' + name);
+              const tail = source.slice(match.index);
+              const terminator = /^(?:async )?function /.test(tail) ? '}' : ';';
+              for (let end = tail.indexOf(terminator); end >= 0;
+                   end = tail.indexOf(terminator, end + 1)) {
+                const candidate = tail.slice(0, end + 1);
+                try { new vm.Script(candidate); } catch (error) {
+                  if (error instanceof SyntaxError) continue;
+                  throw error;
+                }
+                return candidate;
+              }
+              throw new Error('Incomplete declaration: ' + name);
+            }
+        """
+        script += "eval(" + json.dumps(names) + ".map(declaration).join('\\n') + " + json.dumps(body) + ");"
         result = subprocess.run([node, "-"], input=script, text=True,
                                 capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_public_origins_are_preserved_and_everything_else_falls_back(self):
+    def test_missing_node_is_a_visible_failure(self):
+        with mock.patch.object(shutil, "which", return_value=None):
+            with self.assertRaisesRegex(AssertionError, "install Node.js"):
+                self.run_share_js("")
+
+    def test_only_explicit_public_origins_are_preserved(self):
         public = ["https://postersplus.cc", "https://postersplus.slokker.cc",
-                  "https://postersplus.stremio.ru", "https://postersplus.elfhosted.com"]
+                  "https://postersplus.stremio.ru", "https://postersplus.elfhosted.com",
+                  "https://new-hoster.example", "https://new-hoster.example:8443"]
         cases = [(host, host) for host in public]
         cases += [(host + "/", host) for host in public]
-        cases += [("HTTPS://POSTERSPLUS.SLOKKER.CC:443/", public[1]),
-                  ("https://user:secret@postersplus.slokker.cc/private?access_key=secret#private",
-                   public[1])]
-        unknown = ["https://private.example", "http://localhost:8000", "https://192.168.1.2",
-                   "https://[::1]", "", "not a URL", "postersplus.slokker.cc",
-                   "//postersplus.slokker.cc", "https://", "https://[broken",
-                   "https://postersplus.slokker.cc:bad", "null",
-                   "blob:https://postersplus.slokker.cc/id", "file:///postersplus.slokker.cc",
-                   "https://share.postersplus.invalid"]
-        for host in public:
-            unknown += [host.replace("https:", "http:"), host + ":8443", host + ".evil.test",
-                        host.replace("https://", "https://private."), host + "@evil.test",
-                        host + ".", "https://evil.test/?next=" + host]
-        cases += [(host, public[0]) for host in unknown]
+        cases += [("HTTPS://NEW-HOSTER.EXAMPLE:443/", "https://new-hoster.example")]
+        invalid = [None, "", "not a URL", "postersplus.cc", "//postersplus.cc",
+                   "https://", "https://[broken", "https://example.com:bad", "null",
+                   "blob:https://example.com/id", "file:///example.com", "http://example.com",
+                   "https://user:secret@example.com", "https://example.com/private",
+                   "https://example.com/?key=secret", "https://example.com/#private"]
+        cases += [(host, public[0]) for host in invalid]
         self.run_share_js("const cases = " + json.dumps(cases) + ";\n" + r"""
-            let domain;
-            function vEl(id) { assert.equal(id, 'cfg-domain'); return domain; }
+            let serverCaps = {};
+            function vEl() { throw new Error('Must not read the browser/private domain'); }
             function buildBaseParams(options) {
               assert.equal(options.domainOverride, shareOrigin());
               assert.equal(options.usePlaceholders, true);
               assert.equal(options.templateId, 'share');
-              return options.domainOverride + '/poster?shape={shape}&rating_mode=2';
+              return options.domainOverride + '/poster?shape={shape}&rating_display_mode=2'
+                + '&tmdb_id={tmdb_id?}&imdb_id={imdb_id?}&stremio_id={id}&type={type}';
             }
+            // Before capabilities load, even a known public host stays private.
+            assert.equal(shareOrigin(), 'https://postersplus.cc');
             for (const [input, expected] of cases) {
-              domain = input;
+              serverCaps = {public_share_origin: input};
               const output = new URL(buildShareUrl());
-              assert.equal(output.origin, expected, input);
+              assert.equal(output.origin, expected, String(input));
               assert.equal(output.pathname, '/poster');
               assert.equal(output.username, '');
               assert.equal(output.password, '');
               assert.equal(output.hash, '');
-              assert.deepEqual([...output.searchParams],
-                [['shape', '{shape}'], ['rating_mode', '2'], ['share', '1']]);
+              assert.equal(output.searchParams.get('share'), '1');
+              assert.equal(output.searchParams.get('shape'), '{shape}');
+              assert.equal(output.searchParams.get('rating_display_mode'), '2');
+              assert.equal(output.searchParams.get('tmdb_id'), '{tmdb_id?}');
+              assert.equal(output.searchParams.get('imdb_id'), '{imdb_id?}');
+              assert.equal(output.searchParams.get('stremio_id'), '{id}');
+              assert.equal(output.searchParams.get('type'), '{type}');
               assert.equal(isShareUrl(output.href), true);
             }
         """)
 
     def test_share_generation_filters_sensitive_parameters(self):
         self.run_share_js(r"""
-            function vEl() { return 'https://private.example'; }
+            const serverCaps = {};
             function buildBaseParams() {
               const p = new URLSearchParams({
                 tmdb_id: '123', imdb_id: 'tt123', stremio_id: 'kitsu:123', type: 'movie',
@@ -317,15 +361,19 @@ class ShareSettingsTests(unittest.TestCase):
             function _rememberImport(url) { remembered = url; }
             function closeImportModal() { closed = true; }
             const cases = [];
-            for (const origin of SHARE_PUBLIC_ORIGINS) {
+            for (const origin of ['https://postersplus.cc', 'https://new-hoster.example']) {
               cases.push([origin + '/poster?share=1&rating_mode=2', true]);
+              // The marker requests a stricter import, even if someone adds
+              // concrete identity or credentials to a link from an unknown host.
+              cases.push([origin + '/poster?share=1&tmdb_id=123&tmdb_key=incoming', true]);
               // Templates and concrete titles both remain normal poster imports.
               for (const query of ['tmdb_id=123&type=movie', 'shape={shape}',
-                                   'rating_mode=2', 'share=0', 'share=true', 'share=']) {
+                                   'rating_mode=2', 'share=0', 'share=true', 'share=',
+                                   'tmdb_id=123#share=1']) {
                 cases.push([origin + '/poster?' + query, false]);
               }
-              cases.push([origin + '.evil.test/poster?share=1', false]);
-              cases.push([origin + ':8443/poster?share=1', false]);
+              cases.push([origin + '.other.test/poster?share=1', true]);
+              cases.push([origin + ':8443/poster?share=1', true]);
               cases.push(['blob:' + origin + '/poster?share=1', false]);
             }
             cases.push(['https://share.postersplus.invalid/poster?shape={shape}', true],
@@ -347,6 +395,25 @@ class ShareSettingsTests(unittest.TestCase):
             }
         """)
 
+    def test_share_marker_requires_a_poster_endpoint(self):
+        self.run_share_js(r"""
+            for (const origin of ['https://new-hoster.example:8443',
+                                  'https://share.postersplus.invalid']) {
+              for (const path of ['/poster', '/poster/', '/proxy/poster', '/proxy/poster/']) {
+                assert.equal(isShareUrl(origin + path + '?share=1'), true, path);
+                // Unmarked public posters stay normal imports; legacy shares
+                // remain recognizable without a marker.
+                assert.equal(isShareUrl(origin + path + '?shape={shape}'),
+                  origin === 'https://share.postersplus.invalid', path);
+              }
+              for (const path of ['/', '/configurator', '/poster.jpg', '/poster/extra',
+                                  '/notposter', '/poster%2F']) {
+                assert.equal(isShareUrl(origin + path + '?share=1'), false, path);
+                assert.equal(isShareUrl(origin + path), false, path);
+              }
+            }
+        """)
+
     def test_keys_ids_and_personal_choices_are_dropped(self):
         start = self.html.index("const _SHARE_DROP")
         drop = self.html[start:self.html.index("];", start)]
@@ -355,11 +422,50 @@ class ShareSettingsTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIn(f"'{key}'", drop)
 
+    def test_last_import_drops_marker_and_sensitive_parameters(self):
+        self.run_share_js(r"""
+            let saved = [];
+            function _readUserPresets() { return saved; }
+            function _writeUserPresets(value) { saved = value; }
+            _rememberImport('https://public.example/poster?share=1&share=0&SHARE=1'
+              + '&tmdb_id={tmdb_id?}&type={type}&access_key=secret&tmdb_key=secret'
+              + '&shape={shape}&rating_display_mode=2');
+            assert.equal(saved.length, 1);
+            assert.equal(saved[0].name, 'Last imported URL');
+            assert.equal(saved[0].params, 'shape=%7Bshape%7D&rating_display_mode=2');
+            // Reimporting a normal URL still replaces the same preset.
+            _rememberImport('https://private.example/poster?tmdb_id=123&rating_display_mode=3');
+            assert.equal(saved.length, 1);
+            assert.equal(saved[0].params, 'rating_display_mode=3');
+        """, extra=("_PRESET_DROPPED", "_CORE_PARAMS", "LAST_IMPORT_ID",
+                    "_importThumbPending", "_presetParams", "_rememberImport"))
+
+    def test_public_origin_is_explicit_operator_configuration(self):
+        from fastapi.testclient import TestClient
+        import main
+        import settings
+
+        self.assertEqual(settings.REGISTRY['PUBLIC_SHARE_ORIGIN'].default, '')
+        client = TestClient(main.app)
+        for origin in ('', 'https://public.example'):
+            with self.subTest(origin=origin), \
+                 mock.patch.object(main._cfg, 'ACCESS_KEY', None), \
+                 mock.patch.object(main._cfg, 'PUBLIC_SHARE_ORIGIN', origin), \
+                 mock.patch.object(main._cfg, 'PUBLIC_URL', 'https://private.example'), \
+                 mock.patch.object(main.presets, 'public_list', return_value=[]), \
+                 mock.patch.object(main.custom_fonts, 'public_list', return_value=[]):
+                response = client.get('/server-caps', headers={
+                    'Host': 'private.lan', 'X-Forwarded-Host': 'forged.example',
+                    'X-Forwarded-Proto': 'https',
+                })
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()['public_share_origin'], origin)
+
     def test_both_shapes_travel_with_defaults_left_out(self):
         # Short enough to paste in a chat message: what is at its default is
         # left out, as on any copied URL, and filled back in on import.
         self.assertIn("COPY_TEMPLATE_SHARE = { id: 'share', name: 'Share settings', "
-                      "...COPY_SHAPE_REQUIRED, ...COPY_SHAPE_DUAL };", self.html)
+                      "...COPY_SHAPE_OPTIMAL, ...COPY_SHAPE_DUAL };", self.html)
         self.assertIn("buildBaseParams({ usePlaceholders: true, templateId: 'share',", self.html)
 
     def test_only_dropped_defaults_depend_on_the_instance(self):

@@ -7662,6 +7662,7 @@ async def server_caps(request: Request, access_key: str = ""):
 
     return {
         "access_key_required":   bool(_cfg.ACCESS_KEY),
+        "public_share_origin":   _cfg.PUBLIC_SHARE_ORIGIN,
         # Behind the operator's own login the page is handed the key rather
         # than carrying it in its URL (CONFIGURATOR_EXTERNAL_AUTH).
         **({"access_key": _cfg.ACCESS_KEY}
@@ -9835,6 +9836,7 @@ async def get_poster(
             "mal_id", "anidb_id",
             "mdblist_key", "tmdb_key", "type",
             "quality", "season", "episode", "access_key", "debug", "nocache",
+            "share",  # Configurator import marker; never a render setting.
             # Replaced below by the canonical value, for the same reason the
             # ids above are normalised first: "poster", "portrait", a literal
             # "{shape}" and no shape at all are one render, and left raw they
