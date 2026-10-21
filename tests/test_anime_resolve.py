@@ -253,5 +253,75 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(ar._norm("A Wild Last Boss Appeared!"), ar._norm("a wild last-boss appeared"))
 
 
+class AnimeForImdbTests(unittest.TestCase):
+    """An IMDb id TMDB doesn't know, matched to a Kitsu entry by name and year."""
+
+    SBR = {"name": "Steel Ball Run: JoJo's Bizarre Adventure", "releaseInfo": "2026–",
+           "genres": ["Animation", "Action"], "country": "Japan"}
+
+    @staticmethod
+    def _kitsu(kitsu_id, en, start="2026-03-19", subtype="ONA"):
+        return {"id": str(kitsu_id), "attributes": {
+            "canonicalTitle": "Steel Ball Run: JoJo no Kimyou na Bouken", "titles": {"en": en},
+            "subtype": subtype, "startDate": start}}
+
+    def setUp(self):
+        self.cache = {}
+        self.searches = []
+        for p in (
+            mock.patch.object(ar, "get_cached_tvdb_json", self.cache.get),
+            mock.patch.object(ar, "set_cached_tvdb_json", lambda k, v, ttl: self.cache.__setitem__(k, v)),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _run(self, meta, entries, mapped=(49847,), media_type="series"):
+        async def cinemeta_meta(client, imdb_id, mt):
+            return meta
+
+        async def search(client, query):
+            self.searches.append(query)
+            return entries
+
+        with mock.patch("cinemeta.fetch_cinemeta_meta", cinemeta_meta), \
+             mock.patch("anime_search.kitsu_search", search), \
+             mock.patch.object(ar.anime_ids, "lookup",
+                               lambda ns, aid, mt: anime_ids.MappedIds("45790", "tt2359704") if aid in mapped else None):
+            return asyncio.run(ar.anime_for_imdb(None, "tt38268282", media_type))
+
+    def test_name_year_and_kind_match_a_mapped_entry(self):
+        sbr = self._kitsu(49847, "Steel Ball Run: JoJo's Bizarre Adventure")
+        self.assertEqual(self._run(self.SBR, [sbr]), 49847)
+        # Cached: Kitsu isn't asked again.
+        self.assertEqual(self._run(self.SBR, [sbr]), 49847)
+        self.assertEqual(len(self.searches), 1)
+
+    def test_no_match(self):
+        cases = {
+            "another name": [self._kitsu(1, "JoJo's Bizarre Adventure")],
+            "another year": [self._kitsu(1, "Steel Ball Run: JoJo's Bizarre Adventure", start="2025-01-01")],
+            "a film": [self._kitsu(1, "Steel Ball Run: JoJo's Bizarre Adventure", subtype="movie")],
+            "two entries": [self._kitsu(1, "Steel Ball Run: JoJo's Bizarre Adventure"),
+                            self._kitsu(2, "Steel Ball Run: JoJo's Bizarre Adventure", subtype="TV")],
+        }
+        for label, entries in cases.items():
+            with self.subTest(label):
+                self.cache.clear()
+                self.assertIsNone(self._run(self.SBR, entries, mapped=(1, 2)))
+
+    def test_unmapped_entry_is_not_used(self):
+        self.assertIsNone(self._run(self.SBR, [self._kitsu(5, "Steel Ball Run: JoJo's Bizarre Adventure")]))
+
+    def test_only_japanese_animation_is_searched(self):
+        for meta in ({**self.SBR, "country": "United States"}, {**self.SBR, "genres": ["Action"]}):
+            self.cache.clear()
+            self.assertIsNone(self._run(meta, [self._kitsu(49847, meta["name"])]))
+        self.assertEqual(self.searches, [])
+
+    def test_an_empty_search_is_not_held_against_the_title(self):
+        self.assertIsNone(self._run(self.SBR, []))
+        self.assertEqual(self.cache, {})
+
+
 if __name__ == "__main__":
     unittest.main()

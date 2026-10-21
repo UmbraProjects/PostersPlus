@@ -510,6 +510,7 @@ def init_db() -> None:
     _add_column_if_missing(conn, "trending_cache", "requested_at", "INTEGER")
 
     _clear_mdblist_wrong_type_misses(conn)
+    _clear_bulk_letterboxd_rows(conn)
 
     conn.commit()
 
@@ -547,6 +548,47 @@ def _clear_mdblist_wrong_type_misses(conn: sqlite3.Connection) -> None:
     if ids:
         logger.info(f"Cleared {len(ids)} empty MDBList rating rows (and their posters) "
                     "to re-ask with the type fallback")
+
+
+_BULK_LETTERBOXD_DONE = "cleanup:mdblist-bulk-letterboxd:v1"
+# 2026-10-18 00:00 UTC, the day MDBList bulk ratings shipped.
+_BULK_SHIPPED_AT = 1792281600
+
+
+def _clear_bulk_letterboxd_rows(conn: sqlite3.Connection) -> None:
+    """Once: forget the rating rows that may hold a Letterboxd rating out of
+    10, and the posters drawn from them.
+
+    MDBList's bulk answer gives Letterboxd out of 10 where the single call
+    gives it out of 5, and until ratings._parse_mdblist_title read the score
+    instead, the bulk value was stored as it came and scored double (Marty
+    Supreme's 4.0 as 8.0, over 100 on its own).  A bulk row can't be told from
+    a single-call one, so every row with a Letterboxd rating written since bulk
+    shipped is asked again, mostly in bulk again (200 titles to a request).
+    """
+    if conn.execute("SELECT 1 FROM app_state WHERE key = ?",
+                    (_BULK_LETTERBOXD_DONE,)).fetchone():
+        return
+    ids = [r[0] for r in conn.execute(
+        "SELECT imdb_id FROM rating_cache WHERE cached_at >= ? "
+        "AND ratings_json LIKE '%\"letterboxd\"%'",
+        (_BULK_SHIPPED_AT,),
+    )]
+    conn.executemany("DELETE FROM rating_cache WHERE imdb_id = ?", [(i,) for i in ids])
+    # A poster key holds the IMDb id as one of its segments, first or after an
+    # anime id ("anilist:101922:tt9335498:…"); a TMDB-routed row ("tmdb:123")
+    # is the key's first two.
+    wanted = set(ids)
+    stale = [
+        (key,) for (key,) in conn.execute("SELECT cache_key FROM final_poster_cache")
+        if wanted.intersection(key.split(":")) or ":".join(key.split(":", 2)[:2]) in wanted
+    ]
+    conn.executemany("DELETE FROM final_poster_cache WHERE cache_key = ?", stale)
+    conn.execute("INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)",
+                 (_BULK_LETTERBOXD_DONE, str(len(ids))))
+    if ids:
+        logger.info(f"Cleared {len(ids)} rating rows (and their posters) that may hold "
+                    "a bulk Letterboxd rating out of 10")
 
 
 # ---------------------------------------------------------------------------

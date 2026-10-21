@@ -345,6 +345,12 @@ def _parse_mdblist_title(data: dict, media_id: str, media_type: str, genre: str)
             )
             continue
 
+        if source == "letterboxd" and isinstance(r.get("score"), (int, float)):
+            # The bulk answer gives Letterboxd's average out of 10 (8.0 where
+            # the single call says 4.0); the score, out of 100, is the same in
+            # both, so the stored value is that score back out of 5.
+            value = round(r["score"] / 20, 2)
+
         ratings_dict[source] = value
 
     return ratings_dict, genre, release_date, keywords, age_rating

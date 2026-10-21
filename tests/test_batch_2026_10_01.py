@@ -275,6 +275,24 @@ class LandscapeSettingsTests(unittest.TestCase):
                                       discovery_meta=DiscoveryMeta())
         self.assertEqual(drawn, ["★ EMMY WINNER"])
 
+    def test_frosted_logo_chips_wear_the_glass_badges_tint(self):
+        # Portrait chips take the frosted notch's tint; the landscape ones took
+        # portrait's frost rule over the whole frame and came out a different
+        # colour from the glass badge beside them.
+        cfg = main.build_request_config({
+            "shape": "landscape", "landscape_badge_display_mode": "7",
+            "landscape_badge_group1": "chip:4:network,studio", "badge_logo_style": "frosted"})
+        art = Image.new("RGB", (1000, 563), (70, 130, 190))
+        tints = []
+        real_badge = landscape._draw_badge
+        with mock.patch.object(landscape, "_draw_badge",
+                               side_effect=lambda *a, **k: tints.append(real_badge(*a, **k)) or tints[-1]), \
+             mock.patch.object(gb, "chip_looks", wraps=gb.chip_looks) as looks, \
+             mock.patch("main.pick_sash", return_value=("Emmy Nominee", "nom")):
+            landscape.build_landscape(art, 80, "Drama", cfg, discovery_meta=DiscoveryMeta())
+        self.assertIsNotNone(tints[0])
+        self.assertEqual(looks.call_args.args[1], tints[0])
+
 
 if __name__ == "__main__":
     unittest.main()

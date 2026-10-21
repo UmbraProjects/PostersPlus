@@ -10378,6 +10378,21 @@ async def get_poster(
     # quality sources is resolved separately, after metadata.
     # -----------------------------------------------------------------------
     anime_namespace, anime_id = _resolve_anime_request(anilist_id, kitsu_id, stremio_id, mal_id)
+    if (anime_namespace is None and imdb_id and not tmdb_id and _IMDB_ID_RE.match(imdb_id)
+            and _cfg.ANIME_SOURCES_ENABLED and _cfg.CINEMETA_ENABLED and anime_ids.is_ready()
+            and _HTTP_CLIENT is not None and _resolve_tmdb_key(tmdb_key)):
+        # An IMDb id TMDB has no record of may be an anime season IMDb lists
+        # as a show of its own (anime_resolve.anime_for_imdb): rendered as the
+        # Kitsu entry it matches, the way a kitsu: id is, IMDb id and all.
+        try:
+            _known = await resolve_imdb_to_tmdb(_HTTP_CLIENT, imdb_id, type, _resolve_tmdb_key(tmdb_key))
+        except IdResolveError:
+            _known = True     # TMDB didn't answer: the ordinary path decides
+        if _known is None:
+            _kitsu_match = await anime_resolve.anime_for_imdb(_HTTP_CLIENT, imdb_id, type)
+            if _kitsu_match is not None:
+                logger.info(f"{imdb_id} is unknown to TMDB — rendering as kitsu:{_kitsu_match}")
+                anime_namespace, anime_id, imdb_id = "kitsu", _kitsu_match, ""
     is_anime = anime_namespace is not None
     anime_key = anime.namespaced_id(anime_namespace, anime_id) if is_anime else ""
     # True when Cinemeta (not TMDB) is the art and metadata spine for this

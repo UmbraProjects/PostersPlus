@@ -491,11 +491,26 @@ def _dark_pill(image: Image.Image, box: tuple[int, int, int, int], style: str,
     return ink or _DARK_INK.get(style, (255, 255, 255))
 
 
+def _glass_tint(art: Image.Image, cfg, backing: float,
+                source: tuple[float, float, float] | None = None,
+                region: Image.Image | None = None) -> tuple[int, int, int]:
+    """The glass pill's tint (see _glass_pill): ``source``, or the colour of
+    ``region`` (the whole frame without one), resaturated and lifted off a
+    ``backing`` of that luma.  The frosted graphic badges take it too."""
+    from awards import dominant_frost_rgb, _frosted_tint
+    if _BORDER:
+        return _frosted_tint(*dominant_frost_rgb(art),
+                             cfg.sash_badge_frost_saturation, _LANDSCAPE_FROST_MODE)
+    base = source if source is not None else dominant_frost_rgb(
+        region if region is not None else art, fallback=art)
+    return _lift(_resaturate(base, getattr(cfg, "landscape_badge_saturation", 1.0)), backing)
+
+
 def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
                 art: Image.Image, cfg,
                 source: tuple[float, float, float] | None = None,
-                chip: bool = False) -> tuple[int, int, int]:
-    """Frosted pill carrying the poster's own colour.  Returns its ink colour.
+                chip: bool = False) -> tuple[tuple[int, int, int], tuple[int, int, int] | None]:
+    """Frosted pill carrying the poster's own colour.  Returns its (ink, tint).
 
     ``source`` replaces the colour the pill would sample for itself — the
     vignette's tint, when the two are linked.  It still goes through the lift,
@@ -516,21 +531,20 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
       True    — reference: the poster's true hue and saturation, lifted to a
                 legibility floor.  Light panel, dark ink.
     """
-    from awards import dominant_frost_rgb, _frosted_tint, _frost_ink
+    from awards import _frost_ink
     from ratings import _cairo_pill_mask
 
     x0, y0, x1, y1 = box
     w, h = x1 - x0, y1 - y0
     if w <= 0 or h <= 0:
-        return (255, 255, 255)
+        return (255, 255, 255), None
 
     blurred = (image.crop(box).convert("RGB")
                .filter(ImageFilter.GaussianBlur(max(4, int(h * 0.35))))
                .convert("RGBA"))
 
     if _BORDER:
-        tint = _frosted_tint(*dominant_frost_rgb(art),
-                             cfg.sash_badge_frost_saturation, _LANDSCAPE_FROST_MODE)
+        tint = _glass_tint(art, cfg, 0.0)
         opacity = cfg.sash_badge_frost_opacity
     else:
         # Borderless: the colour comes from the art *under the pill* rather than
@@ -539,9 +553,8 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
         # dominant_frost_rgb's fallback handles the case where those pixels are
         # too dark or too washed to carry a hue, borrowing the frame's instead.
         backing = np.asarray(blurred.convert("RGB"), dtype=np.float32)
-        base = source if source is not None else dominant_frost_rgb(image.crop(box), fallback=art)
-        base = _resaturate(base, getattr(cfg, "landscape_badge_saturation", 1.0))
-        tint = _lift(base, _luma(backing.reshape(-1, 3).mean(axis=0)))
+        tint = _glass_tint(art, cfg, _luma(backing.reshape(-1, 3).mean(axis=0)),
+                           source=source, region=image.crop(box))
         opacity = getattr(cfg, "landscape_badge_glass_opacity", _LIFT_OPACITY)
 
     # Cairo rasterises at ANTIALIAS_BEST; PIL's rounded_rectangle has no
@@ -571,7 +584,7 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
         border.putalpha(ring.point(lambda a: a * _BORDER_ALPHA // 255))
         image.alpha_composite(border, (x0, y0))
 
-    return _frost_ink(*tint)
+    return _frost_ink(*tint), tint
 
 
 def _resaturate(rgb, amount: float) -> tuple[float, float, float]:
@@ -608,9 +621,11 @@ def _draw_badge(image: Image.Image, text: str, position: str, art: Image.Image,
                 logo_align: str = "left", logo_baseline: int | None = None,
                 logo_box: tuple[int, int, int, int] | None = None,
                 logo_top_row: bool = False,
-                obstacles: tuple = (), floor: int | None = None) -> None:
+                obstacles: tuple = (), floor: int | None = None) -> tuple[int, int, int] | None:
     """``floor`` is the bottom row's baseline when something (the Bar) has
-    raised it; the shared one otherwise."""
+    raised it; the shared one otherwise.  Returns the glass tint the badge was
+    drawn with, for the frosted graphic badges to wear; None for a dark or
+    plain one."""
     width, height = image.size
     draw = ImageDraw.Draw(image)
     base = int(height * _BASELINE) if floor is None else floor
@@ -626,7 +641,7 @@ def _draw_badge(image: Image.Image, text: str, position: str, art: Image.Image,
         _px = _slot_x(width, draw.textlength(text, font=_plain_font), logo_align)
         draw.text((_px, base if logo_baseline is None else logo_baseline), text,
                   font=_plain_font, fill=(255, 255, 255, 242), anchor="ls")
-        return
+        return None
 
     font = fonts.label_font(th)
     tw = draw.textlength(text, font=font)
@@ -674,14 +689,16 @@ def _draw_badge(image: Image.Image, text: str, position: str, art: Image.Image,
 
     style = getattr(cfg, "landscape_badge_style", "glass")
     chip = getattr(cfg, "landscape_badge_shape", "pill") == "chip"
+    tint = None
     if style in _DARK_INK:
         ink = _dark_pill(image, (x, y, x + bw, y + bh), style,
                          getattr(cfg, "landscape_badge_text_color", None),
                          getattr(cfg, "landscape_badge_opacity", _DARK_OPACITY), chip=chip)
     else:
-        ink = _glass_pill(image, (x, y, x + bw, y + bh), art, cfg, source=source, chip=chip)
+        ink, tint = _glass_pill(image, (x, y, x + bw, y + bh), art, cfg, source=source, chip=chip)
     draw.text((x + pad_x, y + pad_y - round(2 * scale)), text, font=font,
               fill=(*ink, 245))
+    return tint
 
 
 def _slot_x(width: int, w: float, align: str) -> int:
@@ -1665,6 +1682,7 @@ def _build_landscape(
             _claim_footprint(before, pre, np.asarray(image), rank_box, extent)
 
     badge_position = None
+    badge_tint = None
     if cfg.sash_mode != "hidden" and discovery_meta is not None:
         sash_result = pick_sash(discovery_meta, sash_priority)
         if sash_result is not None:
@@ -1677,7 +1695,7 @@ def _build_landscape(
                 label = f"★ {label}"
             position = getattr(cfg, "landscape_badge_pos", "top_left")
             badge_position = position
-            _draw_badge(image, label, position, art, cfg, logo_height=logo_height,
+            badge_tint = _draw_badge(image, label, position, art, cfg, logo_height=logo_height,
                         # Only a stacked badge with an empty logo slot lands
                         # inside the band.  Stacked over a logo or a title it
                         # often clears the band's top edge, and the top corners
@@ -1695,17 +1713,17 @@ def _build_landscape(
     if graphic:
         import graphic_badges
         tint = None
-        # Frosted chips and disc follow the landscape badges' own glass sliders
-        # (the portrait notch's are hidden here); the slider's 1.0 is the
-        # tint's usual 1.2.
+        # Frosted chips and disc are the glass badge's: its tint when one was
+        # drawn, so the two match as the portrait chips match the notch, else
+        # the same rule over the whole frame; and its opacity slider.
         frost_opacity = getattr(cfg, "landscape_badge_glass_opacity", _LIFT_OPACITY)
-        frost_saturation = 1.2 * getattr(cfg, "landscape_badge_saturation", 1.0)
         if ((cinema_run is not None and graphic_badges.wants_frost(cfg.badge_cinema_style))
                 or graphic_badges.chips_want_frost(
                     cfg, bool(quality_tokens) and _score_points(quality_tokens) >= cfg.badge_min_score)):
-            from awards import dominant_frost_rgb, _frosted_tint
-            tint = _frosted_tint(*(badge_source or dominant_frost_rgb(art)),
-                                 saturation=frost_saturation, reference=cfg.frost_reference)
+            tint = badge_tint or _glass_tint(
+                art, cfg, _luma(np.asarray(art.convert("RGB").resize((64, 36)), dtype=np.float32)
+                                .reshape(-1, 3).mean(axis=0)),
+                source=badge_source)
         from main import _legacy_badge
         badge_logos = (*badge_logos[:2], graphic_badges.cinema_ink(cfg.badge_cinema_style, cinema_run, tint,
                                                                      frost_opacity),

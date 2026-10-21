@@ -104,6 +104,8 @@ class FetchRatingsBulkTests(_BulkTestCase):
         ratings_dict, _genre, released, keywords, age = out[GODFATHER]
         self.assertEqual(ratings_dict["imdb"], 9.2)
         self.assertEqual(ratings_dict["metacritic"], 100)
+        # The bulk value is 9.0, out of 10; the single call's 4.5 is kept.
+        self.assertEqual(ratings_dict["letterboxd"], 4.5)
         self.assertEqual(released, "1972-03-14")
         self.assertEqual(age, 16)
         # Metacritic 100 from 16 reviews: Must-See by the score rule.

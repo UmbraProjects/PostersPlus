@@ -312,3 +312,89 @@ async def resolve(client: httpx.AsyncClient, namespace: str, anime_id: int,
         # Found before the reverse note was kept.
         _remember_reverse(kind, cached["tmdb_id"], namespace, anime_id)
     return anime_ids.MappedIds(cached["tmdb_id"], cached.get("imdb_id"))
+
+
+# ---------------------------------------------------------------------------
+# IMDb ids TMDB doesn't know
+# ---------------------------------------------------------------------------
+#
+# IMDb lists some anime seasons as shows of their own where TMDB runs them as
+# a season of one show, and TMDB may delete the duplicate it once had: Steel
+# Ball Run (tt38268282) is JoJo's season 6 on TMDB (45790), and the mapping
+# gives the season's anime ids JoJo's IMDb id (tt2359704), so nothing leads
+# from tt38268282 to it.  Such an id rendered from Cinemeta alone, without the
+# season's art or a score.  When Cinemeta calls it Japanese animation, a Kitsu
+# entry with the same name (one of its titles, without case or punctuation),
+# the same start year and the request's kind stands in, as long as the
+# mapping knows it: the request then renders as that anime id does.  Strict
+# for the same reason as the TMDB search above; two such entries match none.
+
+_KITSU_SERIES = {"TV", "ONA", "OVA"}
+
+
+def _imdb_key(imdb_id: str, media_type: str) -> str:
+    kind = "movie" if media_type == "movie" else "tv"
+    return f"animeres-imdb:v1:{imdb_id}:{kind}"
+
+
+def _start_year(value) -> int | None:
+    m = re.match(r"\s*(\d{4})", str(value or ""))
+    return int(m.group(1)) if m else None
+
+
+def _japanese_animation(meta: dict) -> bool:
+    genres = meta.get("genres") or meta.get("genre") or []
+    countries = [c.strip().casefold() for c in str(meta.get("country") or "").split(",")]
+    return "Animation" in genres and "japan" in countries
+
+
+def _kitsu_match(entries: list[dict], name: str, year: int, media_type: str) -> int | None:
+    """The one Kitsu entry named *name* that started in *year*, of the
+    request's kind; None for none, or for two."""
+    wanted = _norm(name)
+    found = set()
+    for entry in entries:
+        attrs = entry.get("attributes") or {}
+        subtype = attrs.get("subtype")
+        if (subtype == "movie") != (media_type == "movie") or (
+                subtype != "movie" and subtype not in _KITSU_SERIES):
+            continue
+        if _start_year(attrs.get("startDate")) != year or not str(entry.get("id") or "").isdigit():
+            continue
+        names = [attrs.get("canonicalTitle"), *(attrs.get("titles") or {}).values()]
+        if wanted and wanted in {_norm(n) for n in names}:
+            found.add(int(entry["id"]))
+    return found.pop() if len(found) == 1 else None
+
+
+async def anime_for_imdb(client: httpx.AsyncClient, imdb_id: str,
+                         media_type: str) -> int | None:
+    """The mapped Kitsu id an IMDb id TMDB doesn't know stands for, or None.
+    The caller has asked TMDB already; this asks Cinemeta and Kitsu."""
+    import cinemeta
+    from anime_search import kitsu_search
+
+    key = _imdb_key(imdb_id, media_type)
+    cached = get_cached_tvdb_json(key)
+    if cached is None:
+        meta = await cinemeta.fetch_cinemeta_meta(client, imdb_id, media_type)
+        if meta is None:
+            return None
+        year = _start_year(meta.get("releaseInfo") or meta.get("year"))
+        if not (_japanese_animation(meta) and meta.get("name") and year):
+            cached = {}
+        else:
+            entries = await kitsu_search(client, meta["name"])
+            if not entries:
+                # No answer, or Kitsu unreachable: kitsu_search can't say
+                # which, so nothing is held against the title.
+                return None
+            kitsu_id = _kitsu_match(entries, meta["name"], year, media_type)
+            cached = {"kitsu": kitsu_id} if kitsu_id else {}
+            if kitsu_id:
+                logger.info(f"{imdb_id} ({meta['name']!r}, {year}) is kitsu:{kitsu_id} by name")
+        set_cached_tvdb_json(key, cached, _HIT_TTL if cached else MISS_TTL)
+    kitsu_id = cached.get("kitsu")
+    if not kitsu_id or anime_ids.lookup("kitsu", kitsu_id, media_type) is None:
+        return None
+    return int(kitsu_id)

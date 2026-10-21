@@ -52,7 +52,7 @@ _SENTINEL_MISS = {"__miss__": True}
 
 # Bumped whenever the normaliser or the genre vocabulary changes, so cached rows
 # built by the old logic are re-fetched rather than served.
-_METADATA_VERSION = "v2"   # v2: dvdRelease and the episode summary joined the slim row
+_METADATA_VERSION = "v3"   # v2: dvdRelease and the episode summary joined the slim row; v3: country
 
 _IMDB_ID_RE = re.compile(r"^tt[0-9]{1,10}\Z")
 
@@ -391,7 +391,7 @@ async def fetch_cinemeta_meta(
         for k in (
             "id", "name", "year", "releaseInfo", "released", "dvdRelease",
             "runtime", "status", "genres", "genre", "cast", "director",
-            "poster", "background", "logo", "moviedb_id", "imdbRating",
+            "poster", "background", "logo", "moviedb_id", "imdbRating", "country",
         )
         if meta.get(k) is not None
     }
