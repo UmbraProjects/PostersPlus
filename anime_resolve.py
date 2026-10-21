@@ -367,34 +367,51 @@ def _kitsu_match(entries: list[dict], name: str, year: int, media_type: str) -> 
     return found.pop() if len(found) == 1 else None
 
 
-async def anime_for_imdb(client: httpx.AsyncClient, imdb_id: str,
-                         media_type: str) -> int | None:
-    """The mapped Kitsu id an IMDb id TMDB doesn't know stands for, or None.
-    The caller has asked TMDB already; this asks Cinemeta and Kitsu."""
+async def _match_imdb(client: httpx.AsyncClient, imdb_id: str, media_type: str) -> dict | None:
+    """anime_for_imdb's cached row: {"kitsu": id} or {} (held), or None when
+    it couldn't be told (held against nothing)."""
     import cinemeta
     from anime_search import kitsu_search
 
+    meta = await cinemeta.fetch_cinemeta_meta(client, imdb_id, media_type, want_country=True)
+    if meta is None:
+        return None
+    year = _start_year(meta.get("releaseInfo") or meta.get("year"))
+    if not (_japanese_animation(meta) and meta.get("name") and year):
+        return {}
+    entries = await kitsu_search(client, meta["name"])
+    if not entries:
+        # No answer, or Kitsu unreachable: kitsu_search can't say which.
+        return None
+    kitsu_id = _kitsu_match(entries, meta["name"], year, media_type)
+    if kitsu_id:
+        logger.info(f"{imdb_id} ({meta['name']!r}, {year}) is kitsu:{kitsu_id} by name")
+    return {"kitsu": kitsu_id} if kitsu_id else {}
+
+
+async def anime_for_imdb(client: httpx.AsyncClient, imdb_id: str,
+                         media_type: str) -> int | None:
+    """The mapped Kitsu id an IMDb id TMDB doesn't know stands for, or None.
+    The caller has asked TMDB already; this asks Cinemeta and Kitsu, once
+    for requests that arrive together."""
     key = _imdb_key(imdb_id, media_type)
     cached = get_cached_tvdb_json(key)
     if cached is None:
-        meta = await cinemeta.fetch_cinemeta_meta(client, imdb_id, media_type)
-        if meta is None:
-            return None
-        year = _start_year(meta.get("releaseInfo") or meta.get("year"))
-        if not (_japanese_animation(meta) and meta.get("name") and year):
-            cached = {}
+        fut = _inflight.get(key)
+        if fut is not None:
+            cached = await asyncio.shield(fut)
         else:
-            entries = await kitsu_search(client, meta["name"])
-            if not entries:
-                # No answer, or Kitsu unreachable: kitsu_search can't say
-                # which, so nothing is held against the title.
-                return None
-            kitsu_id = _kitsu_match(entries, meta["name"], year, media_type)
-            cached = {"kitsu": kitsu_id} if kitsu_id else {}
-            if kitsu_id:
-                logger.info(f"{imdb_id} ({meta['name']!r}, {year}) is kitsu:{kitsu_id} by name")
-        set_cached_tvdb_json(key, cached, _HIT_TTL if cached else MISS_TTL)
-    kitsu_id = cached.get("kitsu")
+            fut = asyncio.get_running_loop().create_future()
+            _inflight[key] = fut
+            try:
+                cached = await _match_imdb(client, imdb_id, media_type)
+                if cached is not None:
+                    set_cached_tvdb_json(key, cached, _HIT_TTL if cached else MISS_TTL)
+            finally:
+                _inflight.pop(key, None)
+                if not fut.done():
+                    fut.set_result(cached)
+    kitsu_id = (cached or {}).get("kitsu")
     if not kitsu_id or anime_ids.lookup("kitsu", kitsu_id, media_type) is None:
         return None
     return int(kitsu_id)

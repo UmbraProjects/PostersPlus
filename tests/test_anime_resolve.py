@@ -276,7 +276,7 @@ class AnimeForImdbTests(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def _run(self, meta, entries, mapped=(49847,), media_type="series"):
-        async def cinemeta_meta(client, imdb_id, mt):
+        async def cinemeta_meta(client, imdb_id, mt, **kw):
             return meta
 
         async def search(client, query):
@@ -321,6 +321,89 @@ class AnimeForImdbTests(unittest.TestCase):
     def test_an_empty_search_is_not_held_against_the_title(self):
         self.assertIsNone(self._run(self.SBR, []))
         self.assertEqual(self.cache, {})
+
+
+    def test_requests_arriving_together_share_one_lookup(self):
+        sbr = self._kitsu(49847, "Steel Ball Run: JoJo's Bizarre Adventure")
+
+        async def cinemeta_meta(client, imdb_id, mt, **kw):
+            await asyncio.sleep(0.01)
+            return self.SBR
+
+        async def search(client, query):
+            self.searches.append(query)
+            return [sbr]
+
+        async def both():
+            return await asyncio.gather(*(ar.anime_for_imdb(None, "tt38268282", "series") for _ in range(3)))
+
+        with mock.patch("cinemeta.fetch_cinemeta_meta", cinemeta_meta), \
+             mock.patch("anime_search.kitsu_search", search), \
+             mock.patch.object(ar.anime_ids, "lookup", lambda ns, aid, mt: anime_ids.MappedIds("45790", None)):
+            self.assertEqual(asyncio.run(both()), [49847] * 3)
+        self.assertEqual(len(self.searches), 1)
+
+
+class ImdbIdAsAnimeTests(unittest.TestCase):
+    """/poster's gate in front of anime_for_imdb (main._imdb_id_as_anime)."""
+
+    def setUp(self):
+        import main
+        self.main = main
+        self.asked = []
+
+        async def anime_for_imdb(client, imdb_id, mt):
+            self.asked.append(imdb_id)
+            return 49847
+        for p in (
+            mock.patch.object(main, "_HTTP_CLIENT", object()),
+            mock.patch.object(main, "_resolve_tmdb_key", lambda k: "key"),
+            mock.patch.object(main._cfg, "ANIME_SOURCES_ENABLED", True),
+            mock.patch.object(main._cfg, "CINEMETA_ENABLED", True),
+            mock.patch.object(main.anime_ids, "is_ready", lambda: True),
+            mock.patch.object(main.anime_resolve, "anime_for_imdb", anime_for_imdb),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _run(self, resolved, imdb_id="tt38268282"):
+        async def resolve(client, imdb_id, mt, key):
+            if isinstance(resolved, Exception):
+                raise resolved
+            return resolved
+        with mock.patch.object(self.main, "resolve_imdb_to_tmdb", resolve):
+            return asyncio.run(self.main._imdb_id_as_anime(imdb_id, "series", None))
+
+    def test_only_an_id_tmdb_has_no_record_of_is_matched(self):
+        self.assertEqual(self._run(None), 49847)
+        self.assertIsNone(self._run({"tmdb_id": "45790", "media_type": "tv"}))
+        self.assertIsNone(self._run(self.main.IdResolveError("timeout")))
+        self.assertIsNone(self._run(None, imdb_id=""))
+        self.assertEqual(self.asked, ["tt38268282"])
+
+    def test_off_without_a_key(self):
+        with mock.patch.object(self.main, "_resolve_tmdb_key", lambda k: None):
+            self.assertIsNone(self._run(None))
+        self.assertEqual(self.asked, [])
+
+
+class CinemetaCountryRefetchTests(unittest.TestCase):
+    def test_a_row_from_before_country_is_refetched_only_when_wanted(self):
+        import cinemeta
+        cache = {cinemeta._cache_key("tt1", "series"): {"id": "tt1", "name": "Old"}}
+        fetched = []
+
+        async def fetch(client, imdb_id, mt):
+            fetched.append(imdb_id)
+            return {"id": imdb_id, "name": "New", "country": "Japan"}
+        with mock.patch.object(cinemeta, "get_cached_tvdb_json", cache.get), \
+             mock.patch.object(cinemeta, "set_cached_tvdb_json", lambda k, v, ttl: cache.__setitem__(k, v)), \
+             mock.patch.object(cinemeta, "_fetch_meta", fetch):
+            self.assertEqual(asyncio.run(cinemeta.fetch_cinemeta_meta(None, "tt1", "series"))["name"], "Old")
+            self.assertEqual(asyncio.run(cinemeta.fetch_cinemeta_meta(None, "tt1", "series",
+                                                                      want_country=True))["country"], "Japan")
+            asyncio.run(cinemeta.fetch_cinemeta_meta(None, "tt1", "series", want_country=True))
+        self.assertEqual(fetched, ["tt1"])
 
 
 if __name__ == "__main__":

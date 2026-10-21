@@ -113,6 +113,13 @@ class FetchRatingsBulkTests(_BulkTestCase):
         self.assertEqual(out[SHAWSHANK][2], "1994-09-23")
         self.assertEqual(ratings.mdblist_quota_remaining("key"), 806)
 
+    async def test_letterboxd_without_a_score_is_halved(self):
+        rec = _record("tt1", ratings=[{"source": "letterboxd", "value": 7.4, "score": None, "votes": 900}])
+        server = _BulkServer({"movie": {"tt1": rec}})
+        async with server.client() as client:
+            out = await ratings.fetch_ratings_bulk(client, "key", "imdb", "movie", ["tt1"])
+        self.assertEqual(out["tt1"][0], {"letterboxd": 3.7})
+
     async def test_vote_floor_applies(self):
         rec = _record("tt1", ratings=[{"source": "imdb", "value": 7.0, "votes": 3},
                                       {"source": "tomatoes", "value": 80, "votes": 200}])

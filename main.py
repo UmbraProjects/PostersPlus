@@ -25,7 +25,7 @@ from functools import lru_cache, partial
 from html import escape as _html_escape
 from urllib.parse import parse_qsl, quote, urlencode
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse, Response, HTMLResponse
+from fastapi.responses import JSONResponse, Response, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
 
@@ -1663,6 +1663,29 @@ def _raise_if_client_key_rejected(exc: BaseException, tmdb_key: str | None, titl
         ) from exc
 
 
+async def _imdb_id_as_anime(imdb_id: str, media_type: str, tmdb_key: str | None) -> int | None:
+    """The Kitsu id an IMDb-only request renders as, or None.
+
+    An IMDb id TMDB has no record of may be an anime season IMDb lists as a
+    show of its own (anime_resolve.anime_for_imdb).  Only with a key, so that
+    "no record" is TMDB's answer; a lookup that failed leaves the request to
+    the ordinary path.
+    """
+    key = _resolve_tmdb_key(tmdb_key)
+    if not (imdb_id and _IMDB_ID_RE.match(imdb_id) and key and _HTTP_CLIENT is not None
+            and _cfg.ANIME_SOURCES_ENABLED and _cfg.CINEMETA_ENABLED and anime_ids.is_ready()):
+        return None
+    try:
+        if await resolve_imdb_to_tmdb(_HTTP_CLIENT, imdb_id, media_type, key) is not None:
+            return None
+    except IdResolveError:
+        return None
+    kitsu_id = await anime_resolve.anime_for_imdb(_HTTP_CLIENT, imdb_id, media_type)
+    if kitsu_id is not None:
+        logger.info(f"{imdb_id} is unknown to TMDB — rendering as kitsu:{kitsu_id}")
+    return kitsu_id
+
+
 async def _resolve_title_identity(
     tmdb_id: str, imdb_id: str, media_type: str, tmdb_key: str | None,
 ) -> "tuple[str, str, bool]":
@@ -1881,6 +1904,11 @@ async def _settle_title_identity(
         logger.warning(f"{exc} — keeping {imdb_id} unverified for now")
         return tmdb_id, media_type, use_cinemeta, imdb_id, True
     return tmdb_id, media_type, use_cinemeta, kept, unverified
+
+
+# Query marker on the one redirect a request gets after the TMDB id our id map
+# gave it turns out deleted.
+_GONE_RETRY = "gone_retry"
 
 
 def _is_tmdb_title_404(exc: httpx.HTTPStatusError, endpoint: str, tmdb_id: str) -> bool:
@@ -10377,22 +10405,15 @@ async def get_poster(
     # a tt-prefixed IMDb id. See _canonical_rating_id(); the stream id sent to
     # quality sources is resolved separately, after metadata.
     # -----------------------------------------------------------------------
+    # Whether the TMDB id is the client's; one resolved from the IMDb id may
+    # name an entry TMDB has deleted since (see the title-404 handler below).
+    _tmdb_id_sent = bool(tmdb_id)
     anime_namespace, anime_id = _resolve_anime_request(anilist_id, kitsu_id, stremio_id, mal_id)
-    if (anime_namespace is None and imdb_id and not tmdb_id and _IMDB_ID_RE.match(imdb_id)
-            and _cfg.ANIME_SOURCES_ENABLED and _cfg.CINEMETA_ENABLED and anime_ids.is_ready()
-            and _HTTP_CLIENT is not None and _resolve_tmdb_key(tmdb_key)):
-        # An IMDb id TMDB has no record of may be an anime season IMDb lists
-        # as a show of its own (anime_resolve.anime_for_imdb): rendered as the
-        # Kitsu entry it matches, the way a kitsu: id is, IMDb id and all.
-        try:
-            _known = await resolve_imdb_to_tmdb(_HTTP_CLIENT, imdb_id, type, _resolve_tmdb_key(tmdb_key))
-        except IdResolveError:
-            _known = True     # TMDB didn't answer: the ordinary path decides
-        if _known is None:
-            _kitsu_match = await anime_resolve.anime_for_imdb(_HTTP_CLIENT, imdb_id, type)
-            if _kitsu_match is not None:
-                logger.info(f"{imdb_id} is unknown to TMDB — rendering as kitsu:{_kitsu_match}")
-                anime_namespace, anime_id, imdb_id = "kitsu", _kitsu_match, ""
+    if anime_namespace is None and not tmdb_id:
+        _kitsu_match = await _imdb_id_as_anime(imdb_id, type, tmdb_key)
+        if _kitsu_match is not None:
+            # Rendered the way a kitsu: id is, IMDb id and all.
+            anime_namespace, anime_id, imdb_id = "kitsu", _kitsu_match, ""
     is_anime = anime_namespace is not None
     anime_key = anime.namespaced_id(anime_namespace, anime_id) if is_anime else ""
     # True when Cinemeta (not TMDB) is the art and metadata spine for this
@@ -10567,6 +10588,7 @@ async def get_poster(
             "mdblist_key", "tmdb_key", "type",
             "quality", "season", "episode", "access_key", "debug", "nocache",
             "share",  # Configurator import marker; never a render setting.
+            _GONE_RETRY,  # The one retry after a deleted TMDB id; see below.
             # Replaced below by the canonical value, for the same reason the
             # ids above are normalised first: "poster", "portrait", a literal
             # "{shape}" and no shape at all are one render, and left raw they
@@ -13245,6 +13267,14 @@ async def get_poster(
             # catalog or our id map still points at (see mark_tmdb_id_gone).
             # Marked, the next request goes by the IMDb id instead.
             mark_tmdb_id_gone(tmdb_id, _endpoint, imdb_id or None)
+            if not _tmdb_id_sent and imdb_id and _GONE_RETRY not in request.query_params:
+                # Our id map named it, and marking it cleared that row: the
+                # same request now resolves the IMDb id afresh (another TMDB
+                # entry, Cinemeta or the anime fallback), so the client is
+                # sent back once rather than shown a 404 for a title that
+                # renders.  The marker keeps it to once.
+                return RedirectResponse(
+                    str(request.url.include_query_params(**{_GONE_RETRY: "1"})), status_code=307)
             raise HTTPException(status_code=404, detail=f"TMDB {_endpoint}/{tmdb_id} no longer exists")
         if status == 404:
             # Metahub art the probe vouched for has gone: forget the probe so

@@ -308,10 +308,12 @@ def _metacritic_must_see(data: dict) -> bool:
     return False
 
 
-def _parse_mdblist_title(data: dict, media_id: str, media_type: str, genre: str):
+def _parse_mdblist_title(data: dict, media_id: str, media_type: str, genre: str,
+                         bulk: bool = False):
     """One MDBList title record as ``(ratings_dict, genre, release_date,
     keywords, age_rating)``.  The single and the bulk call share it; the bulk
-    record has no ``keywords`` and no ``released_digital``."""
+    record (*bulk*) has no ``keywords`` and no ``released_digital``, and its
+    Letterboxd value is out of 10."""
     release_date = data.get("released")
     keywords: list[dict] = list(data.get("keywords") or [])
     # Metacritic Must-See is read off the score rather than the keyword, which
@@ -345,11 +347,15 @@ def _parse_mdblist_title(data: dict, media_id: str, media_type: str, genre: str)
             )
             continue
 
-        if source == "letterboxd" and isinstance(r.get("score"), (int, float)):
+        if source == "letterboxd":
             # The bulk answer gives Letterboxd's average out of 10 (8.0 where
             # the single call says 4.0); the score, out of 100, is the same in
-            # both, so the stored value is that score back out of 5.
-            value = round(r["score"] / 20, 2)
+            # both, so the stored value is that score back out of 5, or the
+            # bulk value halved when it has none.
+            if isinstance(r.get("score"), (int, float)):
+                value = round(r["score"] / 20, 2)
+            elif bulk:
+                value = round(value / 2, 2)
 
         ratings_dict[source] = value
 
@@ -572,7 +578,7 @@ async def fetch_ratings_bulk(
         genre = genre_label(genre_ids.get(media_id) or [], GENRE_PRIORITY)
         if media_id in records:
             record, answered_as = records[media_id]
-            out[media_id] = _parse_mdblist_title(record, media_id, answered_as, genre)
+            out[media_id] = _parse_mdblist_title(record, media_id, answered_as, genre, bulk=True)
         elif media_id in unanswered:
             out[media_id] = failure
         else:

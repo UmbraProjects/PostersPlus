@@ -575,12 +575,18 @@ def _clear_bulk_letterboxd_rows(conn: sqlite3.Connection) -> None:
         (_BULK_SHIPPED_AT,),
     )]
     conn.executemany("DELETE FROM rating_cache WHERE imdb_id = ?", [(i,) for i in ids])
-    # A poster key holds the IMDb id as one of its segments, first or after an
-    # anime id ("anilist:101922:tt9335498:…"); a TMDB-routed row ("tmdb:123")
-    # is the key's first two.
+    # A poster key starts with the IMDb id, or with an anime or TMDB id and
+    # holds the IMDb id later ("anilist:101922:tt9335498:…"); a TMDB-routed
+    # row ("tmdb:123") is the key's first two segments.  Ranges on the key's
+    # index: the IMDb-first keys by their prefix, and only the rest read.
+    conn.executemany(
+        "DELETE FROM final_poster_cache WHERE cache_key >= ? AND cache_key < ?",
+        [(f"{i}:", f"{i};") for i in ids if i.startswith("tt")],
+    )
     wanted = set(ids)
     stale = [
-        (key,) for (key,) in conn.execute("SELECT cache_key FROM final_poster_cache")
+        (key,) for (key,) in conn.execute(
+            "SELECT cache_key FROM final_poster_cache WHERE cache_key < 'tt' OR cache_key >= 'tu'")
         if wanted.intersection(key.split(":")) or ":".join(key.split(":", 2)[:2]) in wanted
     ]
     conn.executemany("DELETE FROM final_poster_cache WHERE cache_key = ?", stale)
