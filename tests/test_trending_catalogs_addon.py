@@ -166,10 +166,27 @@ class CatalogTests(_AddonTest):
         self._store_with_details("anime", ["anilist:5", "anilist:9"], {
             "anilist:5": {"name": "Five", "poster": "https://img.anili.st/5.jpg"},
         }, "anilist")
-        resp = self.client.get("/trending/sekrit/catalog/series/pp.trending.anime.json")
+        with mock.patch.object(main.anime_ids, "kitsu_for_anilist", lambda a: None):
+            resp = self.client.get("/trending/sekrit/catalog/series/pp.trending.anime.json")
         metas = resp.json()["metas"]
         self.assertEqual([m["id"] for m in metas], ["anilist:5", "anilist:9"])
         self.assertEqual(metas[0]["poster"], "https://img.anili.st/5.jpg")
+
+    def test_anime_catalog_hands_out_the_mapped_kitsu_id(self):
+        # Stream addons and Nuvio's watch history know Kitsu ids, not
+        # AniList's; an entry the mapping has no Kitsu id for stays AniList.
+        self._store_with_details("anime", ["anilist:5", "anilist:9"], {}, "anilist")
+        with mock.patch.object(main.anime_ids, "kitsu_for_anilist", lambda a: {5: 49001}.get(a)):
+            resp = self.client.get("/trending/sekrit/catalog/series/pp.trending.anime.json")
+        self.assertEqual([m["id"] for m in resp.json()["metas"]], ["kitsu:49001", "anilist:9"])
+
+    def test_anime_catalog_keeps_ids_unique_and_survives_a_bad_id(self):
+        # Two entries on one Kitsu entry: the later keeps its AniList id, so
+        # item N still lines up with rank N.  A malformed id is passed through.
+        self._store_with_details("anime", ["anilist:5", "anilist:6", "anilist:x"], {}, "anilist")
+        with mock.patch.object(main.anime_ids, "kitsu_for_anilist", lambda a: {5: 49001, 6: 49001}.get(a)):
+            resp = self.client.get("/trending/sekrit/catalog/series/pp.trending.anime.json")
+        self.assertEqual([m["id"] for m in resp.json()["metas"]], ["kitsu:49001", "anilist:6", "anilist:x"])
 
     def test_unknown_catalog_and_wrong_type_are_not_found(self):
         self.assertEqual(self.client.get("/trending/sekrit/catalog/movie/pp.trending.series.json").status_code, 404)

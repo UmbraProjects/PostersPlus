@@ -8017,7 +8017,12 @@ async def _trending_catalog_meta(
     landscape: bool = False,
 ) -> dict:
     """One catalog item.  An IMDb id where we have one, since every client and
-    metadata addon understands it; otherwise the namespaced TMDB or AniList id.
+    metadata addon understands it; otherwise the namespaced TMDB id.  An
+    AniList row is its Kitsu entry ("kitsu:<id>"), as AIOMetadata's own anime
+    catalogs hand out: stream addons and Nuvio's watch history know Kitsu ids
+    and not AniList's, and a film's id is the one streams are asked for.  Each
+    season keeps its own entry, which an IMDb id would fold into the show.
+    "anilist:<id>" stays where the mapping has no Kitsu id.
 
     *poster_cfg* is (base, settings, access key) when the addon URL carried
     poster settings: the item's poster, and its landscape poster, are then
@@ -8056,7 +8061,10 @@ async def _trending_catalog_meta(
                 logger.warning(f"Trending catalog: no TMDB details for {endpoint} {entry_id}: {exc}")
     imdb_id = None
     if by_anilist:
-        meta_id = entry_id
+        anilist_id = entry_id.split(":", 1)[1]
+        kitsu_id = (anime_ids.kitsu_for_anilist(int(anilist_id))
+                    if anilist_id.isascii() and anilist_id.isdigit() else None)
+        meta_id = f"kitsu:{kitsu_id}" if kitsu_id else entry_id
     else:
         imdb_id = detail.get("imdb_id")
         if not imdb_id and _cfg.SERVER_TMDB_KEY:
@@ -8150,6 +8158,14 @@ async def _trending_catalog(
                                version, landscape=landscape)
         for entry_id in ordered
     ))
+    # Two AniList entries can map to one Kitsu entry; a client keys a row's
+    # items by id, so the later one keeps its AniList id rather than being
+    # dropped, which would put item N out of step with rank N.
+    seen: set[str] = set()
+    for entry_id, meta in zip(ordered, metas):
+        if meta["id"] in seen and entry_id.startswith("anilist:"):
+            meta["id"] = entry_id
+        seen.add(meta["id"])
     # Cached no longer than the snapshot, like the posters that print its ranks,
     # and not long either way: a list can be rebuilt before it expires (an
     # anime list or the id mapping moving a title onto it), and a client
