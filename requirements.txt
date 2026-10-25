@@ -20,7 +20,7 @@ opencv-python-headless>=4.8,<5
 onnxruntime>=1.17,<2
 rapidocr>=3.8,<4
 # Bidi reordering for right-to-left labels (Hebrew); Pillow here has no libraqm.
-python-bidi>=0.6,<1
+python-bidi>=0.6.12,<1
 # Preparing fonts the operator uploads as label fonts (custom_fonts, fontprep):
 # CFF outlines to TrueType, the ★ added.  Imported only on upload.
 fonttools>=4.50,<5
