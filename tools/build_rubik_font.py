@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build fonts/Rubik-Bold.ttf: Rubik Bold with Inter Bold's ★ added.
 
-    docker run --rm -v "$PWD":/app -w /app python:3.11-slim \
+    docker run --rm -v "$PWD":/app -w /app python:3.14-slim \
         sh -c "pip install -q fonttools && python3 tools/build_rubik_font.py"
 
 Rubik is the label font for languages Inter has no glyphs for (Hebrew), and

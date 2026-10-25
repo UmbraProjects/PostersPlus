@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Python 3.14 and Pillow 13
+
+- The image runs Python 3.14 (was 3.11) and Pillow 13 (was 11.3), which fixes
+  Pillow's MIC frame-count loop and unbounded PDF recursion (CVE-2026-112390,
+  CVE-2026-112391). Text measures about a pixel narrower under Pillow 13, so
+  info strips and labels can sit a pixel off from posters rendered before.
+- Dependabot now also watches the Python packages in `requirements.txt`.
+
 ### Landscape trending rows
 
 - The Trending Catalogs Addon can serve any of its catalogs in landscape.

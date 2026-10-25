@@ -1,4 +1,4 @@
-# Keeps the commit-pinned actions and the digest-pinned base image current.
+# Keeps the commit-pinned actions, the digest-pinned base image and the Python packages current.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -11,3 +11,11 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+  - package-ecosystem: pip
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    # requirements.txt pins each package below its next major; only security
+    # fixes and in-range releases are worth a PR.
+    open-pull-requests-limit: 5
