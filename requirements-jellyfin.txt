@@ -10,4 +10,4 @@
 # Jellyfin SDK required. httpx is already a core PostersPlus dependency;
 # listed here too so this file is sufficient on its own for a standalone
 # install of just the sync script.
-httpx>=0.25,<1.0
+httpx>=0.28.1,<1.0

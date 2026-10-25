@@ -5,7 +5,7 @@
 fastapi>=0.100,<1.0
 uvicorn>=0.20,<1.0
 Pillow>=13.0,<14
-httpx>=0.25,<1.0
+httpx>=0.28.1,<1.0
 numpy>=1.26,<3
 pycairo>=1.25,<2
 # Draws the diagonal sash at 1x with native anti-aliasing (CPU raster only).
