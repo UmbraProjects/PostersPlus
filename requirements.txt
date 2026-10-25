@@ -4,7 +4,7 @@
 # Pillow's Resampling.LANCZOS, the httpx 0.25 AsyncClient surface).
 fastapi>=0.100,<1.0
 uvicorn>=0.20,<1.0
-Pillow>=10.0,<12
+Pillow>=13.0,<14
 httpx>=0.25,<1.0
 numpy>=1.26,<3
 pycairo>=1.25,<2

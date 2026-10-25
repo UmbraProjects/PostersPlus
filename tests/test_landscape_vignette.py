@@ -363,8 +363,10 @@ class LandscapeLogoAndBadgeTests(unittest.TestCase):
         # The bar is drawn rather than typed, so only the bullet before the
         # year is text; it takes room between the year and the score.
         self.assertEqual(drawn("Drama", "2024", 87, sep="pip"), ["Drama", "  •  ", "2024", "87"])
-        bullet = landscape._draw_info_strip(Image.new("RGBA", (1000, 563)), "Drama", "2024", 87)
-        piped = landscape._draw_info_strip(Image.new("RGBA", (1000, 563)), "Drama", "2024", 87,
+        # At 720 tall: at 563 the bar (41.2px) and Pillow 13's bullet (42px)
+        # round to the same left edge, which says nothing about the bar.
+        bullet = landscape._draw_info_strip(Image.new("RGBA", (1280, 720)), "Drama", "2024", 87)
+        piped = landscape._draw_info_strip(Image.new("RGBA", (1280, 720)), "Drama", "2024", 87,
                                            rating_sep="pip")
         self.assertNotEqual(bullet[0], piped[0])
         # The field separator is its own: a bar between genre and year, and
