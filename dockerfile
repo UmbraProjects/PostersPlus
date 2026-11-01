@@ -4,7 +4,7 @@
 # ~200MB of build toolchain doesn't ship to users.
 # Pinned by digest (Dependabot keeps it current): a moved tag can't change
 # what the published image is built from.
-FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS builder
+FROM python:3.15-slim@sha256:94d3426f1def7db4a106a232ac121bfd975393e5dfd40a619b955fae45fe7913 AS builder
 WORKDIR /build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -18,7 +18,7 @@ RUN pip wheel --wheel-dir /wheels --no-cache-dir -r requirements.txt
 RUN find /wheels -type f -name 'opencv_python-*.whl' -delete
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
-FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
+FROM python:3.15-slim@sha256:94d3426f1def7db4a106a232ac121bfd975393e5dfd40a619b955fae45fe7913
 WORKDIR /app
 
 # libcairo2 (runtime only — no -dev headers needed) for pycairo;
