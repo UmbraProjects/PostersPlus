@@ -4312,6 +4312,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   </div>
                 </div>
               </div>
+              <div class="field">
+                <label class="field-label" data-tip="When something already sits where a group goes (the sash, the logo, the rating or another group): Move slides the group down (or up) to the next line with room; Hide keeps it on its own line and leaves out the badges that don't fit there — the whole group when none do. Set for each shape.">Overflow</label>
+                <select id="cfg-badge-overflow" onchange="build(); queuePreviewReload()">
+                  <option value="move">Move to next line</option>
+                  <option value="hide">Hide what doesn't fit</option>
+                </select>
+              </div>
               <div class="field" id="gb-logo-scale-field" style="display:none">
                 <label class="field-label" data-tip="Network and studio logos are sized to carry about the same weight whatever their shape: a long wordmark is drawn shorter, a compact emblem taller (up to a little over the row), and a solid logo smaller than a thin one. This multiplies that size, on both shapes; 1.00 is the standard size.">Network / Studio Logo Size</label>
                 <div class="range-row">
@@ -7942,6 +7949,8 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     if (Number.isFinite(_gbls) && Math.abs(_gbls - 1) > 1e-6) params.set('badge_logo_scale', _gbls.toFixed(2));
     if (pShared['cfg-badge-logo-style'] === 'frosted') params.set('badge_logo_style', 'frosted');
   }
+  if (_pGB && pShared['cfg-badge-overflow'] === 'hide') params.set('badge_overflow', 'hide');
+  if (_lGB && lShared['cfg-badge-overflow'] === 'hide') params.set('landscape_badge_overflow', 'hide');
   if (_lGB && _gbHas(lGroups, 'network', 'studio')) {
     const _gbls = Number(lShared['cfg-badge-logo-scale']);
     params.set('landscape_badge_logo_scale', (Number.isFinite(_gbls) ? _gbls : 1).toFixed(2));
@@ -9623,6 +9632,8 @@ const _SHARED_PARAM = {
   'cfg-badge-logo-style':       'badge_logo_style',
   'cfg-badge-cinema-style':     'badge_cinema_style',
   'cfg-badge-logo-scale':       'badge_logo_scale',
+  // New after the split: each shape's own from the start.
+  'cfg-badge-overflow':         'badge_overflow',
   'cfg-rating-badge-max':       'rating_badge_max',
   'cfg-rating-badge-scale':     'rating_badge_scale',
   'cfg-rating-badge-style':     'rating_badge_style',
@@ -9632,7 +9643,7 @@ const _SHARED_PARAM = {
   // control was portrait-only, so the plain name is the portrait sash's.
   'cfg-sash-text-color':        'sash_text_color',
 };
-const _SHARED_NO_FALLBACK = new Set(['badge_display_mode',
+const _SHARED_NO_FALLBACK = new Set(['badge_display_mode', 'badge_overflow',
   'top_gradient', 'top_gradient_opacity', 'top_gradient_height',
   'bottom_gradient', 'bottom_gradient_opacity', 'bottom_gradient_height',
   'top_vignette_sash_only', 'vignette_poster_color_top',
@@ -9664,7 +9675,7 @@ const _LANDSCAPE_SHARED_DEFAULTS = {
   'cfg-glow-alpha': '40', 'cfg-glow-color-mode': 'white', 'cfg-glow-color': '',
   'cfg-bar-style': 'frosted', 'cfg-bar-accent': 'silver', 'cfg-bar4-append': 'rating_year', 'tog-bar-score-10': false,
   'cfg-bar-height': '0.080', 'cfg-bar-font': '0.55', 'cfg-bar-frost': '0.85', 'cfg-bar-frost-sat': '1.20',
-  'tog-bar-frost-reference': false, 'cfg-sash-text-color': '',
+  'tog-bar-frost-reference': false, 'cfg-sash-text-color': '', 'cfg-badge-overflow': 'move',
 };
 const SHAPE_STASH_KEY = 'postersplus_shape_stash';
 let _shapeStash = { portrait: null, landscape: null };   // null = that shape's defaults
@@ -11397,6 +11408,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     _setEl('cfg-badge-cert-country', document.querySelector(`#cfg-badge-cert-country option[value="${_cc}"]`) ? _cc : 'US'); }
   _setEl('cfg-badge-quality-style', p.get('badge_quality_style') === 'frosted' ? 'frosted' : 'solid');
   _setEl('cfg-badge-logo-scale', p.get('badge_logo_scale') || '1.00');
+  _setEl('cfg-badge-overflow', p.get('badge_overflow') === 'hide' ? 'hide' : 'move');
   _setEl('cfg-badge-cert-style', p.get('badge_cert_style') === 'frosted' ? 'frosted' : 'solid');
   _setEl('cfg-badge-logo-style', p.get('badge_logo_style') === 'frosted' ? 'frosted' : 'solid');
   _setEl('cfg-badge-legacy-style', LEGACY_HEIGHTS[p.get('badge_legacy_style')] ? p.get('badge_legacy_style') : 'notch');

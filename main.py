@@ -2132,6 +2132,11 @@ class RequestConfig:
     # set by the group's row height and each logo's shape and ink — see
     # graphic_badges.logo_size.  One setting for both shapes.
     badge_logo_scale:         float = graphic_badges.LOGO_SCALE_DEFAULT
+    # What a graphic badge group does when its line is taken (the sash, a
+    # logo or another group there): "move" slides it on to the next line with
+    # room, "hide" keeps it on its own line and drops the badges that don't
+    # fit there — all of them when none do.  Kept per shape.
+    badge_overflow:           str  = "move"
     # Which old badge the "legacy" slot draws — graphic_badges.LEGACY_STYLES.
     # One setting for both shapes.
     badge_legacy_style:       str  = graphic_badges.DEFAULT_LEGACY_STYLE
@@ -2571,6 +2576,8 @@ _LANDSCAPE_OWN_PARAMS: tuple[str, ...] = (
     "bottom_gradient_height",
     "top_vignette_sash_only",
     "vignette_poster_color_top",
+    # The graphic badges' overflow, new with both shapes' own.
+    "badge_overflow",
     # The trending rank mark, landscape's own since it gained one: until then
     # landscape kept the "#N Today" label whatever trending_style a URL had.
     "trending_style",
@@ -3032,6 +3039,7 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "airing_dates": True, "rating
                               "badge_cert_style": graphic_badges.DEFAULT_CHIP_STYLE,
                               "badge_logo_style": graphic_badges.DEFAULT_CHIP_STYLE,
                               "badge_logo_scale": graphic_badges.LOGO_SCALE_DEFAULT,
+                              "badge_overflow": "move",
                               "badge_legacy_style": graphic_badges.DEFAULT_LEGACY_STYLE,
                               "badge_cert_country": certifications.DEFAULT_COUNTRY,
                               "landscape_poster_crop": False,
@@ -3469,6 +3477,8 @@ def build_request_config(params: dict) -> RequestConfig:
         if _chip_style:
             setattr(cfg, _name, _chip_style)
     cfg.badge_logo_scale = _f("badge_logo_scale", cfg.badge_logo_scale, *graphic_badges.LOGO_SCALE_RANGE)
+    if (params.get("badge_overflow") or "").strip().lower() == "hide":
+        cfg.badge_overflow = "hide"
     _legacy_style = graphic_badges.legacy_style(params.get("badge_legacy_style"))
     if _legacy_style:
         cfg.badge_legacy_style = _legacy_style
@@ -6195,7 +6205,7 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
         now = np.asarray(image)
         if group.anchor in graphic_badges.LOGO_ANCHORS:
             _draw_logo_group(image, now, before, items, group.anchor, logo_box,
-                             margin, clear, g_gap, g_unit)
+                             margin, clear, g_gap, g_unit, move=cfg.badge_overflow != "hide")
             continue
         half = max(im.height for _, im in items) / 2 + clear / 2
 
@@ -6233,6 +6243,8 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
         # another group stacked there) pushes a row a long way down, and a row
         # that runs out of room is dropped without a word.
         limit = (height - half - start) if top else (start - half)
+        if cfg.badge_overflow == "hide":
+            limit = 0.0   # its own line or nowhere: what doesn't fit is dropped
         step = max(2, g_unit // 3)
         offset = 0.0
         def fits(off: float) -> list:
@@ -6279,10 +6291,11 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
 
 def _draw_logo_group(image: Image.Image, now: np.ndarray, before: np.ndarray, items: list,
                      anchor: str, logo_box: tuple[int, int, int, int] | None,
-                     margin: int, clear: int, gap: int, unit_h: int) -> None:
+                     margin: int, clear: int, gap: int, unit_h: int, move: bool = True) -> None:
     """A group centred on the logo, just above or just below it.  Where that
     line is taken (the rating under the logo, say), it moves further away —
-    up for above, down for below — and drops badges that still don't fit.
+    up for above, down for below — and drops badges that still don't fit;
+    with ``move`` off (badge_overflow=hide) it drops them on its own line.
     With no logo drawn (original art carries its own title) it sits at the
     bottom, centred."""
     width, height = image.size
@@ -6310,6 +6323,8 @@ def _draw_logo_group(image: Image.Image, now: np.ndarray, before: np.ndarray, it
             row_w = graphic_badges.row_width(fitted, gap)
             graphic_badges.draw_row(image, fitted, gap=gap, center_y=cy,
                                     left_x=int(round(cx - row_w / 2)))
+            return
+        if not move:
             return
         cy += direction * step
 

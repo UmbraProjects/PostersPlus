@@ -1378,7 +1378,7 @@ def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: li
         now = np.asarray(image)
         if group.anchor in graphic_badges.LOGO_ANCHORS:
             _draw_logo_group(image, now, before, items, group.anchor, logo_box,
-                             left_margin, clear, gap, unit)
+                             left_margin, clear, gap, unit, move=cfg.badge_overflow != "hide")
             continue
         if group.anchor == "chip":
             top, right = True, badge_position != "top_right"
@@ -1403,6 +1403,8 @@ def _draw_graphic_badges(image: Image.Image, before: np.ndarray, cfg, tokens: li
         # with the sash and another row under it can take half the height.
         step, offset = max(2, unit // 3), 0.0
         limit = (height - half - start) if top else (start - half)
+        if cfg.badge_overflow == "hide":
+            limit = 0.0   # its own line or nowhere (badge_overflow)
         # The first line that takes the whole row; a row loses badges only
         # when no line has room for all of them (main._draw_graphic_badges).
         best: tuple[float, list] | None = None

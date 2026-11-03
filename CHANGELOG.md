@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Graphic badges: hide instead of move
+
+- New **Overflow** setting under Graphic Badges (`badge_overflow=move|hide`,
+  short `bof`; landscape's own `landscape_badge_overflow` / `_bof`). Move
+  (default) is the old behaviour: a group whose line is taken by the sash,
+  logo, rating or another group slides on to the next line with room. Hide
+  keeps it on its own line and drops the badges that don't fit there, the
+  whole group when none do.
+
 ### Separate MDBList key for the watchlist
 
 - New `MDBLIST_WATCHLIST_API_KEY` (dashboard: Watchlist group, shown when
