@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Separate MDBList key for the watchlist
+
+- New `MDBLIST_WATCHLIST_API_KEY` (dashboard: Watchlist group, shown when
+  the source is `mdblist`). With `WATCHLIST_SOURCE=mdblist` it reads that
+  key's account watchlist instead of `MDBLIST_API_KEY`'s, so a personal
+  account's watchlist can be used without that key also spending its quota on
+  ratings and cache warming. Blank keeps the old behaviour.
+
 ### Python 3.14 and Pillow 13
 
 - The image runs Python 3.14 (was 3.11) and Pillow 13 (was 11.3), which fixes

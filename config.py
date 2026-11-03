@@ -465,7 +465,8 @@ TRENDING_SOURCE_MAX_ITEMS    = max(1, int(_env('TRENDING_SOURCE_MAX_ITEMS', "500
 # it per user and multiply upstream quota.  One instance, one watchlist.
 #
 # WATCHLIST_SOURCE selects where the list comes from:
-#   mdblist   the watchlist of the account behind MDBLIST_API_KEY.  MDBList
+#   mdblist   the watchlist of the account behind MDBLIST_WATCHLIST_API_KEY,
+#             or MDBLIST_API_KEY when that is blank.  MDBList
 #             mirrors a linked Trakt watchlist, so this is also the free route
 #             for Trakt users (Trakt's own API needs a VIP-gated app key).
 #   simkl     the "Plan to Watch" list of a SIMKL account.  Needs a free SIMKL
@@ -478,7 +479,7 @@ TRENDING_SOURCE_MAX_ITEMS    = max(1, int(_env('TRENDING_SOURCE_MAX_ITEMS', "500
 # Unset (the default) disables the feature entirely: no fetch, no sash.
 # -----------------------------------------------------------------------
 APP_VERSION                  = "1.2.0"
-WATCHLIST_SOURCE             = _env('WATCHLIST_SOURCE', "", group='Watchlist', kind='text', label='Watchlist source', help="Self-hosted only: marks every title in one user's watchlist with a Watchlist sash. mdblist (the watchlist of the MDBList key's account, also the free route for Trakt, which MDBList mirrors), simkl, trakt, pmdb (a PublicMetaDB watchlist), or any MDBList list page URL. Blank disables the feature.", placeholder='mdblist, simkl, trakt, pmdb or a list URL').strip()
+WATCHLIST_SOURCE             = _env('WATCHLIST_SOURCE', "", group='Watchlist', kind='text', label='Watchlist source', help="Self-hosted only: marks every title in one user's watchlist with a Watchlist sash. mdblist (the watchlist of the MDBList key's account, or of MDBLIST_WATCHLIST_API_KEY's when set; also the free route for Trakt, which MDBList mirrors), simkl, trakt, pmdb (a PublicMetaDB watchlist), or any MDBList list page URL. Blank disables the feature.", placeholder='mdblist, simkl, trakt, pmdb or a list URL').strip()
 # How often the source is re-checked.  Every cycle is one cheap call (MDBList:
 # one page per 500 items; SIMKL: /sync/activities, the list itself only when
 # it changed; Trakt: two list calls; PMDB: the list lookup plus one page per
@@ -491,6 +492,10 @@ WATCHLIST_SIMKL_STATUSES     = [
     for s in _env('WATCHLIST_SIMKL_STATUSES', "plantowatch", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'simkl'), kind='list', label='SIMKL statuses', help='Which SIMKL lists count as the watchlist: plantowatch, watching, hold (comma-separated).', advanced=True, placeholder='plantowatch').split(",")
     if s.strip()
 ]
+# A key used only for WATCHLIST_SOURCE=mdblist, so the watchlist can come from
+# a personal MDBList account while the server key (ratings, warming) belongs
+# to another.  Blank falls back to MDBLIST_API_KEY.
+MDBLIST_WATCHLIST_KEY        = _env('MDBLIST_WATCHLIST_API_KEY', "", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'mdblist'), kind='secret', label='MDBList watchlist key', help="Reads the watchlist of this key's MDBList account instead of MDBLIST_API_KEY's, so a personal account's watchlist can be used without that key also spending its quota on ratings and cache warming. Blank uses MDBLIST_API_KEY.").strip()
 SIMKL_CLIENT_ID              = _env('SIMKL_CLIENT_ID', "", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'simkl'), kind='secret', label='SIMKL client id', help='From a free app at simkl.com/settings/developer. Register it as "TV, devices & command line": PostersPlus links by code (the device/PIN flow), so that type needs no secret and no redirect URL. The account is then linked once from the admin dashboard\'s Watchlist group.').strip()
 # Only for a SIMKL app registered as "Server apps & services"; the other two
 # app types mint no secret and need none.

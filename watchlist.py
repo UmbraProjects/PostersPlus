@@ -11,7 +11,8 @@ WATCHLIST_SOURCE is simply unset and none of this runs.
 
 Sources (WATCHLIST_SOURCE):
 
-  mdblist   GET api.mdblist.com/watchlist/items with the server's MDBList key.
+  mdblist   GET api.mdblist.com/watchlist/items with MDBLIST_WATCHLIST_API_KEY,
+            or the server's MDBList key when that is blank.
             MDBList mirrors a linked Trakt watchlist, which makes this the free
             route for Trakt users — Trakt's own API needs an app key that is
             VIP-gated as of August 2026.
@@ -459,9 +460,16 @@ def simkl_activity_fingerprint(activities, statuses: Iterable[str]) -> str:
 # ---------------------------------------------------------------------------
 
 async def _fetch_mdblist(client: httpx.AsyncClient) -> list[WatchlistEntry]:
-    key = _cfg.SERVER_MDBLIST_KEY
+    # A dedicated key keeps a personal account's watchlist apart from the
+    # key that ratings and cache warming spend.
+    key = _cfg.MDBLIST_WATCHLIST_KEY or _cfg.SERVER_MDBLIST_KEY
     if not key:
-        raise RuntimeError("WATCHLIST_SOURCE=mdblist needs MDBLIST_API_KEY on the server")
+        raise RuntimeError(
+            "WATCHLIST_SOURCE=mdblist needs MDBLIST_WATCHLIST_API_KEY or MDBLIST_API_KEY on the server"
+        )
+    # Only a server key's quota feeds the warmer and dashboard; a watchlist-only
+    # key's would sit there unread.
+    record_quota = key in _cfg.SERVER_MDBLIST_KEYS
     # Recorded so the quota-aware cache warmer sees these calls too.
     from ratings import _record_mdblist_quota
 
@@ -474,7 +482,8 @@ async def _fetch_mdblist(client: httpx.AsyncClient) -> list[WatchlistEntry]:
             params={"apikey": key, "limit": _MDBLIST_PAGE_SIZE, "offset": offset},
             timeout=20.0,
         )
-        _record_mdblist_quota(key, resp.headers)
+        if record_quota:
+            _record_mdblist_quota(key, resp.headers)
         resp.raise_for_status()
         payload = resp.json()
         entries.extend(parse_mdblist_watchlist(payload))

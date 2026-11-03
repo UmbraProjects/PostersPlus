@@ -211,6 +211,27 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(watchlist.is_listed("tt0000002", None, "series"))
         self.assertEqual(json.loads(self._state["watchlist_snapshot"])["count"], 2)
 
+    async def test_mdblist_prefers_the_watchlist_key_and_leaves_server_quota_alone(self):
+        keys = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            keys.append(request.url.params.get("apikey"))
+            body = {"movies": [{"id": 1, "imdb_id": "tt0000001", "mediatype": "movie"}],
+                    "shows": [], "pagination": {"has_more": False}}
+            return httpx.Response(200, json=body, headers={"x-ratelimit-limit": "1000", "x-ratelimit-remaining": "900"})
+
+        from ratings import MDBLIST_QUOTA
+        with mock.patch.object(_cfg, "WATCHLIST_SOURCE", "mdblist"), \
+             mock.patch.object(_cfg, "SERVER_MDBLIST_KEY", "server"), \
+             mock.patch.object(_cfg, "SERVER_MDBLIST_KEYS", ["server"]), \
+             mock.patch.object(_cfg, "MDBLIST_WATCHLIST_KEY", "personal"), \
+             mock.patch.dict(MDBLIST_QUOTA, clear=True):
+            async with _fake_client(handler) as client:
+                await watchlist.refresh(client)
+            self.assertNotIn("personal", MDBLIST_QUOTA)
+        self.assertEqual(keys, ["personal"])
+        self.assertTrue(watchlist.is_listed("tt0000001", None, "movie"))
+
     async def test_a_failed_fetch_keeps_the_previous_snapshot(self):
         watchlist._snapshot = Snapshot.from_entries([WatchlistEntry("tt0000001", "1", "movie")], 1.0)
 
