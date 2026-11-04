@@ -12924,6 +12924,7 @@ async def get_poster(
         # ------------------------------------------------------------------
         _suppress_overlay = False
         _detection_timed_out = False
+        _detection_unavailable = False
         if _scan_selected_image:
             _suppress_overlay = _detection_result
             if _suppress_overlay is None and _detection_task is not None:
@@ -12956,12 +12957,17 @@ async def get_poster(
                     f"(votes={_vc})"
                 )
             else:
-                from text_detect import text_detection_status
+                from text_detect import text_detection_available, text_detection_status
                 logger.warning(
                     f"Burned-in text scan unavailable for {tmdb_id}; "
                     f"result was not cached ({text_detection_status()})"
                 )
                 _suppress_overlay = False
+                # The overlay went on unvetted, so don't keep the render past
+                # the provisional TTL: a scan failing on a runtime that is
+                # installed is a fault to recover from, not the poster's answer.
+                # An image built without RapidOCR stays as it always was.
+                _detection_unavailable = text_detection_available()
 
         # Fake-textless alternate poster: large textless pools keep a runner-up
         # (see fetch_poster_metadata), tried once before the backdrop — real
@@ -13177,6 +13183,7 @@ async def get_poster(
             or _rating_backoff_active or _anime_art_missing or _cinemeta_missing
             or _rating_badges_missing or _anime_scores_pending
             or _imdb_link_unverified or _detection_timed_out
+            or _detection_unavailable
             or bool(tmdb_data.get("genres_unsettled"))
             or _is_blockbuster is None
         )

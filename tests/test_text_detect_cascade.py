@@ -42,10 +42,22 @@ class _FakeOCR:
         self.text_det = det
 
 
-def _patch_detector(det):
+class _LazyFakeOCR:
+    """RapidOCR 3.10+: no detector until something asks for it."""
+
+    def __init__(self, det):
+        self.text_det = None
+        self._det = det
+
+    def _load_det_model(self):
+        self.text_det = self._det
+        return self.text_det
+
+
+def _patch_detector(det, ocr_cls=_FakeOCR):
     @contextmanager
     def borrow():
-        yield _FakeOCR(det)
+        yield ocr_cls(det)
     return mock.patch.multiple(
         text_detect,
         _borrow_ocr=borrow,
@@ -86,6 +98,14 @@ class DirectDetectorTests(unittest.TestCase):
         self.assertEqual(det.inputs[0].shape[2:], (480, 320))
         np.testing.assert_allclose(boxes[0][0], [50, 375], atol=1)
         np.testing.assert_allclose(boxes[0][2], [450, 450], atol=1)
+
+    def test_lazily_loaded_detector_is_loaded_on_use(self):
+        det = _FakeDet([_box(0.1, 0.1, 0.5, 0.2)], [0.8])
+        with _patch_detector(det, _LazyFakeOCR):
+            boxes, scores, _w, _h = text_detect._detect(
+                Image.new("RGB", (500, 750)))
+        self.assertEqual(len(boxes), 1)
+        self.assertEqual(scores, [0.8])
 
     def test_no_boxes(self):
         det = _FakeDet([], [])
