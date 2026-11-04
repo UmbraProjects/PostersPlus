@@ -16,7 +16,7 @@ skia-python>=144.0,<145
 cairosvg>=2.7,<3
 # Face detection and PP-OCRv5 Mobile burned-in-text detection.
 # RapidOCR declares GUI OpenCV; Docker removes that wheel and keeps headless.
-opencv-python-headless>=4.8,<5
+opencv-python-headless>=4.8,<6
 onnxruntime>=1.17,<2
 rapidocr>=3.8,<4
 # Bidi reordering for right-to-left labels (Hebrew); Pillow here has no libraqm.
