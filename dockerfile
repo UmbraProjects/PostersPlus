@@ -98,6 +98,12 @@ RUN python3 -m compileall -q -l /app \
 # renders run ~10-20% slower from page-faulting fresh mappings.
 ENV MALLOC_MMAP_THRESHOLD_=4194304
 
+# onnxruntime (pulled in by RapidOCR) ships a 1DS telemetry client on Linux
+# that posts a persistent device id, hardware details and loaded-model info to
+# mobile.events.data.microsoft.com.  Off by default here; text_detect.py sets
+# the same default for runs outside this image.
+ENV ORT_DISABLE_TELEMETRY=1
+
 # Run as root so entrypoint.sh can fix cache volume permissions at startup,
 # then it drops to appuser via gosu before exec-ing uvicorn.
 #

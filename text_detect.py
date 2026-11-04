@@ -25,6 +25,11 @@ import config as _cfg
 
 logger = logging.getLogger(__name__)
 
+# Opt out of onnxruntime's Microsoft telemetry (device id, hardware, model
+# details) before RapidOCR imports it.  setdefault so an operator can still
+# set ORT_DISABLE_TELEMETRY=0 explicitly.
+os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
+
 try:
     from rapidocr import RapidOCR
     _HAS_RAPIDOCR = True
