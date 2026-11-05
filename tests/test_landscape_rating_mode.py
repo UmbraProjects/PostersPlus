@@ -60,9 +60,26 @@ class RatingModeTests(unittest.TestCase):
         band = slice(440, 540)
         self.assertEqual(np.abs(line[band] - bar[band]).max(), 0)
 
-    def test_rating_bar_hidden_with_the_rating(self):
-        img = _render(landscape_rating_mode="rating_bar", hide_rating=True)
-        self.assertLess(img[-2].sum(axis=1).max(), 100)
+    def test_hide_rating_keeps_the_rating_bar(self):
+        # Only the line's printed score goes; Info Line is how to drop the bar.
+        img = _render(landscape_rating_mode="rating_bar", hide_rating=True, score_glow_threshold=101)
+        self.assertGreater(img[-2].sum(axis=1).max(), 100)
+        line = _render(hide_rating=True)
+        band = slice(440, 540)
+        self.assertEqual(np.abs(line[band] - img[band]).max(), 0)
+
+    def test_withheld_score_drops_the_rating_bar(self):
+        # hide_unreleased_rating renders a Rating Bar as the Info Line.
+        import inspect
+        src = inspect.getsource(main)
+        self.assertIn('"line" if rcfg.landscape_rating_mode == "rating_bar"', src)
+
+    def test_hidden_rating_bar_composites_re_render(self):
+        cfg = main.build_request_config({"shape": "landscape", "landscape_rating_mode": "rating_bar",
+                                         "landscape_hide_rating": "true"})
+        self.assertIn(34, [r.rev for r in main._revisions_applying(cfg)])
+        self.assertNotIn(34, [r.rev for r in main._revisions_applying(
+            main.build_request_config({"shape": "landscape", "landscape_rating_mode": "rating_bar"}))])
 
     def test_bar_takes_the_line_and_raises_the_logo(self):
         logo = Image.new("RGBA", (100, 100), (255, 255, 255, 255))

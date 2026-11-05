@@ -3222,7 +3222,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </label>
               </div>
               <div class="toggle-row" id="hide-rating-row">
-                <span class="toggle-label" data-tip="Removes the score from whichever display mode is drawing it — the number, the Rating Bar, the colour a Minimalist separator carries, and the Bar mode rating fill, which falls back to its plain body. Controls that only style the score hide with it.">Hide Rating</span>
+                <span class="toggle-label" data-tip="Removes the score from whichever display mode is drawing it — the number, the Rating Bar, the colour a Minimalist separator carries, and the Bar mode rating fill, which falls back to its plain body. Controls that only style the score hide with it. On landscape's Rating Bar only the printed score goes and the bar stays, leaving the line room for the rest; pick the Info Line display mode to drop the bar.">Hide Rating</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-hide-rating" onchange="updateRatingFields(); build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
@@ -3648,6 +3648,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
+              <div class="toggle-row portrait-only" id="sash-greyscale-logo-row">
+                <span class="toggle-label" data-tip="Greys the title logo too whenever the poster is greyscaled (Greyscale Poster if Unavailable, or Greyscale if No Quality). Off: the logo keeps its colour over the grey art.">Greyscale Logo Too</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-greyscale-logo" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
               <div class="toggle-row" id="sash-release-cinema-only-row">
                 <span class="toggle-label" data-tip="Only show the release status sash for titles in cinemas or in production. Leaving it off also shows Streaming / Physical / Airing / Ended / Cancelled; enabling it suppresses those whatever their sash order.">Release Status: Unavailable Only</span>
                 <label class="toggle-switch">
@@ -3875,6 +3882,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <span class="toggle-label" data-tip="Greyscales the art while a film is still in cinemas or not out yet, so it reads as not available to watch at home. Unlike on a portrait it doesn't need the Release Status sash. Consider Available if Source Found (Extras tab) applies here too.">Greyscale Poster if Unavailable</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-landscape-greyscale" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <span class="toggle-label" data-tip="Greys the title logo too whenever the art is greyscaled. Off: the logo keeps its colour over the grey art.">Greyscale Logo Too</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-landscape-greyscale-logo" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
@@ -7655,6 +7669,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     params.set('landscape_frost_reference', lShared['tog-bar-frost-reference'] === true ? 'true' : 'false');
     // Portrait settings brought over; each left out at its default.
     if (c('tog-landscape-greyscale')) params.set('landscape_greyscale', 'true');
+    if (c('tog-landscape-greyscale-logo')) params.set('landscape_greyscale_logo', 'true');
     const _lbStyle = vEl('cfg-landscape-badge-style') || 'glass';
     if (_lbStyle !== 'glass') {
       params.set('landscape_badge_style', _lbStyle);
@@ -7824,6 +7839,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     params.set('cinema_greyscale', c('tog-cinema-greyscale') ? 'true' : 'false');
     params.set('cinema_greyscale_skip_if_available', c('tog-cinema-greyscale-skip') ? 'true' : 'false');
   }
+  if (c('tog-greyscale-logo')) params.set('greyscale_logo', 'true');
   params.set('release_status_cinema_only', c('tog-release-cinema-only') ? 'true' : 'false');
   params.set('release_status_dates', c('tog-release-dates') ? 'true' : 'false');
   // On by default, so only the off state is written.
@@ -9507,9 +9523,15 @@ function _updateBarRatingRows() {
 // Whether the Colour Palette colours anything: the Rating Bar's fill, or
 // Minimalist's genre | year separator, which only its Year layout draws in
 // the score's colour, and only with both of them there.
+// Landscape's Rating Bar keeps its bar when the rating is hidden (only the
+// line's printed score goes), so its glow and palette still apply.
+function _scoreBarKept() {
+  return c('tog-landscape') && vEl('cfg-landscape-rating-mode') === 'rating_bar';
+}
+
 function _paletteUsed() {
   const mode = _effRatingMode();
-  if (c('tog-hide-rating')) return false;
+  if (c('tog-hide-rating') && !_scoreBarKept()) return false;
   if (mode === 1) return true;
   return mode === 3 && (parseInt(vEl('cfg-min-append') || '0') === 0)
     && !c('tog-hide-genre') && !c('tog-hide-year');
@@ -10254,7 +10276,7 @@ function updateRatingFields() {
   document.getElementById('rating-mode2-fields').style.display      = mode === 2 ? '' : 'none';
   document.getElementById('rating-mode3-fields').style.display      = mode === 3 ? '' : 'none';
   document.getElementById('rating-mode4-fields').style.display      = mode === 4 ? '' : 'none';
-  document.getElementById('rating-glow-fields').style.display       = (mode === 1 && !hideRating) ? '' : 'none';
+  document.getElementById('rating-glow-fields').style.display       = (mode === 1 && (!hideRating || _scoreBarKept())) ? '' : 'none';
   document.getElementById('rating-alt-colors-toggle').style.display = _paletteUsed() ? '' : 'none';
   document.getElementById('numeric-score10-row').style.display      = (mode === 2 && !hideRating) ? '' : 'none';
   const labelParts = _ratingLabelParts();
@@ -10748,7 +10770,7 @@ const _LANDSCAPE_ONLY_CONTROLS = ['cfg-landscape-art', ...LANDSCAPE_SOURCE_IDS, 
                                   'cfg-landscape-color-link', 'tog-landscape-score-10',
                                   'cfg-landscape-sep', 'cfg-landscape-rating-sep', 'tog-landscape-info-center', 'cfg-landscape-logo-pos', 'cfg-landscape-logo-row',
                                   'cfg-landscape-info-row', 'cfg-landscape-info-col',
-                                  'tog-landscape-greyscale',
+                                  'tog-landscape-greyscale', 'tog-landscape-greyscale-logo',
                                   'cfg-landscape-badge-style', 'cfg-landscape-badge-text-color',
                                   'cfg-landscape-badge-shape', 'cfg-landscape-badge-case',
                                   'tog-landscape-winner-star', 'cfg-landscape-logo-scale',
@@ -11207,6 +11229,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
       _setEl('cfg-landscape-info-col', _okInfo ? _lic : 'right'); }
     _setEl('tog-landscape-poster-crop', p.get('landscape_poster_crop') || 'false');
     _setEl('tog-landscape-greyscale',   p.get('landscape_greyscale') || 'false');
+    _setEl('tog-landscape-greyscale-logo', p.get('landscape_greyscale_logo') || 'false');
     _setEl('cfg-landscape-badge-style', ['black', 'silver', 'gold'].includes(p.get('landscape_badge_style'))
       ? p.get('landscape_badge_style') : 'glass');
     { const _lbtc = (p.get('landscape_badge_text_color') || '').replace('#', '').toUpperCase();
@@ -11249,6 +11272,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('sash_winner_star')) _setEl('tog-sash-winner-star',  p.get('sash_winner_star'));
   if (p.has('cinema_greyscale')) _setEl('tog-cinema-greyscale', p.get('cinema_greyscale'));
   if (p.has('cinema_greyscale_skip_if_available')) _setEl('tog-cinema-greyscale-skip', p.get('cinema_greyscale_skip_if_available'));
+  _setEl('tog-greyscale-logo', p.get('greyscale_logo') || 'false');
   if (p.has('release_status_cinema_only')) _setEl('tog-release-cinema-only', p.get('release_status_cinema_only'));
   if (p.has('release_status_dates')) _setEl('tog-release-dates', p.get('release_status_dates'));
   _setEl('tog-airing-dates', !p.has('airing_dates') || p.get('airing_dates') !== 'false');

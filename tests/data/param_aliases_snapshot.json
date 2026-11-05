@@ -246,5 +246,7 @@
  "landscape_rating_badge_scale": "_rbs",
  "landscape_rating_badge_style": "_rbst",
  "landscape_sash_priority": "_sp",
- "landscape_sash_text_color": "_stc"
+ "landscape_sash_text_color": "_stc",
+ "greyscale_logo": "gl",
+ "landscape_greyscale_logo": "_gl"
 }

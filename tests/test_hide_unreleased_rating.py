@@ -73,8 +73,8 @@ class HideUnreleasedRatingPipelineTests(unittest.TestCase):
                         self.src.index("if not _status_sash:"))
 
     def test_render_uses_hide_rating_and_the_composite_expires_with_the_status(self):
-        self.assertIn("dataclasses.replace(rcfg, hide_rating=True) if _hide_unreleased else rcfg",
-                      self.src)
+        self.assertIn("dataclasses.replace(rcfg, hide_rating=True, landscape_rating_mode=", self.src)
+        self.assertIn("if _hide_unreleased else rcfg)", self.src)
         self.assertIn("release_status_ttl_seconds(_status_for_ttl)", self.src)
 
 

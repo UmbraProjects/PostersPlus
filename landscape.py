@@ -1465,6 +1465,9 @@ def _build_landscape(
                                getattr(cfg, "landscape_greyscale", False))
     if greyed:
         image = image.convert("L").convert("RGBA")
+        if logo is not None and getattr(cfg, "landscape_greyscale_logo", False):
+            from main import greyscale_rgba
+            logo = greyscale_rgba(logo)
         cfg = dataclasses.replace(cfg, vignette_poster_color_bottom=False,
                                   vignette_poster_color_top=False)
     art = image.copy()          # pre-vignette snapshot for tint sampling
@@ -1568,8 +1571,10 @@ def _build_landscape(
         rating_items = rating_items or None
 
     # Display Mode (landscape_rating_mode).  The Rating Bar draws the score
-    # along the bottom edge, the line printing it as well, exactly (Hide
-    # Rating takes both); the Bar
+    # along the bottom edge, the line printing it as well, exactly.  Hide
+    # Rating takes only the printed score, leaving the line room for the rest
+    # (the Info Line is how to drop the bar; a score hide_unreleased_rating
+    # withholds is rendered as one).  The Bar
     # takes the line's place, so the logo stands on the bar instead.  Both
     # are drawn before the logo and badges, which go over them and keep
     # clear of them, and after `before`, so the graphic badges do too.
@@ -1577,8 +1582,7 @@ def _build_landscape(
     bar_box = None
     floor = None
     if rating_mode == "rating_bar":
-        if not cfg.hide_rating:
-            bar_box = _draw_edge_score_bar(image, score, cfg)
+        bar_box = _draw_edge_score_bar(image, score, cfg)
     elif rating_mode == "bar":
         sash_label = None
         if cfg.bar_append == "sash" and discovery_meta is not None:

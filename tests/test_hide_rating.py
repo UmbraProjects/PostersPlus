@@ -154,7 +154,8 @@ class HideRatingConfiguratorTests(unittest.TestCase):
                 self.assertIn("!hideRating", line.group(1))
         # The palette row asks _paletteUsed, which answers no with it hidden.
         used = re.search(r"function _paletteUsed\(\) \{(.*?)\n\}", self.html, re.S).group(1)
-        self.assertIn("if (c('tog-hide-rating')) return false;", used)
+        # Except landscape's Rating Bar, whose bar stays with the rating hidden.
+        self.assertIn("if (c('tog-hide-rating') && !_scoreBarKept()) return false;", used)
         self.assertIn("getElementById('rating-alt-colors-toggle').style.display = _paletteUsed()", fields)
 
     def test_hiding_the_rating_leaves_the_rating_bar_choice_alone(self):

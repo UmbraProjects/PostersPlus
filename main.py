@@ -2021,6 +2021,10 @@ class RequestConfig:
     # Trending Only list sets it: its rows keep the greyscale their owner's
     # posters have without the status sash taking the rank's place.
     cinema_greyscale_without_sash: bool = False
+    # The logo (or drawn title) greyed with the art, whenever it is.  Off, the
+    # logo stays in colour over the grey art.  Landscape's own is
+    # landscape_greyscale_logo.
+    greyscale_logo:      bool = False
     release_status_cinema_only: bool = False  # only show release status when "Cinema"
     release_status_dates: bool = True   # "Oct 16 Cinema" instead of Cinema / Production when TMDB has dated it
     airing_dates:        bool = True    # "Airing Oct 15": an airing show's next episode date
@@ -2389,6 +2393,7 @@ class RequestConfig:
     #   landscape_rating_badges    — the rating_badges sites' scores on the info
     #                                line, in place of the weighted score
     landscape_greyscale: bool = False
+    landscape_greyscale_logo: bool = False
     landscape_badge_style: str = "glass"
     landscape_badge_shape: str = "pill"
     landscape_badge_case: str = "auto"
@@ -3030,6 +3035,7 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "airing_dates": True, "rating
                               "label_font": fonts.DEFAULT_LABEL_FONT,
                               "quality_after_digital": False, "landscape_art_source": "tmdb",
                               "landscape_greyscale": False, "landscape_badge_style": "glass",
+                              "landscape_greyscale_logo": False, "greyscale_logo": False,
                               "landscape_badge_shape": "pill", "landscape_badge_case": "auto",
                               "landscape_separator": "bullet",
                               "landscape_badge_text_color": None, "landscape_winner_star": False,
@@ -3177,6 +3183,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.cinema_greyscale        = _b("cinema_greyscale",       cfg.cinema_greyscale)
     cfg.cinema_greyscale_skip_if_available = _b("cinema_greyscale_skip_if_available", cfg.cinema_greyscale_skip_if_available)
     cfg.cinema_greyscale_without_sash = _b("cinema_greyscale_without_sash", cfg.cinema_greyscale_without_sash)
+    cfg.greyscale_logo          = _b("greyscale_logo",         cfg.greyscale_logo)
     cfg.release_status_cinema_only = _b("release_status_cinema_only", cfg.release_status_cinema_only)
     cfg.release_status_dates    = _b("release_status_dates",   cfg.release_status_dates)
     cfg.airing_dates            = _b("airing_dates",           cfg.airing_dates)
@@ -3279,6 +3286,7 @@ def build_request_config(params: dict) -> RequestConfig:
     if _lrm in ("line", "rating_bar", "bar"):
         cfg.landscape_rating_mode = _lrm
     cfg.landscape_greyscale       = _b("landscape_greyscale",       cfg.landscape_greyscale)
+    cfg.landscape_greyscale_logo  = _b("landscape_greyscale_logo",  cfg.landscape_greyscale_logo)
     _ls_style = (params.get("landscape_badge_style") or "").strip().lower()
     if _ls_style in ("glass", "black", "silver", "gold"):
         cfg.landscape_badge_style = _ls_style
@@ -4765,6 +4773,8 @@ def _build_poster(
     _greyscaled = _greyscale_wanted(cfg, discovery_meta, quality_tokens, cfg.cinema_greyscale)
     if _greyscaled:
         image = ImageOps.grayscale(image).convert("RGBA")
+        if logo and cfg.greyscale_logo:
+            logo = greyscale_rgba(logo)
 
     draw = ImageDraw.Draw(image)
 
@@ -6064,6 +6074,14 @@ def _group_anchor(cfg: "RequestConfig", anchor: str) -> tuple[bool, bool]:
     if cfg.sash_mode == "sash":
         return True, cfg.sash_side == "left"
     return True, True
+
+
+def greyscale_rgba(img: Image.Image) -> Image.Image:
+    """*img* in greyscale, its alpha kept (a logo drawn over greyed art)."""
+    img = img.convert("RGBA")
+    grey = ImageOps.grayscale(img).convert("RGBA")
+    grey.putalpha(img.getchannel("A"))
+    return grey
 
 
 def _greyscale_wanted(cfg: "RequestConfig", discovery_meta, quality_tokens: list[str] | None,
@@ -8704,6 +8722,14 @@ _RENDER_REVISIONS: "tuple[_RenderRevision, ...]" = (
         applies=lambda cfg: (cfg.shape == "landscape" and cfg.landscape_graphic_badges
                              and (graphic_badges.wants_frost(cfg.badge_quality_style)
                                   or graphic_badges.wants_frost(cfg.badge_cinema_style))),
+        stale=lambda cfg, facts: True,
+    ),
+    # 34: Hide Rating on landscape's Rating Bar hides only the printed score;
+    #     the bar along the bottom edge is drawn again.
+    _RenderRevision(
+        rev=34,
+        applies=lambda cfg: (cfg.shape == "landscape" and cfg.hide_rating
+                             and cfg.landscape_rating_mode == "rating_bar"),
         stale=lambda cfg, facts: True,
     ),
 )
@@ -13084,7 +13110,12 @@ async def get_poster(
             has_burned_in_text=(_suppress_overlay is True),
         )
 
-        _render_cfg = dataclasses.replace(rcfg, hide_rating=True) if _hide_unreleased else rcfg
+        # Hide Rating leaves landscape's Rating Bar its bar, but a withheld
+        # score takes it too: the Info Line is the Rating Bar without it.
+        _render_cfg = (dataclasses.replace(rcfg, hide_rating=True, landscape_rating_mode=(
+                           "line" if rcfg.landscape_rating_mode == "rating_bar"
+                           else rcfg.landscape_rating_mode))
+                       if _hide_unreleased else rcfg)
         # original_labels: a title first made in one of the listed languages
         # has its labels in that language, and a text title standing in for
         # its logo is its original title, when a label font can draw it.
