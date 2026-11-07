@@ -111,6 +111,21 @@ Measured against 500, a render costs about 2× the CPU and file size at 780, 3×
 
 The first request for each title at a new size fetches its larger art once. A larger size only shows where a client draws the poster more than ~500 physical pixels wide — a detail or hero view, a tablet, a large poster on a high-density phone; a TV grid tile is usually far smaller, so the extra detail is scaled away. Each size is cached separately, and URLs without the parameter keep their existing cached composites.
 
+### Art gain, fade curve, logo punch, shadow and fit
+
+Portrait settings for a cleaner logo-on-art look. Each one's default draws exactly what a URL without it draws.
+
+| Setting | Range (default) | What it does |
+|---|---|---|
+| `art_gain` | 0.5–1 (1) | Multiplies the art's colour before anything is drawn on it, so the whole poster sits a little darker and the logo and labels lift off it. |
+| `bottom_gradient_curve` | 0–4 (0) | The bottom band's fade, as 1 − (1 − t)^curve from its top edge (t = 0) to the poster's bottom (t = 1). Below 1 the darkening builds gently and keeps its depth for the bottom edge, so more art shows; above 1 it arrives sooner. Applies to the black and the tinted (`vignette_poster_color_bottom`) band alike. 0 keeps each band's own shape: the black band's ease-out, the tinted band's smoothstep. |
+| `logo_punch` | 0–1 (0) | More saturation and contrast in the title logo itself. |
+| `logo_shadow` | 0–1 (0) | A soft dark halo cut from the logo's own shape, drawn under the logo. |
+| `logo_shadow_radius` | 0.02–0.5 (0.12) | How far that halo spreads, as a share of the drawn logo's height: low hugs the letters, high is a broad pool behind the whole logo. |
+| `logo_fit` | `box`, `optical` (`box`) | How the logo is sized and placed. `box`: by its bounding box. `optical`: by what you see — every logo gets the same optical size (how much solid ink it shows and how much room it takes), stacked logos may grow 35% taller than `logo_max_h_ratio` to match a wide one, the ink's centre goes on the centre line, and the ink's lowest row (bottom anchor) or centre sits on the logo line. Faint built-in glows and shadows don't count, so they can't pull a logo sideways or up. |
+
+They act on title logos (not the text drawn when a title has no logo) and on portrait posters only.
+
 ### Trending lists
 
 `trending_list` picks the trending lists a poster's rank comes from, as the Trending Catalogs Addon's **Configure** dialog writes it. It is comma-separated parts, one per list: `m` (movies), `t` (series), `a` (anime) and `f` (anime films), each `letter:source[.source…]`, `h:1` / `h:0` to leave titles not out at home yet off every list, or keep them, and `l:<language>[.<language>…]` to keep only titles of those original languages on the movie and series lists: `en`, `non-en` (every language but English), `ja`, `ko`, `es`, `fr`, `de`, `hi`. Ranks are numbered 1, 2, 3 after the cut. The first source of a part is the list the poster ranks on; the rest only add catalogs to the trending addon. `none` picks no catalog for that list, and its posters rank on the instance's own list. A part left out, or a source the instance doesn't offer, is the instance's choice, so `trending_list=m:imdb.tmdb,a:none,h:1` ranks movies on IMDb's list and leaves everything else as the instance has it.
@@ -138,6 +153,7 @@ Every setting has a short name, and the configurator writes those: `vpcb=e0b84f`
 | `anime_movie_weights` | `amw` |
 | `anime_provider_art` | `apa` |
 | `anime_tv_weights` | `atw` |
+| `art_gain` | `ag` |
 | `badge_anchor_x` | `bax` |
 | `badge_anchor_y` | `bay` |
 | `badge_cert_country` | `bcc` |
@@ -167,6 +183,7 @@ Every setting has a short name, and the configurator writes those: `vpcb=e0b84f`
 | `bar_score_out_of_10` | `bsoo10` |
 | `bar_style` | `bs` |
 | `bottom_gradient` | `bgr` |
+| `bottom_gradient_curve` | `bgc` |
 | `bottom_gradient_height` | `bgh` |
 | `bottom_gradient_opacity` | `bgo` |
 | `cinema_greyscale` | `cg` |
@@ -283,11 +300,15 @@ Every setting has a short name, and the configurator writes those: `vpcb=e0b84f`
 | `landscape_winner_star` | `_ws` |
 | `logo_bottom_anchor` | `lba` |
 | `logo_bottom_ratio` | `lbr` |
+| `logo_fit` | `lfit` |
 | `logo_language` | `ll` |
 | `logo_language_secondary` | `lls` |
 | `logo_max_h_ratio` | `lmhr` |
 | `logo_max_w_ratio` | `lmwr` |
 | `logo_priority` | `lp` |
+| `logo_punch` | `lpu` |
+| `logo_shadow` | `lsh` |
+| `logo_shadow_radius` | `lshr` |
 | `meta_order` | `mo` |
 | `minimalist_append_mode` | `mam` |
 | `minimalist_center` | `mc` |
