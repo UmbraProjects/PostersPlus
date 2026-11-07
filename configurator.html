@@ -2766,6 +2766,20 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   </div>
                 </div>
               </div>
+              <div class="field portrait-only">
+                <label class="field-label" data-tip="The shape of the bottom fade. Below 1 the darkening builds gently and keeps its depth for the bottom edge, so more of the art shows; above 1 it arrives sooner. 0 keeps the default shape.">Bottom Fade Curve</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-bg-curve" min="0" max="3" step="0.05" value="0" oninput="updateRange(this,'rng-bgc'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-bgc">0.00</span>
+                </div>
+              </div>
+              <div class="field portrait-only">
+                <label class="field-label" data-tip="Darkens the whole poster art a little before anything is drawn on it, so the logo and labels stand out. 1 leaves the art as it is.">Art Brightness</label>
+                <div class="range-row">
+                  <input type="range" id="cfg-art-gain" min="0.5" max="1" step="0.01" value="1" oninput="updateRange(this,'rng-ag'); build(); queuePreviewReload()">
+                  <span class="range-val" id="rng-ag">1.00</span>
+                </div>
+              </div>
               <div class="toggle-row">
                 <span class="toggle-label" data-tip="Only draw the top vignette when a sash is visible.">Vignette Only On Sash</span>
                 <label class="toggle-switch">
@@ -3499,6 +3513,27 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="range-row">
                     <input type="range" id="cfg-logo-bottom" min="0.05" max="0.60" step="0.01" value="0.28" oninput="updateRange(this,'rng-lb'); build(); queuePreviewReload()">
                     <span class="range-val" id="rng-lb">0.28</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label" data-tip="Richer colour and contrast in the logo itself, so it reads at a glance. 0 leaves the logo as it is.">Logo Punch</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-logo-punch" min="0" max="1" step="0.05" value="0" oninput="updateRange(this,'rng-lpu'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-lpu">0.00</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label" data-tip="A soft dark halo cut from the logo's own shape, drawn under it, so the logo lifts off busy or light art without an outline. 0 draws none.">Logo Shadow</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-logo-shadow" min="0" max="1" step="0.05" value="0" oninput="updateRange(this,'rng-lsh'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-lsh">0.00</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="field-label" data-tip="How far the shadow spreads, as a share of the logo's height. Low hugs the letters; high is a broad, soft pool behind the whole logo.">Shadow Softness</label>
+                  <div class="range-row">
+                    <input type="range" id="cfg-logo-shadow-radius" min="0.02" max="0.50" step="0.01" value="0.12" oninput="updateRange(this,'rng-lshr'); build(); queuePreviewReload()">
+                    <span class="range-val" id="rng-lshr">0.12</span>
                   </div>
                 </div>
               </div>
@@ -7831,6 +7866,12 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     params.set('logo_max_h_ratio',    n('cfg-logo-h').toFixed(2));
     params.set('logo_bottom_ratio',   n('cfg-logo-bottom').toFixed(2));
     if (c('tog-logo-bottom-anchor')) params.set('logo_bottom_anchor', 'true');
+    params.set('logo_punch',          n('cfg-logo-punch').toFixed(2));
+    params.set('logo_shadow',         n('cfg-logo-shadow').toFixed(2));
+    params.set('logo_shadow_radius',  n('cfg-logo-shadow-radius').toFixed(2));
+    // The art's gain and the bottom fade's curve are portrait-only too.
+    params.set('art_gain',            n('cfg-art-gain').toFixed(2));
+    params.set('bottom_gradient_curve', n('cfg-bg-curve').toFixed(2));
   }
 
   // ── Info Sash ──────────────────────────────────────────────────────────────
@@ -11406,6 +11447,11 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('logo_max_h_ratio'))     _setEl('cfg-logo-h',              p.get('logo_max_h_ratio'));
   if (p.has('logo_bottom_ratio'))    _setEl('cfg-logo-bottom',         p.get('logo_bottom_ratio'));
   if (p.has('logo_bottom_anchor'))   _setEl('tog-logo-bottom-anchor',  p.get('logo_bottom_anchor'));
+  if (p.has('logo_punch'))           _setEl('cfg-logo-punch',          p.get('logo_punch'));
+  if (p.has('logo_shadow'))          _setEl('cfg-logo-shadow',         p.get('logo_shadow'));
+  if (p.has('logo_shadow_radius'))   _setEl('cfg-logo-shadow-radius',  p.get('logo_shadow_radius'));
+  if (p.has('art_gain'))             _setEl('cfg-art-gain',            p.get('art_gain'));
+  if (p.has('bottom_gradient_curve')) _setEl('cfg-bg-curve',           p.get('bottom_gradient_curve'));
   if (p.has('textless'))             _setEl('tog-textless',            p.get('textless'));
   if (p.has('use_original_art'))   _setEl('cfg-art', ['true', '1'].includes(p.get('use_original_art')) ? 'original' : 'textless');
   if (p.has('original_art_source')) _setEl('cfg-original-art-source', p.get('original_art_source'));

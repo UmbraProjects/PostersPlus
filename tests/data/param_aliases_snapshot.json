@@ -248,5 +248,10 @@
  "landscape_sash_priority": "_sp",
  "landscape_sash_text_color": "_stc",
  "greyscale_logo": "gl",
- "landscape_greyscale_logo": "_gl"
+ "landscape_greyscale_logo": "_gl",
+ "art_gain": "ag",
+ "bottom_gradient_curve": "bgc",
+ "logo_punch": "lpu",
+ "logo_shadow": "lsh",
+ "logo_shadow_radius": "lshr"
 }

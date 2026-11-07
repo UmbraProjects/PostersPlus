@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Art gain, bottom fade curve, logo punch and shadow
+
+- Five new portrait settings, all off by default, so existing URLs render
+  exactly as before. **Art Brightness** (`art_gain`, short `ag`, 0.5–1)
+  darkens the art a little before anything is drawn on it. **Bottom Fade
+  Curve** (`bottom_gradient_curve`, `bgc`, 0–4) sets the bottom band's fade as
+  1 − (1 − t)^curve, for the black and the tinted band alike; 0 keeps each
+  band's own shape. **Logo Punch** (`logo_punch`, `lpu`, 0–1) lifts the logo's
+  saturation and contrast. **Logo Shadow** (`logo_shadow`, `lsh`, 0–1) draws a
+  soft dark halo cut from the logo's shape under it, and **Shadow Softness**
+  (`logo_shadow_radius`, `lshr`, 0.02–0.5, default 0.12) sets how far it
+  spreads, as a share of the logo's height.
+
 ### Graphic badges: hide instead of move
 
 - New **Overflow** setting under Graphic Badges (`badge_overflow=move|hide`,

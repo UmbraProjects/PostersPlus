@@ -277,6 +277,12 @@ ALIASES: dict[str, str] = {
     # 2026-10-11: landscape's Anime Provider Source and pick.
     "landscape_anime_provider_art": "_apa",
     "landscape_poster_pick": "_pp",
+    # 2026-11-07: art gain, the bottom fade's curve, and the logo's punch and shadow.
+    "art_gain": "ag",
+    "bottom_gradient_curve": "bgc",
+    "logo_punch": "lpu",
+    "logo_shadow": "lsh",
+    "logo_shadow_radius": "lshr",
 }
 
 LONG: dict[str, str] = {short: long for long, short in ALIASES.items()}

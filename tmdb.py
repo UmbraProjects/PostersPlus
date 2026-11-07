@@ -19,7 +19,7 @@ import top10_charts
 import tvdb
 
 logger = logging.getLogger(__name__)
-from PIL import Image, ImageFilter
+from PIL import Image, ImageEnhance, ImageFilter
 
 # SVG title-logo support — TMDB serves many of its highest-voted logos as SVG.
 # Soft import so the service still runs (PNG-only) if cairosvg is unavailable.
@@ -4211,6 +4211,9 @@ def composite_logo(
     max_h_ratio: float = LOGO_MAX_H_RATIO,
     bottom_ratio: float = LOGO_BOTTOM_RATIO,
     bottom_anchor: bool = False,
+    punch: float = 0.0,
+    shadow: float = 0.0,
+    shadow_radius: float = 0.12,
 ) -> None:
     width, height = image.size
 
@@ -4363,7 +4366,40 @@ def composite_logo(
         if not recoloured and bg_lum < 0.40:
             logo = ensure_light_logo(logo)
 
+    # Finish, after any recolouring so it works on the logo as drawn.
+    if punch > 0:
+        logo = punch_logo(logo, punch)
+    if shadow > 0:
+        draw_logo_shadow(image, logo, (logo_x, logo_y), shadow, shadow_radius)
     image.paste(logo, (logo_x, logo_y), logo)
+
+
+def punch_logo(logo: Image.Image, amount: float) -> Image.Image:
+    """*logo* with more saturation and contrast, scaled by *amount* (0-1);
+    its alpha is kept as it was."""
+    alpha = logo.getchannel("A")
+    rgb = ImageEnhance.Color(logo.convert("RGB")).enhance(1 + 0.8 * amount)
+    rgb = ImageEnhance.Contrast(rgb).enhance(1 + 0.35 * amount)
+    out = rgb.convert("RGBA")
+    out.putalpha(alpha)
+    return out
+
+
+def draw_logo_shadow(image: Image.Image, logo: Image.Image, at: tuple[int, int],
+                     strength: float, radius_ratio: float) -> None:
+    """Paint a soft dark halo cut from *logo*'s shape onto *image*, under where
+    the logo goes at *at*.  The blur radius is *radius_ratio* of the logo's
+    height; *strength* (0-1) sets how dark it gets."""
+    radius = max(1.0, radius_ratio * logo.height)
+    pad = int(radius * 3)
+    mask = Image.new("L", (logo.width + 2 * pad, logo.height + 2 * pad), 0)
+    mask.paste(logo.getchannel("A"), (pad, pad))
+    mask = mask.filter(ImageFilter.GaussianBlur(radius))
+    mask = mask.point(lambda v: min(255, int(v * strength * 1.4)))
+    layer = Image.new("RGBA", mask.size, (0, 0, 0, 0))
+    layer.putalpha(mask)
+    # paste clips at the canvas edge, so a halo wider than the margin is fine.
+    image.paste(layer, (at[0] - pad, at[1] - pad), layer)
 
 
 # ---------------------------------------------------------------------------
