@@ -2115,6 +2115,10 @@ class RequestConfig:
     logo_punch:          float = 0.0
     logo_shadow:         float = 0.0
     logo_shadow_radius:  float = 0.12
+    # How a logo is sized and placed.  "box" (default): by its bounding box.
+    # "optical": by what you see (tmdb.optical_fit) — its solid ink sized to
+    # one optical size, centred on the ink, the ink's bottom on the baseline.
+    logo_fit:            str   = "box"
     sash_winner_star:    bool  = False
 
     badge_height:            int   = field(default_factory=lambda: _cfg.BADGE_HEIGHT)
@@ -3070,6 +3074,7 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "airing_dates": True, "rating
                               "landscape_poster_pick": "top",
                               "art_gain": 1.0, "bottom_gradient_curve": 0.0,
                               "logo_punch": 0.0, "logo_shadow": 0.0, "logo_shadow_radius": 0.12,
+                              "logo_fit": "box",
                               **{name: RequestConfig.__dataclass_fields__[name].default
                                  for name in _LANDSCAPE_BADGE_TUNING}}
 
@@ -3485,6 +3490,9 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.logo_punch         = _f("logo_punch",         cfg.logo_punch,         0.0, 1.0)
     cfg.logo_shadow        = _f("logo_shadow",        cfg.logo_shadow,        0.0, 1.0)
     cfg.logo_shadow_radius = _f("logo_shadow_radius", cfg.logo_shadow_radius, 0.02, 0.5)
+    _lfit = str(params.get("logo_fit", "")).strip().lower()
+    if _lfit in ("box", "optical"):
+        cfg.logo_fit = _lfit
     cfg.sash_winner_star   = _b("sash_winner_star",   cfg.sash_winner_star)
 
     # badge_height in pixels — generous enough to cover any reasonable customisation
@@ -5190,6 +5198,7 @@ def _build_poster(
             punch=cfg.logo_punch,
             shadow=cfg.logo_shadow,
             shadow_radius=cfg.logo_shadow_radius,
+            fit=cfg.logo_fit,
         )
     elif fallback_title:
         # ── Genre-aware font selection ────────────────────────────────────────

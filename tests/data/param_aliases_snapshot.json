@@ -253,5 +253,6 @@
  "bottom_gradient_curve": "bgc",
  "logo_punch": "lpu",
  "logo_shadow": "lsh",
- "logo_shadow_radius": "lshr"
+ "logo_shadow_radius": "lshr",
+ "logo_fit": "lfit"
 }

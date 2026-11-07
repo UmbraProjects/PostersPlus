@@ -283,6 +283,7 @@ ALIASES: dict[str, str] = {
     "logo_punch": "lpu",
     "logo_shadow": "lsh",
     "logo_shadow_radius": "lshr",
+    "logo_fit": "lfit",
 }
 
 LONG: dict[str, str] = {short: long for long, short in ALIASES.items()}

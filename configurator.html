@@ -3516,6 +3516,14 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   </div>
                 </div>
                 <div class="field">
+                  <label class="field-label" data-tip="Box sizes and centres each logo by its bounding box. Optical goes by what you see: every logo gets the same visual size (stacked ones may grow taller to match wide ones), centred on its letters, with faint built-in glows ignored.">Logo Fit</label>
+                  <select class="segmented-source" id="cfg-logo-fit" onchange="build(); queuePreviewReload()">
+                    <option value="box" selected>Box</option>
+                    <option value="optical">Optical</option>
+                  </select>
+                  <div class="segmented" data-for="cfg-logo-fit"></div>
+                </div>
+                <div class="field">
                   <label class="field-label" data-tip="Richer colour and contrast in the logo itself, so it reads at a glance. 0 leaves the logo as it is.">Logo Punch</label>
                   <div class="range-row">
                     <input type="range" id="cfg-logo-punch" min="0" max="1" step="0.05" value="0" oninput="updateRange(this,'rng-lpu'); build(); queuePreviewReload()">
@@ -7866,6 +7874,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     params.set('logo_max_h_ratio',    n('cfg-logo-h').toFixed(2));
     params.set('logo_bottom_ratio',   n('cfg-logo-bottom').toFixed(2));
     if (c('tog-logo-bottom-anchor')) params.set('logo_bottom_anchor', 'true');
+    params.set('logo_fit',            vEl('cfg-logo-fit') || 'box');
     params.set('logo_punch',          n('cfg-logo-punch').toFixed(2));
     params.set('logo_shadow',         n('cfg-logo-shadow').toFixed(2));
     params.set('logo_shadow_radius',  n('cfg-logo-shadow-radius').toFixed(2));
@@ -11447,6 +11456,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('logo_max_h_ratio'))     _setEl('cfg-logo-h',              p.get('logo_max_h_ratio'));
   if (p.has('logo_bottom_ratio'))    _setEl('cfg-logo-bottom',         p.get('logo_bottom_ratio'));
   if (p.has('logo_bottom_anchor'))   _setEl('tog-logo-bottom-anchor',  p.get('logo_bottom_anchor'));
+  if (p.has('logo_fit'))             _setEl('cfg-logo-fit',            p.get('logo_fit'));
   if (p.has('logo_punch'))           _setEl('cfg-logo-punch',          p.get('logo_punch'));
   if (p.has('logo_shadow'))          _setEl('cfg-logo-shadow',         p.get('logo_shadow'));
   if (p.has('logo_shadow_radius'))   _setEl('cfg-logo-shadow-radius',  p.get('logo_shadow_radius'));

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Logo fit: optical sizing and centring
+
+- New **Logo Fit** setting (`logo_fit=box|optical`, short `lfit`; portrait).
+  Box (default) is the old behaviour. Optical sizes and places the logo by what
+  you see: every logo gets the same optical size (solid ink, faint glows and
+  shadows left out), stacked logos may grow 35% past the height cap to match a
+  wide one, the ink's centre sits on the poster's centre line, and the ink's
+  lowest row on the baseline. On 14 sample titles the size spread fell from
+  2.8× to 2.1× and the worst off-centre logo from 33 px to under 1 px.
+
 ### Art gain, bottom fade curve, logo punch and shadow
 
 - Five new portrait settings, all off by default, so existing URLs render

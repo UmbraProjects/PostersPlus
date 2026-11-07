@@ -111,7 +111,7 @@ Measured against 500, a render costs about 2× the CPU and file size at 780, 3×
 
 The first request for each title at a new size fetches its larger art once. A larger size only shows where a client draws the poster more than ~500 physical pixels wide — a detail or hero view, a tablet, a large poster on a high-density phone; a TV grid tile is usually far smaller, so the extra detail is scaled away. Each size is cached separately, and URLs without the parameter keep their existing cached composites.
 
-### Art gain, fade curve, logo punch and shadow
+### Art gain, fade curve, logo punch, shadow and fit
 
 Portrait settings for a cleaner logo-on-art look. Each one's default draws exactly what a URL without it draws.
 
@@ -122,6 +122,7 @@ Portrait settings for a cleaner logo-on-art look. Each one's default draws exact
 | `logo_punch` | 0–1 (0) | More saturation and contrast in the title logo itself. |
 | `logo_shadow` | 0–1 (0) | A soft dark halo cut from the logo's own shape, drawn under the logo. |
 | `logo_shadow_radius` | 0.02–0.5 (0.12) | How far that halo spreads, as a share of the drawn logo's height: low hugs the letters, high is a broad pool behind the whole logo. |
+| `logo_fit` | `box`, `optical` (`box`) | How the logo is sized and placed. `box`: by its bounding box. `optical`: by what you see — every logo gets the same optical size (how much solid ink it shows and how much room it takes), stacked logos may grow 35% taller than `logo_max_h_ratio` to match a wide one, the ink's centre goes on the centre line, and the ink's lowest row (bottom anchor) or centre sits on the logo line. Faint built-in glows and shadows don't count, so they can't pull a logo sideways or up. |
 
 They act on title logos (not the text drawn when a title has no logo) and on portrait posters only.
 
@@ -299,6 +300,7 @@ Every setting has a short name, and the configurator writes those: `vpcb=e0b84f`
 | `landscape_winner_star` | `_ws` |
 | `logo_bottom_anchor` | `lba` |
 | `logo_bottom_ratio` | `lbr` |
+| `logo_fit` | `lfit` |
 | `logo_language` | `ll` |
 | `logo_language_secondary` | `lls` |
 | `logo_max_h_ratio` | `lmhr` |
