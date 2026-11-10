@@ -245,6 +245,9 @@ def init_db() -> None:
     _add_column_if_missing(
         conn, "quality_cache", "cache_context", "TEXT NOT NULL DEFAULT ''"
     )
+    # An upper bound the source itself gave (QualiCache's next_refresh_at), so
+    # a new title's answer is asked for again when the source expects it to move.
+    _add_column_if_missing(conn, "quality_cache", "expires_at", "INTEGER")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS trending_cache (
@@ -611,14 +614,22 @@ def _rating_ttl(release_date: str | None) -> int:
         return OLD_CACHE_DURATION
 
 
-def _quality_ttl(release_date: str | None) -> int:
-    """Quality data is far more stable than ratings for older titles."""
+def _quality_ttl(release_date: str | None, at: float | None = None) -> int:
+    """Quality data is far more stable than ratings for older titles.
+
+    *at* is when the answer was taken (a row's cached_at).  The title's age is
+    measured then, not now: a 1080p answer taken in a title's first fortnight
+    is the one most likely to be overtaken by a 4K release, and measuring at
+    read time handed it the 90-day old-title window the moment the title
+    turned 15 days old.
+    """
     if not release_date:
         return QUALITY_OLD_CACHE_DURATION
     try:
-        days_since = (datetime.now() - datetime.strptime(release_date, "%Y-%m-%d")).days
+        then = datetime.fromtimestamp(at) if at is not None else datetime.now()
+        days_since = (then - datetime.strptime(release_date, "%Y-%m-%d")).days
         return NEW_CACHE_DURATION if days_since <= DAYS_CONSIDERED_NEW else QUALITY_OLD_CACHE_DURATION
-    except ValueError:
+    except (ValueError, OverflowError, OSError):
         return QUALITY_OLD_CACHE_DURATION
 
 
@@ -1460,14 +1471,14 @@ def _quality_cache_context() -> str:
 def get_cached_quality(imdb_id: str, release_date: str | None = None) -> list[str] | None:
     try:
         row = get_db().execute(
-            """SELECT tokens, cached_at, release_date, cache_context
+            """SELECT tokens, cached_at, release_date, cache_context, expires_at
                FROM quality_cache WHERE imdb_id = ?""",
             (imdb_id,),
         ).fetchone()
         if row is None:
             return None
 
-        tokens_raw, cached_at, stored_release, stored_context = row
+        tokens_raw, cached_at, stored_release, stored_context, expires_at = row
         if stored_context != _quality_cache_context():
             logger.info(f"Quality cache policy changed for {imdb_id}; refreshing")
             with _db_lock:
@@ -1475,8 +1486,11 @@ def get_cached_quality(imdb_id: str, release_date: str | None = None) -> list[st
                 get_db().commit()
             return None
         ttl_release = release_date or stored_release
-        age_days    = (time.time() - cached_at) / 86400
-        if age_days > _quality_ttl(ttl_release):
+        now         = time.time()
+        age_days    = (now - cached_at) / 86400
+        if age_days > _quality_ttl(ttl_release, at=cached_at) or (
+            expires_at is not None and now >= expires_at
+        ):
             logger.info(f"Quality cache expired for {imdb_id} ({age_days:.1f}d old)")
             with _db_lock:
                 get_db().execute("DELETE FROM quality_cache WHERE imdb_id = ?", (imdb_id,))
@@ -1494,14 +1508,17 @@ def set_cached_quality(
     imdb_id: str,
     tokens: list[str],
     release_date: str | None = None,
+    expires_at: float | None = None,
 ) -> None:
+    """*expires_at* (epoch seconds) caps the row's life below the TTL rules,
+    for a source that says when its answer may change."""
     try:
         with _db_lock:
             get_db().execute(
                 """
                 INSERT OR REPLACE INTO quality_cache
-                    (imdb_id, tokens, cached_at, release_date, cache_context)
-                VALUES (?, ?, ?, ?, ?)
+                    (imdb_id, tokens, cached_at, release_date, cache_context, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     imdb_id,
@@ -1509,6 +1526,7 @@ def set_cached_quality(
                     int(time.time()),
                     release_date,
                     _quality_cache_context(),
+                    int(expires_at) if expires_at is not None else None,
                 ),
             )
             get_db().commit()

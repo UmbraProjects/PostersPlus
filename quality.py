@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 from urllib.parse import urlsplit
 
 import httpx
@@ -209,7 +210,10 @@ async def fetch_quality_from_aiostreams(
 
             logger.info(f"AIOStreams returned authoritative empty result for {imdb_id}")
             tokens: list[str] = []
-            await asyncio.to_thread(set_cached_quality, imdb_id, tokens, release_date)
+            await asyncio.to_thread(
+                set_cached_quality, imdb_id, tokens, release_date,
+                expires_at=_qualicache_expiry(payload),
+            )
             return tokens
 
         seen: set[str] = set()
@@ -444,6 +448,23 @@ def _normalize_qualicache_url(url: str) -> str:
     return url.rstrip("/")
 
 
+def _qualicache_expiry(payload: dict) -> float | None:
+    """When QualiCache next re-checks this title, so our copy expires with it.
+
+    QualiCache knows a new digital release will move (it re-checks those every
+    couple of days) and a physical 4K remux will not; PostersPlus only knows the
+    release date, which for a theatrical title says nothing about when the 4K
+    web release lands.  A stale answer has already missed its refresh, so it
+    is kept for a day rather than forgotten at once.
+    """
+    if payload.get("stale"):
+        return time.time() + 86400
+    value = payload.get("next_refresh_at")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if value > 0 else None
+
+
 async def fetch_quality_from_qualicache(
     client: httpx.AsyncClient,
     qualicache_url: str,
@@ -550,7 +571,10 @@ async def fetch_quality_from_qualicache(
         tokens = _ordered_tokens(seen)
 
         logger.info(f"QualiCache quality for {imdb_id}: {tokens}")
-        await asyncio.to_thread(set_cached_quality, imdb_id, tokens, release_date)
+        await asyncio.to_thread(
+            set_cached_quality, imdb_id, tokens, release_date,
+            expires_at=_qualicache_expiry(payload),
+        )
         return tokens
 
     except Exception as exc:

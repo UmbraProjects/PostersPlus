@@ -37,7 +37,7 @@ class QualiCacheFetchTests(unittest.IsolatedAsyncioTestCase):
         self.cached: list[tuple] = []
         self._real_set_cached = quality.set_cached_quality
         self._real_min_trust = main._cfg.QUALICACHE_MIN_TRUST
-        quality.set_cached_quality = lambda *args: self.cached.append(args)
+        quality.set_cached_quality = lambda *args, **kwargs: self.cached.append(args)
 
     def tearDown(self):
         quality.set_cached_quality = self._real_set_cached
