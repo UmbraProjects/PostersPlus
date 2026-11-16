@@ -975,6 +975,8 @@ from ratings import (
     bar_fill_color,
     draw_frosted_bar,
     draw_score_bar,
+    frosted_score_colors,
+    SCORE_COLOR_FROSTED,
     fetch_rating,
     fetch_ratings_bulk,
     is_anime_rated,
@@ -2026,6 +2028,10 @@ class RequestConfig:
     # art switch: on its own it greys the logo over colour art.  Landscape's
     # own is landscape_greyscale_logo.
     greyscale_logo:      bool = False
+    # The rating greyed likewise (bar, glow, palette-coloured score, rating
+    # badges, the Bar), for a poster all in grey.  Landscape's own is
+    # landscape_greyscale_rating.
+    greyscale_rating:    bool = False
     release_status_cinema_only: bool = False  # only show release status when "Cinema"
     release_status_dates: bool = True   # "Oct 16 Cinema" instead of Cinema / Production when TMDB has dated it
     airing_dates:        bool = True    # "Airing Oct 15": an airing show's next episode date
@@ -2041,6 +2047,10 @@ class RequestConfig:
     # Score Bar position knob — distance from poster bottom edge as fraction of height.
     # Default matches the legacy hardcoded 30px on a 500x750 poster.
     accent_bar_bottom_ratio:       float = 0.04
+    # The Rating Bar's bar: "floating", the inset pill above the bottom, or
+    # "edge", landscape's full-width strip along the bottom edge, which the
+    # client's rounded corners clip as they clip the art.
+    accent_bar_style:              str   = "floating"
     numeric_score_font_size_ratio: float = field(default_factory=lambda: _cfg.NUMERIC_SCORE_MODE_FONT_SIZE_RATIO)
     # Clean mode (mode 2) numeric format.  When True, the rating is divided by
     # 10 and shown to one decimal (87 → "8.7", 100 → "10.0").  Default keeps
@@ -2398,6 +2408,7 @@ class RequestConfig:
     #                                line, in place of the weighted score
     landscape_greyscale: bool = False
     landscape_greyscale_logo: bool = False
+    landscape_greyscale_rating: bool = False
     landscape_badge_style: str = "glass"
     landscape_badge_shape: str = "pill"
     landscape_badge_case: str = "auto"
@@ -3022,7 +3033,7 @@ _LANDSCAPE_BADGE_TUNING: dict[str, tuple[float, float]] = {
     "landscape_badge_y":             (-0.07, 0.30),
 }
 
-_SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "airing_dates": True, "anime_foreign_sash": True, "rating_badges": "", "rating_badge_scale": "native",
+_SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "accent_bar_style": "floating", "airing_dates": True, "anime_foreign_sash": True, "rating_badges": "", "rating_badge_scale": "native",
                               "trending_list": "",
                               "rating_badge_style": "color",
                               "cinema_greyscale_without_sash": False, "trending_style": "sash",
@@ -3040,6 +3051,7 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "airing_dates": True, "anime_
                               "quality_after_digital": False, "landscape_art_source": "tmdb",
                               "landscape_greyscale": False, "landscape_badge_style": "glass",
                               "landscape_greyscale_logo": False, "greyscale_logo": False,
+                              "landscape_greyscale_rating": False, "greyscale_rating": False,
                               "landscape_badge_shape": "pill", "landscape_badge_case": "auto",
                               "landscape_separator": "bullet",
                               "landscape_badge_text_color": None, "landscape_winner_star": False,
@@ -3188,6 +3200,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.cinema_greyscale_skip_if_available = _b("cinema_greyscale_skip_if_available", cfg.cinema_greyscale_skip_if_available)
     cfg.cinema_greyscale_without_sash = _b("cinema_greyscale_without_sash", cfg.cinema_greyscale_without_sash)
     cfg.greyscale_logo          = _b("greyscale_logo",         cfg.greyscale_logo)
+    cfg.greyscale_rating        = _b("greyscale_rating",       cfg.greyscale_rating)
     cfg.release_status_cinema_only = _b("release_status_cinema_only", cfg.release_status_cinema_only)
     cfg.release_status_dates    = _b("release_status_dates",   cfg.release_status_dates)
     cfg.airing_dates            = _b("airing_dates",           cfg.airing_dates)
@@ -3292,6 +3305,7 @@ def build_request_config(params: dict) -> RequestConfig:
         cfg.landscape_rating_mode = _lrm
     cfg.landscape_greyscale       = _b("landscape_greyscale",       cfg.landscape_greyscale)
     cfg.landscape_greyscale_logo  = _b("landscape_greyscale_logo",  cfg.landscape_greyscale_logo)
+    cfg.landscape_greyscale_rating = _b("landscape_greyscale_rating", cfg.landscape_greyscale_rating)
     _ls_style = (params.get("landscape_badge_style") or "").strip().lower()
     if _ls_style in ("glass", "black", "silver", "gold"):
         cfg.landscape_badge_style = _ls_style
@@ -3374,7 +3388,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.wait_for_quality        = _b("wait_for_quality",        cfg.wait_for_quality)
     cfg.greyscale_no_quality    = _b("greyscale_no_quality",    cfg.greyscale_no_quality)
     cfg.quality_after_digital   = _b("quality_after_digital",   cfg.quality_after_digital)
-    cfg.score_color_mode        = _i("score_color_mode",       cfg.score_color_mode,       0,   3)
+    cfg.score_color_mode        = _i("score_color_mode",       cfg.score_color_mode,       0,   4)
     cfg.score_custom_palette    = parse_custom_score_palette(params.get("score_custom_palette"))
     cfg.badge_display_mode      = _i("badge_display_mode",     cfg.badge_display_mode,     0,   7)
     cfg.rating_display_mode     = _i("rating_display_mode",    cfg.rating_display_mode,    0,   4)
@@ -3390,6 +3404,8 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.accent_bar_font_size_ratio    = _f("accent_bar_font_size_ratio",    cfg.accent_bar_font_size_ratio,    0.0, 0.5)
     cfg.accent_bar_append_mode        = _i("accent_bar_append_mode",        cfg.accent_bar_append_mode,        0,   2)
     cfg.accent_bar_bottom_ratio       = _f("accent_bar_bottom_ratio",       cfg.accent_bar_bottom_ratio,       0.0, 0.5)
+    if (params.get("accent_bar_style") or "").strip().lower() == "edge":
+        cfg.accent_bar_style = "edge"
     cfg.numeric_score_font_size_ratio = _f("numeric_score_font_size_ratio", cfg.numeric_score_font_size_ratio, 0.0, 0.5)
     cfg.accent_bar_y_offset           = _f("accent_bar_y_offset",           cfg.accent_bar_y_offset,           0.0, 1.0)
     cfg.numeric_score_y_offset        = _f("numeric_score_y_offset",        cfg.numeric_score_y_offset,        0.0, 1.0)
@@ -5358,9 +5374,12 @@ def _build_poster(
     _bar_frosted   = cfg.rating_display_mode == 4 and _bar_style in ("frosted", "rating_frosted")
     _ribbon_frosted = (_rank is not None and cfg.trending_style == "ribbon"
                        and cfg.trending_ribbon_style == "frosted")
+    # The Rating Bar on the Frosted palette fills with the same tint.
+    _score_bar_frosted = (cfg.rating_display_mode == 1 and not cfg.hide_rating
+                          and cfg.score_color_mode == SCORE_COLOR_FROSTED)
     _frost_tint: tuple[float, float, float] | None = (
         dominant_frost_rgb(_frost_color_src)
-        if (_bar_frosted or _notch_frosted or _sash_poster or _ribbon_frosted
+        if (_bar_frosted or _notch_frosted or _sash_poster or _ribbon_frosted or _score_bar_frosted
             or (cinema_run is not None and graphic_badges.wants_frost(cfg.badge_cinema_style))
             or (cfg.badge_display_mode == 7 and graphic_badges.chips_want_frost(
                 cfg, bool(quality_tokens) and _score_points(quality_tokens) >= cfg.badge_min_score))) else None
@@ -5412,6 +5431,9 @@ def _build_poster(
                 return run
             n -= 1
 
+    # Greyscale Rating: whatever the rating draws below is greyed after.
+    _before_rating = (image.copy() if cfg.rating_display_mode != 0 and cfg.greyscale_rating
+                      and _greyscale_wanted(cfg, discovery_meta, quality_tokens, True) else None)
     if cfg.rating_display_mode != 0:
 
         if cfg.rating_display_mode == 1:
@@ -5461,7 +5483,18 @@ def _build_poster(
             # The accent bar IS the rating in this mode — there is no number to
             # drop, so hiding the rating means not drawing the bar at all, and
             # the label above it is left to stand on its own.
-            if not cfg.hide_rating:
+            _score_colors = (frosted_score_colors(_frost_tint, _frost_sat, _frost_ref)
+                             if _score_bar_frosted and _frost_tint is not None else None)
+            if not cfg.hide_rating and cfg.accent_bar_style == "edge":
+                # Landscape's Rating Bar, raised by the client's crop inset
+                # so a client that trims the bottom edge doesn't trim it.
+                from landscape import draw_edge_score_bar
+                # Its glow blur counts in bar heights, which already scale
+                # with the canvas: undo the pixel scaling _scale_render_cfg gave it.
+                draw_edge_score_bar(image, score, cfg, bottom=height - px(height * cfg.bar_bottom_inset),
+                                    glow_blur=cfg.score_glow_blur / pxscale.scale(),
+                                    colors=_score_colors)
+            elif not cfg.hide_rating:
                 if cfg.score_glow_color == "match":
                     _glow_color = "match"
                 elif len(cfg.score_glow_color) == 6:
@@ -5477,6 +5510,7 @@ def _build_poster(
                     glow_color=_glow_color,
                     color_mode=cfg.score_color_mode,
                     custom_palette=cfg.score_custom_palette,
+                    colors=_score_colors,
                 )
 
         elif cfg.rating_display_mode == 2:
@@ -5836,6 +5870,10 @@ def _build_poster(
                 center_run       = _bar_run,
             )
 
+    if _before_rating is not None:
+        greyscale_drawn(image, _before_rating, full=_greyscaled)
+        draw = ImageDraw.Draw(image)
+
     # The band a rank numeral sits in, before the sash draws, to find what
     # the sash took of it.
     _before_rank = None
@@ -5850,6 +5888,12 @@ def _build_poster(
     if (_rank is not None and _rank_centered(cfg) and cfg.sash_mode == "notch"
             and not cfg.sash_badge_pos.startswith("edge_") and sash_result is not None):
         _pre_notch = np.asarray(image.convert("RGB"))[:round(image.height * _NOTCH_SEARCH_H)].copy()
+
+    # With the art, logo and rating all greyed, the sash and rank mark go grey
+    # too, so nothing on an unavailable title is left in colour.
+    _before_marks = (image.copy() if _greyscaled and cfg.greyscale_logo and cfg.greyscale_rating
+                     and (_rank is not None or (cfg.sash_mode != "hidden" and sash_result is not None))
+                     else None)
 
     # --- Discovery sash / badge ---
     if cfg.sash_mode != "hidden" and sash_result is not None:
@@ -5902,6 +5946,8 @@ def _build_poster(
                                                  notch_box=_notch_box)
         if _before_overlays is not None:
             _claim_footprint(_before_overlays, _pre_rank, np.asarray(image), *_rank_print)
+    if _before_marks is not None:
+        greyscale_drawn(image, _before_marks, full=True)
 
     # --- Graphic badge groups ---
     # Drawn last because they lay themselves out around everything else.
@@ -6087,6 +6133,33 @@ def greyscale_rgba(img: Image.Image) -> Image.Image:
     grey = ImageOps.grayscale(img).convert("RGBA")
     grey.putalpha(img.getchannel("A"))
     return grey
+
+
+# How far a pixel has to move to count as wholly drawn, 0-255: below it a
+# pixel is greyed in proportion, so a faint glow tail over colour art greys
+# only as much as the glow is there.
+_DRAWN_FULL = 48
+
+
+def greyscale_drawn(image: Image.Image, before: Image.Image, full: bool = False) -> None:
+    """Grey, in place, what was drawn on *image* since *before* (a copy of
+    it): Greyscale Rating's rating, whatever shape it took.  Each pixel goes
+    grey as far as the drawing changed it, so solid fills go wholly grey and
+    the art under a soft glow keeps most of its colour.  *full* greys every
+    pixel drawn on wholly, for art that is grey already: there is no colour
+    under a faint edge to keep, only the drawing's own."""
+    after = np.asarray(image.convert("RGBA"), dtype=np.int16)
+    prior = np.asarray(before.convert("RGBA"), dtype=np.int16)
+    moved = np.abs(after[..., :3] - prior[..., :3]).max(axis=2)
+    rows = np.where(moved.any(axis=1))[0]
+    if not len(rows):
+        return
+    y0, y1 = int(rows[0]), int(rows[-1]) + 1
+    part = after[y0:y1].astype(np.float32)
+    w = ((moved[y0:y1] > 0) if full else np.minimum(1.0, moved[y0:y1] / _DRAWN_FULL))[..., None]
+    lum = (part[..., 0] * 299 + part[..., 1] * 587 + part[..., 2] * 114)[..., None] / 1000
+    part[..., :3] = part[..., :3] * (1 - w) + lum * w
+    image.paste(Image.fromarray(np.clip(part, 0, 255).astype(np.uint8), "RGBA"), (0, y0))
 
 
 def _greyscale_wanted(cfg: "RequestConfig", discovery_meta, quality_tokens: list[str] | None,
@@ -12626,8 +12699,9 @@ async def get_poster(
             return (_scheduled_digital is None
                     or (_scheduled_digital - datetime.now().date()).days <= _LEAK_LEAD_DAYS)
         _status_sash = any(s in rcfg.sash_priority for s in _rs_slots)
-        _status_grey = ((rcfg.landscape_greyscale or rcfg.landscape_greyscale_logo) if _is_landscape
-                        else (rcfg.cinema_greyscale or rcfg.greyscale_logo)
+        _status_grey = ((rcfg.landscape_greyscale or rcfg.landscape_greyscale_logo
+                         or rcfg.landscape_greyscale_rating) if _is_landscape
+                        else (rcfg.cinema_greyscale or rcfg.greyscale_logo or rcfg.greyscale_rating)
                         and rcfg.cinema_greyscale_without_sash)
         # The cinema badge: a film still in cinemas (or not out at all),
         # shown without a sash — or beside a different one.

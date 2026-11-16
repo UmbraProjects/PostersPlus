@@ -902,21 +902,35 @@ def _score_value(score) -> int | None:
         return None
 
 
-def _draw_edge_score_bar(image: Image.Image, score, cfg) -> tuple[int, int, int, int] | None:
+def draw_edge_score_bar(image: Image.Image, score, cfg, bottom: float | None = None,
+                        glow_blur: float | None = None,
+                        colors=None) -> tuple[int, int, int, int] | None:
     """The Rating Bar: *score* as a fill along the bottom edge (see
-    _SCORE_BAR_H).  Returns the bar's box, or None when there is no score to
-    draw — a missing score draws no empty track, as on a portrait."""
+    _SCORE_BAR_H), or with its foot at *bottom*.  Returns the bar's box, or
+    None when there is no score to draw — a missing score draws no empty
+    track, as on a portrait.  The portrait Rating Bar's edge style draws it
+    too, at the same share of its height, passing *glow_blur* in place of
+    cfg.score_glow_blur, which a portrait render has scaled as pixels, and
+    *colors* (left, right) in place of the palette's: the Frosted palette's
+    poster tint (ratings.frosted_score_colors)."""
     from ratings import _soften, score_color_for_mode
 
     value = _score_value(score)
     if value is None:
         return None
     width, height = image.size
+    canvas_h = height
+    blur = cfg.score_glow_blur if glow_blur is None else glow_blur
     bar_h = max(3, round(height * _SCORE_BAR_H))
+    if bottom is not None:
+        # Whole pixels: a portrait's inset comes in scaled, fractional units.
+        height = max(bar_h, min(height, round(bottom)))
     y0 = height - bar_h
     fill_w = round(width * value / 100)
     left = right = None
-    if fill_w > 0:
+    if fill_w > 0 and colors is not None:
+        left, right = colors
+    elif fill_w > 0:
         left, right = (_soften(c, 0.90) for c in score_color_for_mode(value, cfg.score_color_mode,
                                                                        cfg.score_custom_palette))
 
@@ -925,17 +939,19 @@ def _draw_edge_score_bar(image: Image.Image, score, cfg) -> tuple[int, int, int,
     # Built as portrait's is (the fill grown by twice the blur, then blurred),
     # its blur counted in half bar heights rather than pixels, so the
     # default 1 is the tracker's halo, about the bar's own height.
-    if fill_w > 0 and value >= cfg.score_glow_threshold and cfg.score_glow_alpha > 0 and cfg.score_glow_blur > 0:
+    # A raised bar's glow carries on below it to the canvas edge, as it would
+    # round a bar standing anywhere else.
+    if fill_w > 0 and value >= cfg.score_glow_threshold and cfg.score_glow_alpha > 0 and blur > 0:
         if cfg.score_glow_color == "match":
             gc = tuple((left[i] + right[i]) // 2 for i in range(3))
         elif len(cfg.score_glow_color) == 6:
             gc = tuple(int(cfg.score_glow_color[i:i + 2], 16) for i in (0, 2, 4))
         else:
             gc = (255, 255, 255)
-        sigma = cfg.score_glow_blur * bar_h / 2
+        sigma = blur * bar_h / 2
         grow = round(2 * sigma)
         top = max(0, y0 - grow - int(sigma * 3) - 2)
-        glow = Image.new("RGBA", (width, height - top), (0, 0, 0, 0))
+        glow = Image.new("RGBA", (width, canvas_h - top), (0, 0, 0, 0))
         ImageDraw.Draw(glow).rounded_rectangle([(0, y0 - grow - top), (fill_w - 1 + grow, height - top - 1 + grow)],
                                                radius=grow, fill=(*gc, cfg.score_glow_alpha))
         image.alpha_composite(glow.filter(ImageFilter.GaussianBlur(sigma)), dest=(0, top))
@@ -1467,6 +1483,10 @@ def _build_landscape(
         image = image.convert("L").convert("RGBA")
         cfg = dataclasses.replace(cfg, vignette_poster_color_bottom=False,
                                   vignette_poster_color_top=False)
+    # Greyscale Rating: what each rating element draws is greyed after it
+    # (main.greyscale_drawn), the logo between them left to its own switch.
+    grey_rating = (getattr(cfg, "landscape_greyscale_rating", False)
+                   and _greyscale_wanted(cfg, discovery_meta, quality_tokens, True))
     # The logo's own switch, on the same triggers, art greyed or not.
     if (logo is not None and getattr(cfg, "landscape_greyscale_logo", False)
             and _greyscale_wanted(cfg, discovery_meta, quality_tokens, True)):
@@ -1549,7 +1569,8 @@ def _build_landscape(
     def _strip(**where):
         if rating_mode == "bar":
             return None
-        return _draw_info_strip(
+        before = image.copy() if grey_rating else None
+        box = _draw_info_strip(
             image,
             "" if cfg.hide_genre else (translate_genre(genre, cfg.label_lang) or genre),
             None if cfg.hide_year or not release_year else native_digits(str(release_year), cfg.label_lang),
@@ -1561,6 +1582,10 @@ def _build_landscape(
             align=info_col, order=getattr(cfg, "meta_order", ""), snug=info_center,
             rating_items=rating_items, badge_scale=getattr(cfg, "rating_badge_scale", "native"),
             badge_style=getattr(cfg, "rating_badge_style", "color"), **where)
+        if before is not None:
+            from main import greyscale_drawn
+            greyscale_drawn(image, before, full=greyed)
+        return box
 
     # The sites' own scores in place of the weighted one, as portrait's
     # rating badges (rating_badges, rating_badge_max).
@@ -1583,8 +1608,17 @@ def _build_landscape(
     rating_mode = getattr(cfg, "landscape_rating_mode", "line")
     bar_box = None
     floor = None
+    before_bar = image.copy() if grey_rating and rating_mode in ("rating_bar", "bar") else None
     if rating_mode == "rating_bar":
-        bar_box = _draw_edge_score_bar(image, score, cfg)
+        colors = None
+        if cfg.score_color_mode == 4:
+            # Frosted: the tint the frosted Bar and badge take, so it matches them.
+            from awards import dominant_frost_rgb
+            from ratings import frosted_score_colors
+            colors = frosted_score_colors(
+                badge_source or tuple(float(c) for c in dominant_frost_rgb(art)),
+                cfg.bar_frost_saturation, cfg.frost_reference)
+        bar_box = draw_edge_score_bar(image, score, cfg, colors=colors)
     elif rating_mode == "bar":
         sash_label = None
         if cfg.bar_append == "sash" and discovery_meta is not None:
@@ -1601,6 +1635,9 @@ def _build_landscape(
             None if cfg.hide_year or not release_year else native_digits(str(release_year), cfg.label_lang),
             score, sash_label, rating_items, tint)
         floor = bar_box[1] - int(height * _STACK_GAP)
+    if before_bar is not None:
+        from main import greyscale_drawn
+        greyscale_drawn(image, before_bar, full=greyed)
 
     info_box = None
     logo_baseline = floor
@@ -1674,6 +1711,11 @@ def _build_landscape(
                     lo = max(lo, logo_box[2] + edge_gap) if align != "right" else lo
             info_box = _strip(bounds=(lo, hi), **where)
 
+    # With the art, logo and rating all greyed, the rank mark and the badge go
+    # grey too, so nothing on an unavailable title is left in colour.
+    before_marks = (image.copy() if greyed and grey_rating
+                    and getattr(cfg, "landscape_greyscale_logo", False) else None)
+
     # The rank mark, in its top corner before the badge, which keeps clear
     # of it like the logo.
     rank_box = None
@@ -1716,6 +1758,9 @@ def _build_landscape(
                         logo_align=align, logo_baseline=logo_baseline,
                         logo_box=logo_box, logo_top_row=top_row,
                         obstacles=(logo_box, info_box, rank_box, bar_box), floor=floor)
+    if before_marks is not None:
+        from main import greyscale_drawn
+        greyscale_drawn(image, before_marks, full=True)
 
     # Drawn last because they lay themselves out around everything else.
     if graphic:

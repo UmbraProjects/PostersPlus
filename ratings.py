@@ -691,7 +691,25 @@ def score_color_for_mode(
         custom = _score_color_custom(score, custom_palette)
         if custom is not None:
             return custom
-    return {1: _score_color_alt, 2: _score_color_metal}.get(color_mode, _score_color)(score)
+    # 4 is Frosted: the Rating Bar takes the poster's frost tint instead
+    # (frosted_score_colors).  Anything else reading the palette — Minimalist's
+    # score, a bar with no poster sample — gets Prestige, the default.
+    return {1: _score_color_alt, 2: _score_color_metal,
+            4: _score_color_metal}.get(color_mode, _score_color)(score)
+
+
+# score_color_mode's Frosted palette.
+SCORE_COLOR_FROSTED = 4
+
+
+def frosted_score_colors(
+    tint_rgb: "tuple[float, float, float]", saturation: float, reference: "bool | str",
+) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    """The Frosted palette's fill: the poster's frost tint, as the frosted
+    Bar, notch and poster-coloured sash take it from the same sample, so the
+    Rating Bar matches them.  One colour at both ends, as their glass is."""
+    rgb = _frosted_tint(*tint_rgb, saturation, reference)
+    return rgb, rgb
 
 
 def _cairo_pill_mask(w: int, h: int, radius: int) -> Image.Image:
@@ -754,7 +772,10 @@ def draw_score_bar(
     glow_color: tuple[int, int, int] | str | None = None,
     color_mode: int = 0,
     custom_palette: CustomScorePalette | None = None,
+    colors: "tuple[tuple[int, int, int], tuple[int, int, int]] | None" = None,
 ) -> None:
+    """*colors* (left, right) replaces the palette's, as given: the Frosted
+    palette's poster tint (frosted_score_colors)."""
     if score is None:
         return
     if isinstance(score, str):
@@ -792,9 +813,12 @@ def draw_score_bar(
     if fill_w <= 0:
         return
 
-    left_color, right_color = score_color_for_mode(score, color_mode, custom_palette)
-    left_color  = _soften(left_color,  0.90)
-    right_color = _soften(right_color, 0.90)
+    if colors is not None:
+        left_color, right_color = colors
+    else:
+        left_color, right_color = score_color_for_mode(score, color_mode, custom_palette)
+        left_color  = _soften(left_color,  0.90)
+        right_color = _soften(right_color, 0.90)
 
     # ── Filled segment — numpy gradient, no Python pixel loop ────────────
     # Build an (bar_h × fill_w) RGB array by interpolating left→right colour.

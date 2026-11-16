@@ -2872,6 +2872,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <option value="0">Light</option>
                   <option value="1">Dark/light</option>
                   <option value="3">Custom</option>
+                  <option value="4">Frosted</option>
                 </select>
                 <div class="segmented" data-for="cfg-score-color-mode"></div>
               </div>
@@ -2936,6 +2937,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   </div>
                 </div>
                 <div class="field portrait-only">
+                  <label class="field-label" data-tip="Floating: a short rounded bar above the bottom edge, set by Bar Position. Edge: a thin strip along the very bottom, as on landscape posters and continue-watching cards; it is as long as the score and the client's rounded corners round it off.">Bar Style</label>
+                  <select id="cfg-accent-bar-style" onchange="updateRatingFields(); build(); queuePreviewReload()">
+                    <option value="floating" selected>Floating</option>
+                    <option value="edge">Edge</option>
+                  </select>
+                </div>
+                <div class="field portrait-only" id="bar-bottom-field">
                   <label class="field-label">Bar Position</label>
                   <div class="range-row">
                     <input type="range" id="cfg-bar-bottom" min="0.00" max="0.20" step="0.005" value="0.04" oninput="updateRange(this,'rng-bb'); build(); queuePreviewReload()">
@@ -3655,6 +3663,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
+              <div class="toggle-row portrait-only" id="sash-greyscale-rating-row">
+                <span class="toggle-label" data-tip="Greys the rating while a title is unavailable, on the same triggers as the logo: the Rating Bar and its glow, a coloured score, rating badges and the Bar. With Greyscale Poster and Greyscale Logo on too, the whole poster goes grey, the sash, badge and trending rank included. Requires the Release Status sash to be enabled.">Greyscale Rating if Unavailable</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-greyscale-rating" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
               <div class="toggle-row" id="sash-release-cinema-only-row">
                 <span class="toggle-label" data-tip="Only show the release status sash for titles in cinemas or in production. Leaving it off also shows Streaming / Physical / Airing / Ended / Cancelled; enabling it suppresses those whatever their sash order.">Release Status: Unavailable Only</span>
                 <label class="toggle-switch">
@@ -3896,6 +3911,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 <span class="toggle-label" data-tip="Greys the title logo while a film is still in cinemas or not out yet (or no quality is found, with Greyscale if No Quality). Works with or without Greyscale Poster if Unavailable: on its own it greys just the logo over colour art.">Greyscale Logo if Unavailable</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-landscape-greyscale-logo" onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <span class="toggle-label" data-tip="Greys the rating while a film is still in cinemas or not out yet (or no quality is found, with Greyscale if No Quality): the Rating Bar and its glow, rating badges and the Bar. With Greyscale Poster and Greyscale Logo on too, the whole poster goes grey, the sash, badge and trending rank included.">Greyscale Rating if Unavailable</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-landscape-greyscale-rating" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
@@ -7677,6 +7699,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     // Portrait settings brought over; each left out at its default.
     if (c('tog-landscape-greyscale')) params.set('landscape_greyscale', 'true');
     if (c('tog-landscape-greyscale-logo')) params.set('landscape_greyscale_logo', 'true');
+    if (c('tog-landscape-greyscale-rating')) params.set('landscape_greyscale_rating', 'true');
     const _lbStyle = vEl('cfg-landscape-badge-style') || 'glass';
     if (_lbStyle !== 'glass') {
       params.set('landscape_badge_style', _lbStyle);
@@ -7770,6 +7793,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
       params.set('accent_bar_y_offset',        n('cfg-y-mode1').toFixed(2));
       params.set('accent_bar_append_mode',     ni('cfg-bar-append'));
       params.set('accent_bar_bottom_ratio',    n('cfg-bar-bottom').toFixed(3));
+      if (vEl('cfg-accent-bar-style') === 'edge') params.set('accent_bar_style', 'edge');
     } else if (ratingMode === 2) {
       params.set('numeric_score_font_size_ratio', n('cfg-font-mode2').toFixed(3));
       params.set('numeric_score_y_offset',        n('cfg-y-mode2').toFixed(2));
@@ -7847,6 +7871,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     params.set('cinema_greyscale_skip_if_available', c('tog-cinema-greyscale-skip') ? 'true' : 'false');
   }
   if (c('tog-greyscale-logo')) params.set('greyscale_logo', 'true');
+  if (c('tog-greyscale-rating')) params.set('greyscale_rating', 'true');
   params.set('release_status_cinema_only', c('tog-release-cinema-only') ? 'true' : 'false');
   params.set('release_status_dates', c('tog-release-dates') ? 'true' : 'false');
   // On by default, so only the off state is written.
@@ -9547,6 +9572,10 @@ function _paletteUsed() {
 
 function updateCustomPaletteFields() {
   const mode = _effRatingMode();
+  // Frosted fills the Rating Bar with the poster's frost tint; Minimalist's
+  // score text has no glass to match, so it isn't offered there.
+  const frostedOpt = document.querySelector('.segmented[data-for="cfg-score-color-mode"] .segmented-opt[data-value="4"]');
+  if (frostedOpt) frostedOpt.style.display = mode === 1 ? '' : 'none';
   // The palette picker itself hides with the rating, so the textarea that
   // belongs to its Custom option has to go too.
   const scoreCustom = _paletteUsed() && ni('cfg-score-color-mode') === 3;
@@ -10285,6 +10314,8 @@ function updateRatingFields() {
   document.getElementById('rating-mode3-fields').style.display      = mode === 3 ? '' : 'none';
   document.getElementById('rating-mode4-fields').style.display      = mode === 4 ? '' : 'none';
   document.getElementById('rating-glow-fields').style.display       = (mode === 1 && (!hideRating || _scoreBarKept())) ? '' : 'none';
+  // The edge bar sits on the bottom edge: no position to set.
+  document.getElementById('bar-bottom-field').style.display         = vEl('cfg-accent-bar-style') === 'edge' ? 'none' : '';
   document.getElementById('rating-alt-colors-toggle').style.display = _paletteUsed() ? '' : 'none';
   document.getElementById('numeric-score10-row').style.display      = (mode === 2 && !hideRating) ? '' : 'none';
   const labelParts = _ratingLabelParts();
@@ -10778,7 +10809,7 @@ const _LANDSCAPE_ONLY_CONTROLS = ['cfg-landscape-art', ...LANDSCAPE_SOURCE_IDS, 
                                   'cfg-landscape-color-link', 'tog-landscape-score-10',
                                   'cfg-landscape-sep', 'cfg-landscape-rating-sep', 'tog-landscape-info-center', 'cfg-landscape-logo-pos', 'cfg-landscape-logo-row',
                                   'cfg-landscape-info-row', 'cfg-landscape-info-col',
-                                  'tog-landscape-greyscale', 'tog-landscape-greyscale-logo',
+                                  'tog-landscape-greyscale', 'tog-landscape-greyscale-logo', 'tog-landscape-greyscale-rating',
                                   'cfg-landscape-badge-style', 'cfg-landscape-badge-text-color',
                                   'cfg-landscape-badge-shape', 'cfg-landscape-badge-case',
                                   'tog-landscape-winner-star', 'cfg-landscape-logo-scale',
@@ -11238,6 +11269,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
     _setEl('tog-landscape-poster-crop', p.get('landscape_poster_crop') || 'false');
     _setEl('tog-landscape-greyscale',   p.get('landscape_greyscale') || 'false');
     _setEl('tog-landscape-greyscale-logo', p.get('landscape_greyscale_logo') || 'false');
+    _setEl('tog-landscape-greyscale-rating', p.get('landscape_greyscale_rating') || 'false');
     _setEl('cfg-landscape-badge-style', ['black', 'silver', 'gold'].includes(p.get('landscape_badge_style'))
       ? p.get('landscape_badge_style') : 'glass');
     { const _lbtc = (p.get('landscape_badge_text_color') || '').replace('#', '').toUpperCase();
@@ -11281,6 +11313,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('cinema_greyscale')) _setEl('tog-cinema-greyscale', p.get('cinema_greyscale'));
   if (p.has('cinema_greyscale_skip_if_available')) _setEl('tog-cinema-greyscale-skip', p.get('cinema_greyscale_skip_if_available'));
   _setEl('tog-greyscale-logo', p.get('greyscale_logo') || 'false');
+  _setEl('tog-greyscale-rating', p.get('greyscale_rating') || 'false');
   if (p.has('release_status_cinema_only')) _setEl('tog-release-cinema-only', p.get('release_status_cinema_only'));
   if (p.has('release_status_dates')) _setEl('tog-release-dates', p.get('release_status_dates'));
   _setEl('tog-airing-dates', !p.has('airing_dates') || p.get('airing_dates') !== 'false');
@@ -11354,6 +11387,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('accent_bar_font_size_ratio'))     _setEl('cfg-font-mode1',   p.get('accent_bar_font_size_ratio'));
   if (p.has('accent_bar_append_mode'))         _setEl('cfg-bar-append',   p.get('accent_bar_append_mode'));
   if (p.has('accent_bar_bottom_ratio'))        _setEl('cfg-bar-bottom',   p.get('accent_bar_bottom_ratio'));
+  _setEl('cfg-accent-bar-style', p.get('accent_bar_style') === 'edge' ? 'edge' : 'floating');
   if (p.has('numeric_score_font_size_ratio'))  _setEl('cfg-font-mode2',   p.get('numeric_score_font_size_ratio'));
   if (p.has('score_out_of_10'))                _setEl('tog-score-out-of-10', p.get('score_out_of_10'));
   if (p.has('accent_bar_y_offset'))            _setEl('cfg-y-mode1',      p.get('accent_bar_y_offset'));

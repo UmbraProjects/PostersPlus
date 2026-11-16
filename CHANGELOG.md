@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Edge Rating Bar on portrait
+
+- New **Bar Style** under the portrait Rating Bar (`accent_bar_style=edge`,
+  short `abst`; default `floating`). Edge draws landscape's Rating Bar: a thin
+  strip along the very bottom edge, flush left and as long as the score, in
+  the same palette and glow. Most clients round the poster's corners, which
+  rounds the strip off with them. A client crop inset (`bar_bottom_inset`)
+  raises it clear of the trimmed edge.
+- New **Frosted** colour palette for the Rating Bar, floating or edge, and
+  landscape's (`score_color_mode=4`, `landscape_score_color_mode=4`). The bar
+  takes the poster's colour instead of the score's: the same tint as the
+  frosted Bar, a frosted notch or a poster-coloured sash, so it matches them
+  when they are shown. Minimalist's score reads it as Prestige.
+
+### Greyscale Rating if Unavailable
+
+- New **Greyscale Rating if Unavailable** switch for each shape
+  (`greyscale_rating` / `grs`, `landscape_greyscale_rating` / `_grs`; off by
+  default), beside the poster and logo ones and on the same triggers. It greys
+  the rating however it is drawn: the Rating Bar and its glow, a coloured
+  score, rating badges and the Bar. All three switches together give a
+  poster that is grey throughout while the title isn't out: the sash or notch
+  (landscape's badge) and the trending rank mark go grey with them.
+
 ### Greyscale Logo if Unavailable
 
 - New **Greyscale Logo if Unavailable** switch for each shape

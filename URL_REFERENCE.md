@@ -90,6 +90,7 @@ Optional parameters control the landscape-specific choices:
 - `landscape_poster_crop=true` cuts the poster to 16:9 for a title with no backdrop from any source, with the logo on top, instead of drawing the genre canvas. The cut takes the poster's full width and is centred on its faces where it has any, else on its upper part, where the title usually isn't. For an anime title it is preferred to the provider's banner, a 16:9 cut of which is a close-up. Off by default.
 - `landscape_greyscale=true` greyscales the art while a film is still in cinemas or not out yet, as `cinema_greyscale` does on a portrait, but without needing the release-status sash. The bands go black, the colour they keep on a greyscaled portrait. `cinema_greyscale_skip_if_available` applies, and so does `greyscale_no_quality` on a landscape that shows quality.
 - `greyscale_logo=true` (portrait) and `landscape_greyscale_logo=true` (landscape) grey the title logo on an unavailable title, on the same triggers as the art (in cinemas or production, `cinema_greyscale_skip_if_available` applying, or `greyscale_no_quality`), whether or not the art switch is on: alone it greys just the logo over colour art. On a portrait it needs the release-status sash, as `cinema_greyscale` does. Off by default.
+- `greyscale_rating=true` (portrait) and `landscape_greyscale_rating=true` (landscape) grey the rating on the same triggers: the Rating Bar and its glow, a palette-coloured score, rating badges and the Bar. With the art and logo switches on too, the whole poster is grey: the sash or notch (landscape's badge) and the trending rank mark go grey with them. Each pixel greys as far as the rating changed it, so over colour art a glow's soft tail keeps most of the art's colour. Off by default.
 - `landscape_badge_style=glass|black|silver|gold` (default `glass`, the frosted pill) draws the info badge in one of the portrait notch's dark styles: a near-black pill, or a dark one with a silver or gold rim. `landscape_badge_text_color=RRGGBB` sets the dark pills' label colour.
 - `landscape_badge_shape=pill|chip` (default `pill`) sets the info badge's outline: `chip` is the portrait side chip's rounded rectangle in place of the pill's round ends. `landscape_badge_case=auto|upper|mixed` (default `auto`) sets its label in capitals or in the label's own case (`Oscar Winner`); `auto` gives the pill capitals and the chip mixed case, as the portrait chip has it.
 - `landscape_trending_style=sash|number|ribbon` (default `sash`, the `#N Today` badge) draws a trending rank as the portrait's numeral or ribbon, and the badge moves on to the next label. The mark has its own settings, read from these names alone and never from the portrait's: `landscape_trending_side=left|right`, `landscape_trending_scale`, `landscape_trending_sash=keep|hide|opposite` (`keep` moves the badge clear of the mark, `opposite` moves a top-corner badge to the other top corner), and for the ribbon `landscape_trending_ribbon_style`, `landscape_trending_frost_opacity`, `landscape_trending_frost_saturation`, `landscape_trending_label`, `landscape_trending_corner` and `landscape_sash_text_color=RRGGBB` (the ribbon's text, which the portrait's `sash_text_color` never colours here). The numeral stands in the badge's column, on its top line; the ribbon hangs from the top edge. A top-row logo or info line on the mark's side hangs below it.
@@ -133,6 +134,7 @@ Every setting has a short name, and the configurator writes those: `vpcb=e0b84f`
 | `accent_bar_append_mode` | `abam` |
 | `accent_bar_bottom_ratio` | `abbr` |
 | `accent_bar_font_size_ratio` | `abfsr` |
+| `accent_bar_style` | `abst` |
 | `accent_bar_y_offset` | `abyo` |
 | `airing_dates` | `ard` |
 | `anime_foreign_sash` | `afs` |
@@ -179,6 +181,7 @@ Every setting has a short name, and the configurator writes those: `vpcb=e0b84f`
 | `frost_reference` | `fr` |
 | `greyscale_logo` | `gl` |
 | `greyscale_no_quality` | `gnq` |
+| `greyscale_rating` | `grs` |
 | `hide_genre` | `hg` |
 | `hide_rating` | `hr` |
 | `hide_unreleased_rating` | `hur` |
@@ -231,6 +234,7 @@ Every setting has a short name, and the configurator writes those: `vpcb=e0b84f`
 | `landscape_graphic_badges` | `_gb` |
 | `landscape_greyscale` | `_gs` |
 | `landscape_greyscale_logo` | `_gl` |
+| `landscape_greyscale_rating` | `_grs` |
 | `landscape_hide_genre` | `_hg` |
 | `landscape_hide_rating` | `_hr` |
 | `landscape_hide_year` | `_hy` |
@@ -539,6 +543,10 @@ The source lists are what MDBList actually returns for anime. Anime films carry 
 `debug=1` reports `is_anime` and the `rating_weights` a title was scored with.
 
 ### Rating Badges
+
+`accent_bar_style=edge` (default `floating`) draws the portrait Rating Bar (`rating_display_mode=1`) as landscape's: a thin strip along the very bottom edge, flush left and as long as the score, in the same palette and glow, instead of the floating bar `accent_bar_bottom_ratio` places. `bar_bottom_inset` raises it by the client's crop.
+
+`score_color_mode` picks the Rating Bar's palette: `2` Prestige (default), `0` Light, `1` Dark/light, `3` Custom (`score_custom_palette`) or `4` Frosted. Frosted fills the bar with the poster's own frost tint rather than a colour for the score, the one the frosted Bar, a frosted notch and a poster-coloured sash take (with `frost_reference` and the frost saturation they share), so the bar matches them; `score_glow_color=match` glows in it too. Landscape's Rating Bar takes it as `landscape_score_color_mode=4`, from its badge's tint. Minimalist's score text reads `4` as Prestige.
 
 `rating_badges` shows individual sites' scores, each behind that site's logo, in place of the ★ and the weighted score: after the genre in Clean (`rating_display_mode=2`), before each score in Minimalist (`3`), and after the year and genre in the Bar (`4`), in place of its "★ score". It takes a comma list in display order, up to 6, from `pplus` (the weighted score itself, under the Posters+ mark), `imdb`, `tomatoes`, `popcorn`, `metacritic`, `metacriticuser`, `letterboxd`, `trakt`, `tmdb`, `rogerebert`, `myanimelist`, `anilist` and `kitsu`: for example `rating_badges=imdb,tomatoes`.
 

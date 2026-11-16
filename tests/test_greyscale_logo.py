@@ -90,7 +90,7 @@ class GreyscaleLogoTests(unittest.TestCase):
     def test_pipeline_fetches_the_status_for_the_logo_alone(self):
         import inspect
         src = inspect.getsource(main)
-        self.assertIn("(rcfg.landscape_greyscale or rcfg.landscape_greyscale_logo) if _is_landscape", src)
+        self.assertIn("(rcfg.landscape_greyscale or rcfg.landscape_greyscale_logo\n", src)
 
 
 if __name__ == "__main__":
