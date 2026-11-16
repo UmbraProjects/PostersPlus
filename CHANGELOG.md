@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Greyscale Logo if Unavailable
+
+- New **Greyscale Logo if Unavailable** switch for each shape
+  (`greyscale_logo` / `gl`, `landscape_greyscale_logo` / `_gl`; off by
+  default). It greys the title logo on the same triggers as Greyscale Poster
+  if Unavailable (in cinemas or production, or no quality found with
+  Greyscale if No Quality), with or without that switch: on its own the art
+  stays in colour and only the logo goes grey. On a portrait it needs the
+  Release Status sash, as the art switch does.
+
 ### Hide Korean dramas from trending; anime without the Japanese sash
 
 - New `TRENDING_HIDE_KDRAMAS` (dashboard → Trending, off by default) leaves

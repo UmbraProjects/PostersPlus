@@ -1465,11 +1465,13 @@ def _build_landscape(
                                getattr(cfg, "landscape_greyscale", False))
     if greyed:
         image = image.convert("L").convert("RGBA")
-        if logo is not None and getattr(cfg, "landscape_greyscale_logo", False):
-            from main import greyscale_rgba
-            logo = greyscale_rgba(logo)
         cfg = dataclasses.replace(cfg, vignette_poster_color_bottom=False,
                                   vignette_poster_color_top=False)
+    # The logo's own switch, on the same triggers, art greyed or not.
+    if (logo is not None and getattr(cfg, "landscape_greyscale_logo", False)
+            and _greyscale_wanted(cfg, discovery_meta, quality_tokens, True)):
+        from main import greyscale_rgba
+        logo = greyscale_rgba(logo)
     art = image.copy()          # pre-vignette snapshot for tint sampling
 
     # Colour link between the band and the badge.  Left alone, each samples

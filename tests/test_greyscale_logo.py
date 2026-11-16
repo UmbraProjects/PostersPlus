@@ -57,12 +57,19 @@ class GreyscaleLogoTests(unittest.TestCase):
         self.assertGreater(_max_chroma(self._portrait(cinema_greyscale_without_sash=True)), 100)
         self.assertLess(_max_chroma(self._portrait(cinema_greyscale_without_sash=True,
                                                    greyscale_logo=True)), 20)
-        # Art in colour: the logo stays in colour whatever the switch.
-        self.assertGreater(_max_chroma(self._portrait(cinema_greyscale=False, greyscale_logo=True)), 100)
+        # Without the art switch it greys just the logo.
+        self.assertLess(_max_chroma(self._portrait(cinema_greyscale=False, cinema_greyscale_without_sash=True,
+                                                   greyscale_logo=True)), 20)
+        # Never on an available title.
+        cfg = main.RequestConfig(sash_mode="hidden", rating_display_mode=0, greyscale_logo=True)
+        out = main.build_poster(Image.new("RGBA", (500, 750), (40, 40, 40, 255)), 80, "Drama", cfg,
+                                logo=_RED_LOGO.copy(), discovery_meta=_meta("Streaming"))
+        self.assertGreater(_max_chroma(out), 100)
 
     def _landscape(self, **over):
+        over.setdefault("landscape_greyscale", True)
         cfg = main.RequestConfig(shape="landscape", sash_mode="hidden",
-                                 vignette_poster_color_bottom=False, landscape_greyscale=True, **over)
+                                 vignette_poster_color_bottom=False, **over)
         art = Image.new("RGBA", (1000, 563), (40, 40, 40, 255))
         return landscape.build_landscape(art, 80, "Drama", cfg, logo=_RED_LOGO.copy(),
                                          discovery_meta=_meta(), release_year="2026")
@@ -70,6 +77,20 @@ class GreyscaleLogoTests(unittest.TestCase):
     def test_landscape_logo_greys_only_when_asked(self):
         self.assertGreater(_max_chroma(self._landscape()), 100)
         self.assertLess(_max_chroma(self._landscape(landscape_greyscale_logo=True)), 20)
+        # On its own: art left in colour, logo greyed.
+        art = Image.new("RGBA", (1000, 563), (20, 60, 160, 255))
+        cfg = main.RequestConfig(shape="landscape", sash_mode="hidden", vignette_poster_color_bottom=False,
+                                 landscape_greyscale_logo=True)
+        out = np.asarray(landscape.build_landscape(art, 80, "Drama", cfg, logo=_RED_LOGO.copy(),
+                                                   discovery_meta=_meta()).convert("RGB")).astype(int)
+        self.assertGreater(out[150, 500, 2] - out[150, 500, 0], 50)   # art still blue
+        red = (out[..., 0] - out[..., 1] > 100) & (out[..., 0] > 150)
+        self.assertFalse(red.any())
+
+    def test_pipeline_fetches_the_status_for_the_logo_alone(self):
+        import inspect
+        src = inspect.getsource(main)
+        self.assertIn("(rcfg.landscape_greyscale or rcfg.landscape_greyscale_logo) if _is_landscape", src)
 
 
 if __name__ == "__main__":

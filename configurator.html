@@ -3649,7 +3649,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </label>
               </div>
               <div class="toggle-row portrait-only" id="sash-greyscale-logo-row">
-                <span class="toggle-label" data-tip="Greys the title logo too whenever the poster is greyscaled (Greyscale Poster if Unavailable, or Greyscale if No Quality). Off: the logo keeps its colour over the grey art.">Greyscale Logo Too</span>
+                <span class="toggle-label" data-tip="Greys the title logo while a title is unavailable (in cinemas or production, or no quality found with Greyscale if No Quality). Works with or without Greyscale Poster if Unavailable: on its own it greys just the logo over colour art. Requires the Release Status sash to be enabled.">Greyscale Logo if Unavailable</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-greyscale-logo" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
@@ -3893,7 +3893,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                 </label>
               </div>
               <div class="toggle-row">
-                <span class="toggle-label" data-tip="Greys the title logo too whenever the art is greyscaled. Off: the logo keeps its colour over the grey art.">Greyscale Logo Too</span>
+                <span class="toggle-label" data-tip="Greys the title logo while a film is still in cinemas or not out yet (or no quality is found, with Greyscale if No Quality). Works with or without Greyscale Poster if Unavailable: on its own it greys just the logo over colour art.">Greyscale Logo if Unavailable</span>
                 <label class="toggle-switch">
                   <input type="checkbox" id="tog-landscape-greyscale-logo" onchange="build(); queuePreviewReload()">
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>

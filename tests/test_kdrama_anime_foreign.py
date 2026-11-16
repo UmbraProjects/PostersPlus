@@ -67,7 +67,9 @@ class AnimeForeignSashTests(unittest.TestCase):
 
     def test_get_poster_drops_foreign_on_anime(self):
         src = Path("main.py").read_text(encoding="utf-8")
-        self.assertIn("if _is_anime_title and not rcfg.anime_foreign_sash:", src)
+        cut = src.index("if _is_anime_title and not rcfg.anime_foreign_sash:")
+        # Before the order the debug output and the cache expiry read is taken.
+        self.assertLess(cut, src.index("_sash_priority = rcfg.sash_priority\n", cut - 2000))
 
 
 if __name__ == "__main__":

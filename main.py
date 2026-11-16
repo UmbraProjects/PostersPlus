@@ -2021,17 +2021,18 @@ class RequestConfig:
     # Trending Only list sets it: its rows keep the greyscale their owner's
     # posters have without the status sash taking the rank's place.
     cinema_greyscale_without_sash: bool = False
-    # The logo (or drawn title) greyed with the art, whenever it is.  Off, the
-    # logo stays in colour over the grey art.  Landscape's own is
-    # landscape_greyscale_logo.
+    # The logo greyed on an unavailable title, as cinema_greyscale greys the
+    # art (same triggers, greyscale_no_quality included), with or without the
+    # art switch: on its own it greys the logo over colour art.  Landscape's
+    # own is landscape_greyscale_logo.
     greyscale_logo:      bool = False
     release_status_cinema_only: bool = False  # only show release status when "Cinema"
     release_status_dates: bool = True   # "Oct 16 Cinema" instead of Cinema / Production when TMDB has dated it
     airing_dates:        bool = True    # "Airing Oct 15": an airing show's next episode date
-    badge_display_mode:  int  = field(default_factory=lambda: _cfg.BADGE_DISPLAY_MODE)
     # The Foreign Language sash ("Japanese") on anime: by anime id, or TMDB's
     # Animation on a Japanese original.  Off leaves it out on anime only.
     anime_foreign_sash:  bool = True
+    badge_display_mode:  int  = field(default_factory=lambda: _cfg.BADGE_DISPLAY_MODE)
     rating_display_mode: int  = field(default_factory=lambda: _cfg.SHOW_RATING_DISPLAY_MODE)
 
     accent_bar_font_size_ratio:    float = field(default_factory=lambda: _cfg.ACCENT_BAR_MODE_FONT_SIZE_RATIO)
@@ -3190,8 +3191,8 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.release_status_cinema_only = _b("release_status_cinema_only", cfg.release_status_cinema_only)
     cfg.release_status_dates    = _b("release_status_dates",   cfg.release_status_dates)
     cfg.airing_dates            = _b("airing_dates",           cfg.airing_dates)
-    cfg.muted                   = _b("muted",                  cfg.muted)
     cfg.anime_foreign_sash      = _b("anime_foreign_sash",     cfg.anime_foreign_sash)
+    cfg.muted                   = _b("muted",                  cfg.muted)
     cfg.score_out_of_10         = _b("score_out_of_10",        cfg.score_out_of_10)
     cfg.textless                = _b("textless",               cfg.textless)
     # top_gradient accepts off / low / medium / high.  Legacy boolean values
@@ -4777,8 +4778,8 @@ def _build_poster(
     _greyscaled = _greyscale_wanted(cfg, discovery_meta, quality_tokens, cfg.cinema_greyscale)
     if _greyscaled:
         image = ImageOps.grayscale(image).convert("RGBA")
-        if logo and cfg.greyscale_logo:
-            logo = greyscale_rgba(logo)
+    if logo and cfg.greyscale_logo and _greyscale_wanted(cfg, discovery_meta, quality_tokens, True):
+        logo = greyscale_rgba(logo)
 
     draw = ImageDraw.Draw(image)
 
@@ -12625,8 +12626,9 @@ async def get_poster(
             return (_scheduled_digital is None
                     or (_scheduled_digital - datetime.now().date()).days <= _LEAK_LEAD_DAYS)
         _status_sash = any(s in rcfg.sash_priority for s in _rs_slots)
-        _status_grey = (rcfg.landscape_greyscale if _is_landscape
-                        else rcfg.cinema_greyscale and rcfg.cinema_greyscale_without_sash)
+        _status_grey = ((rcfg.landscape_greyscale or rcfg.landscape_greyscale_logo) if _is_landscape
+                        else (rcfg.cinema_greyscale or rcfg.greyscale_logo)
+                        and rcfg.cinema_greyscale_without_sash)
         # The cinema badge: a film still in cinemas (or not out at all),
         # shown without a sash — or beside a different one.
         # A series gets it too while it waits to premiere: its premiere date,
@@ -12872,12 +12874,12 @@ async def get_poster(
         )
         if not rcfg.release_status_dates:
             discovery_meta.premiere_date = None   # plain "Premiere", as Show Date off reads
-
-        _sash_priority = rcfg.sash_priority
         if _is_anime_title and not rcfg.anime_foreign_sash:
             # Anime is near enough always Japanese: the visitor asked for no
             # "Japanese" sash on it.  build_poster reads rcfg's order too.
             rcfg.sash_priority = [s for s in rcfg.sash_priority if s != "foreign"]
+
+        _sash_priority = rcfg.sash_priority
 
         # ------------------------------------------------------------------
         # Debug mode: return diagnostic JSON instead of rendering the poster.
