@@ -29,6 +29,7 @@ ALIASES: dict[str, str] = {
     "accent_bar_font_size_ratio": "abfsr",
     "accent_bar_y_offset": "abyo",
     "airing_dates": "ard",
+    "anime_foreign_sash": "afs",
     "anime_movie_weights": "amw",
     "anime_provider_art": "apa",
     "anime_tv_weights": "atw",

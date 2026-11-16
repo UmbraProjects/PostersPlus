@@ -2029,6 +2029,9 @@ class RequestConfig:
     release_status_dates: bool = True   # "Oct 16 Cinema" instead of Cinema / Production when TMDB has dated it
     airing_dates:        bool = True    # "Airing Oct 15": an airing show's next episode date
     badge_display_mode:  int  = field(default_factory=lambda: _cfg.BADGE_DISPLAY_MODE)
+    # The Foreign Language sash ("Japanese") on anime: by anime id, or TMDB's
+    # Animation on a Japanese original.  Off leaves it out on anime only.
+    anime_foreign_sash:  bool = True
     rating_display_mode: int  = field(default_factory=lambda: _cfg.SHOW_RATING_DISPLAY_MODE)
 
     accent_bar_font_size_ratio:    float = field(default_factory=lambda: _cfg.ACCENT_BAR_MODE_FONT_SIZE_RATIO)
@@ -3018,7 +3021,7 @@ _LANDSCAPE_BADGE_TUNING: dict[str, tuple[float, float]] = {
     "landscape_badge_y":             (-0.07, 0.30),
 }
 
-_SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "airing_dates": True, "rating_badges": "", "rating_badge_scale": "native",
+_SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "airing_dates": True, "anime_foreign_sash": True, "rating_badges": "", "rating_badge_scale": "native",
                               "trending_list": "",
                               "rating_badge_style": "color",
                               "cinema_greyscale_without_sash": False, "trending_style": "sash",
@@ -3188,6 +3191,7 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.release_status_dates    = _b("release_status_dates",   cfg.release_status_dates)
     cfg.airing_dates            = _b("airing_dates",           cfg.airing_dates)
     cfg.muted                   = _b("muted",                  cfg.muted)
+    cfg.anime_foreign_sash      = _b("anime_foreign_sash",     cfg.anime_foreign_sash)
     cfg.score_out_of_10         = _b("score_out_of_10",        cfg.score_out_of_10)
     cfg.textless                = _b("textless",               cfg.textless)
     # top_gradient accepts off / low / medium / high.  Legacy boolean values
@@ -12870,6 +12874,10 @@ async def get_poster(
             discovery_meta.premiere_date = None   # plain "Premiere", as Show Date off reads
 
         _sash_priority = rcfg.sash_priority
+        if _is_anime_title and not rcfg.anime_foreign_sash:
+            # Anime is near enough always Japanese: the visitor asked for no
+            # "Japanese" sash on it.  build_poster reads rcfg's order too.
+            rcfg.sash_priority = [s for s in rcfg.sash_priority if s != "foreign"]
 
         # ------------------------------------------------------------------
         # Debug mode: return diagnostic JSON instead of rendering the poster.

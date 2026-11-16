@@ -135,6 +135,7 @@ Every setting has a short name, and the configurator writes those: `vpcb=e0b84f`
 | `accent_bar_font_size_ratio` | `abfsr` |
 | `accent_bar_y_offset` | `abyo` |
 | `airing_dates` | `ard` |
+| `anime_foreign_sash` | `afs` |
 | `anime_movie_weights` | `amw` |
 | `anime_provider_art` | `apa` |
 | `anime_tv_weights` | `atw` |
@@ -488,7 +489,7 @@ Sashes display contextual metadata about a title - awards, festival recognition,
 | Season Finale | Recently completed final TV season |
 | Blockbuster | Movie among the `BLOCKBUSTER_TOP_N` (default 10) highest-grossing films of its release year by TMDB worldwide revenue, with at least `BLOCKBUSTER_MIN_REVENUE` (default $100M, in today's dollars, inflation-adjusted to the release year) gross. One cached TMDB lookup per release year |
 | Cult Classic | Curated list of cult classics |
-| Foreign Language | Non-English language title |
+| Foreign Language | Non-English language title. On anime (requested by an anime id, or TMDB's Animation on a Japanese original) it ranks last; `anime_foreign_sash=false` leaves it off anime altogether |
 | Newly Streaming | Legacy combined recency signal |
 | Metacritic Must-See | High Metacritic score |
 | True Story | Based on a true story |

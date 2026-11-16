@@ -3676,6 +3676,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   <div class="toggle-track"><div class="toggle-thumb"></div></div>
                 </label>
               </div>
+              <div class="toggle-row portrait-only" id="sash-anime-foreign-row">
+                <span class="toggle-label" data-tip="Show the Foreign Language sash (“Japanese”) on anime. Off leaves it off anime only, so another sash can show; live-action foreign titles keep theirs.">Foreign Language Sash on Anime</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tog-anime-foreign-sash" checked onchange="build(); queuePreviewReload()">
+                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                </label>
+              </div>
               <div class="toggle-row portrait-only" id="sash-winner-star-row">
                 <span class="toggle-label" data-tip="Prefix a ★ before award winners.">Winner Star</span>
                 <label class="toggle-switch">
@@ -7844,6 +7851,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
   params.set('release_status_dates', c('tog-release-dates') ? 'true' : 'false');
   // On by default, so only the off state is written.
   if (!c('tog-airing-dates')) params.set('airing_dates', 'false');
+  if (!c('tog-anime-foreign-sash')) params.set('anime_foreign_sash', 'false');
   // One value for both shapes: whether a title is out does not depend on
   // which layout is drawing it.
   params.set('hide_unreleased_rating', c('tog-hide-unreleased-rating') ? 'true' : 'false');
@@ -11276,6 +11284,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('release_status_cinema_only')) _setEl('tog-release-cinema-only', p.get('release_status_cinema_only'));
   if (p.has('release_status_dates')) _setEl('tog-release-dates', p.get('release_status_dates'));
   _setEl('tog-airing-dates', !p.has('airing_dates') || p.get('airing_dates') !== 'false');
+  _setEl('tog-anime-foreign-sash', !p.has('anime_foreign_sash') || p.get('anime_foreign_sash') !== 'false');
   if (p.has('hide_unreleased_rating')) _setEl('tog-hide-unreleased-rating', p.get('hide_unreleased_rating'));
   {
     const _mo = (p.get('meta_order') || '').toLowerCase().replace(/\s+/g, '');

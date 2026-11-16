@@ -92,6 +92,7 @@ from config import (
     TRENDING_SOURCE_MAX_ITEMS,
     TRENDING_HIDE_GENRES,
     TRENDING_HIDE_MIXED_GENRES,
+    TRENDING_HIDE_KDRAMAS,
     TRENDING_FETCH_COUNT,
     TRENDING_BROAD_FETCH_COUNT,
     CINEMETA_ENABLED,
@@ -2039,6 +2040,8 @@ def trending_source_signature(media_type: str, lists: "trending_lists.TrendingLi
         out += "-home"            # AniList's films checked against TMDB's dates too
     if TRENDING_HIDE_GENRES:
         out += ("-genres:" if TRENDING_HIDE_MIXED_GENRES else "-onlygenres:") + ",".join(TRENDING_HIDE_GENRES)
+    if _hides_kdramas(media_type):
+        out += "-kdrama"
     if media_type not in ANIME_ENDPOINTS and anime_split():
         out += _ANIME_SPLIT_MARK
     url = _normalise_trending_url(lists.url(media_type))
@@ -2357,7 +2360,7 @@ async def _fetch_tmdb_trending_ids(
     # movies': twice the pages keeps the broad sash's ranks filled after.
     if home is None:
         home = trending_lists.default().home
-    pages_n = 10 if (home or TRENDING_HIDE_GENRES or anime_split()) else 5
+    pages_n = 10 if (home or TRENDING_HIDE_GENRES or _hides_kdramas(endpoint) or anime_split()) else 5
     # A list cut down to a few languages (*deep*) keeps a small share of it.
     if deep:
         pages_n = 20
@@ -2596,56 +2599,87 @@ async def _in_languages(
     return kept
 
 
+# TMDB's Drama and Soap: Korean daily dramas are often filed as Soap.
+_KDRAMA_GENRES = frozenset({18, 10766})
+
+
+def _hides_kdramas(endpoint: str) -> bool:
+    """Whether TRENDING_HIDE_KDRAMAS cuts *endpoint*'s list: TV only, as a
+    K-drama is a series."""
+    return TRENDING_HIDE_KDRAMAS and endpoint == "tv"
+
+
+def is_kdrama(lang: "str | None", genre_ids: "list[int] | None") -> bool:
+    """A Korean-language live-action title filed as Drama or Soap: a Korean
+    animated series filed as Drama too is not a K-drama."""
+    genres = set(genre_ids or ())
+    return lang == "ko" and bool(_KDRAMA_GENRES & genres) and 16 not in genres
+
+
 async def _without_hidden_genres(
     client: httpx.AsyncClient, tmdb_key: str, endpoint: str,
     ids: list[str], details: dict[str, dict], limit: int | None = None,
 ) -> list[str]:
-    """*ids* without the titles TRENDING_HIDE_GENRES hides.  Genres come off
-    the list's own rows (TMDB's and AniList's carry them); a row without them
-    (a custom source's) is looked up in the title metadata the posters cache,
-    and kept when that fails, so a hiccup doesn't empty the row.  Numbered
-    after this, so the ranks have no gaps.
+    """*ids* without the titles TRENDING_HIDE_GENRES hides, nor, on the TV
+    list, the Korean dramas TRENDING_HIDE_KDRAMAS does.  Genres and language
+    come off the list's own rows (TMDB's and AniList's carry them); a row
+    without them (a custom source's) is looked up in the title metadata the
+    posters cache, and kept when that fails, so a hiccup doesn't empty the
+    row.  Numbered after this, so the ranks have no gaps.
 
     Read in batches, stopping once *limit* are kept: a long source (SIMKL's
     500 rows, none with genres) costs lookups only for as much of it as the
     list will hold."""
     hidden = set(TRENDING_HIDE_GENRES)
-    if not hidden:
+    kdramas = _hides_kdramas(endpoint)
+    if not hidden and not kdramas:
         return ids
     kind = trending_kind(endpoint)
     sem = asyncio.Semaphore(8)
 
-    async def genres_of(entry_id: str) -> "list[int] | None":
+    async def facts_of(entry_id: str) -> "tuple[list[int] | None, str | None]":
         detail = details.get(entry_id) or {}
-        if isinstance(detail.get("genres"), list):
-            return detail["genres"]
+        if isinstance(detail.get("genres"), list) and (not kdramas or detail.get("lang")):
+            return detail["genres"], detail.get("lang")
         if entry_id.startswith("anilist:") or not tmdb_key:
-            return None
+            return detail.get("genres") if isinstance(detail.get("genres"), list) else None, detail.get("lang")
         async with sem:
             try:
                 meta = await fetch_poster_metadata(client, entry_id, tmdb_key, kind)
             except Exception as exc:
                 logger.warning(f"Trending: no genres for {kind} {entry_id}: {exc}")
-                return None
+                return None, detail.get("lang")
         genre_ids = list(meta[0])
         detail["genres"] = genre_ids
+        lang = (meta[7] or {}).get("original_language")
+        if lang:
+            detail["lang"] = lang
         _note_tmdb_date(detail, meta)
         details[entry_id] = detail
-        return genre_ids
+        return genre_ids, detail.get("lang")
 
     from config import genre_hidden
+
+    def dropped(facts: "tuple[list[int] | None, str | None]") -> bool:
+        genres, lang = facts
+        if genres is None:
+            return False
+        if hidden and genre_hidden(genres, hidden, TRENDING_HIDE_MIXED_GENRES):
+            return True
+        return kdramas and is_kdrama(lang, genres)
+
     kept: list[str] = []
     checked = 0
     for start in range(0, len(ids), _GENRE_BATCH):
         batch = ids[start:start + _GENRE_BATCH]
         checked += len(batch)
-        genres = await asyncio.gather(*(genres_of(i) for i in batch))
-        kept += [i for i, g in zip(batch, genres)
-                 if g is None or not genre_hidden(g, hidden, TRENDING_HIDE_MIXED_GENRES)]
+        found = await asyncio.gather(*(facts_of(i) for i in batch))
+        kept += [i for i, f in zip(batch, found) if not dropped(f)]
         if limit is not None and len(kept) >= limit:
             break
     if len(kept) < checked:
-        logger.info(f"Trending {endpoint}: left out {checked - len(kept)} title(s) of hidden genres")
+        logger.info(f"Trending {endpoint}: left out {checked - len(kept)} title(s) of hidden genres"
+                    + (" or Korean dramas" if kdramas else ""))
     return kept
 
 

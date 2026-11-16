@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Hide Korean dramas from trending; anime without the Japanese sash
+
+- New `TRENDING_HIDE_KDRAMAS` (dashboard → Trending, off by default) leaves
+  Korean dramas off the TV trending list, its ranks and the Trending Series
+  catalogs: series whose original language is Korean and that TMDB files as
+  Drama or Soap. Korean variety and reality shows stay, and the rest are
+  ranked without gaps.
+- New **Foreign Language Sash on Anime** switch under Sash → Behaviour
+  (`anime_foreign_sash=false`, short `afs`; on by default). Off leaves the
+  "Japanese" sash off anime, by anime id or TMDB's Animation on a Japanese
+  original, so the next sash in the order shows. Live-action foreign titles
+  keep theirs.
+
 ### Graphic badges: hide instead of move
 
 - New **Overflow** setting under Graphic Badges (`badge_overflow=move|hide`,
