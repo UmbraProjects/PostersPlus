@@ -2649,7 +2649,7 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <input type="hidden" id="cfg-original-labels" value="" data-default="">
               <div class="sash-list lp-list" id="original-labels-list"></div>
               <select id="original-labels-add" onchange="addOriginalLabel(this.value)">
-                <option value="" selected>Off — add a language…</option>
+                <option value="" selected>Add custom language…</option>
               </select>
             </div>
             <div class="field">
@@ -2891,6 +2891,13 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
               <span class="group-title">Style</span>
               <div id="rating-mode1-fields">
                 <div class="field portrait-only">
+                  <label class="field-label" data-tip="Floating: a short rounded bar above the bottom edge, set by Bar Position. Edge: a thin strip along the very bottom, as on landscape posters and continue-watching cards; it is as long as the score and the client's rounded corners round it off.">Bar Style</label>
+                  <select id="cfg-accent-bar-style" onchange="updateRatingFields(); build(); queuePreviewReload()">
+                    <option value="floating" selected>Floating</option>
+                    <option value="edge">Edge</option>
+                  </select>
+                </div>
+                <div class="field portrait-only">
                   <label class="field-label" data-tip="What to append after the genre.">Label Suffix</label>
                   <select id="cfg-bar-append" onchange="updateRatingFields(); build(); queuePreviewReload()">
                     <option value="0" selected>Year</option>
@@ -2935,13 +2942,6 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                     <input type="range" id="cfg-y-mode1" min="0.70" max="0.98" step="0.01" value="0.90" oninput="updateRange(this,'rng-y1'); build(); queuePreviewReload()">
                     <span class="range-val" id="rng-y1">0.90</span>
                   </div>
-                </div>
-                <div class="field portrait-only">
-                  <label class="field-label" data-tip="Floating: a short rounded bar above the bottom edge, set by Bar Position. Edge: a thin strip along the very bottom, as on landscape posters and continue-watching cards; it is as long as the score and the client's rounded corners round it off.">Bar Style</label>
-                  <select id="cfg-accent-bar-style" onchange="updateRatingFields(); build(); queuePreviewReload()">
-                    <option value="floating" selected>Floating</option>
-                    <option value="edge">Edge</option>
-                  </select>
                 </div>
                 <div class="field portrait-only" id="bar-bottom-field">
                   <label class="field-label">Bar Position</label>
@@ -6700,7 +6700,7 @@ function buildRatingBadgeList() {
   if (disabled.length) {
     const section = document.createElement('div');
     section.className = 'sash-disabled-section';
-    section.innerHTML = `<div class="sash-disabled-header">${order.length ? 'Not shown' : 'Off — add a site to show its badge'}</div>`;
+    section.innerHTML = `<div class="sash-disabled-header">${order.length ? 'Not shown' : 'Add a site to show its badge'}</div>`;
     disabled.forEach(src => section.appendChild(row(src, null)));
     container.appendChild(section);
   }
@@ -6787,7 +6787,7 @@ function buildOriginalLabelsList() {
     container.appendChild(item);
   });
   container.style.display = chosen.length ? '' : 'none';
-  picker.innerHTML = `<option value="" selected>${chosen.length ? 'Add another language…' : 'Off — add a language…'}</option>`
+  picker.innerHTML = `<option value="" selected>${chosen.length ? 'Add another language…' : 'Add custom language…'}</option>`
     + ORIGINAL_LABEL_LANGS.filter(([c]) => !chosen.includes(c))
         .map(([c, n]) => `<option value="${c}">${n}</option>`).join('');
   picker.value = '';

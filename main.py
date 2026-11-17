@@ -1174,14 +1174,16 @@ _SHAPE_ALIASES = {
 def _normalise_shape(raw: str | None) -> str:
     """Canonicalise the ``shape`` parameter, or raise for one we cannot render.
 
-    ``square`` is the one value that has to be refused rather than coerced.
+    ``square`` and ``backdrop`` have to be refused rather than coerced.
     Nuvio only asks for it when a Stremio addon declares ``posterShape:
     "square"`` on a catalogue item, and only once the pattern contains
     ``{shape}`` — without the placeholder it leaves those items alone. We have
     no square renderer, so coercing it would push a 2:3 poster into a 1:1 tile
     and squash it. An error instead hands the item back to Nuvio's fallback
     interceptor, which restores the addon's own square art: the shapes we do
-    serve are replaced, the one we don't is left as it was.
+    serve are replaced, the one we don't is left as it was. ``backdrop`` is
+    refused for the same reason: coercing it to portrait would answer a
+    backdrop slot with a valid 2:3 poster in the wrong format.
 
     Everything else stays lenient and lands on portrait, including an
     unsubstituted "{shape}" from a build that does not know the placeholder —
@@ -1190,10 +1192,10 @@ def _normalise_shape(raw: str | None) -> str:
     value = (raw or "").strip().lower()
     if not value or value in ("{shape}", "{shape?}"):
         return "portrait"
-    if value == "square":
+    if value in ("square", "backdrop"):
         raise HTTPException(
             status_code=400,
-            detail="Unsupported shape: PostersPlus renders portrait and landscape, not square.",
+            detail=f"Unsupported shape: PostersPlus renders portrait and landscape, not {value}.",
         )
     return _SHAPE_ALIASES.get(value, "portrait")
 

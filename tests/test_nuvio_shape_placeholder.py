@@ -71,11 +71,15 @@ class ShapeVocabularyTests(unittest.TestCase):
     def test_an_unknown_shape_stays_lenient(self):
         self.assertEqual(_normalise_shape("banner"), "portrait")
 
-    def test_square_is_refused_rather_than_coerced(self):
-        with self.assertRaises(HTTPException) as caught:
-            _normalise_shape("square")
-        self.assertEqual(caught.exception.status_code, 400)
-        self.assertIn("square", caught.exception.detail.lower())
+    def test_square_and_backdrop_are_refused_rather_than_coerced(self):
+        # Coercing either to portrait would answer the request with a valid
+        # 2:3 poster in the wrong format.
+        for shape in ("square", "backdrop", "Backdrop"):
+            with self.subTest(shape=shape):
+                with self.assertRaises(HTTPException) as caught:
+                    _normalise_shape(shape)
+                self.assertEqual(caught.exception.status_code, 400)
+                self.assertIn(shape.lower(), caught.exception.detail.lower())
 
     def test_landscape_still_seeds_its_own_defaults(self):
         cfg = build_request_config({"shape": "landscape"})
