@@ -373,6 +373,16 @@ class AddonLandscapeTests(_AddonTest):
         self.assertEqual(meta["background"], "https://image.tmdb.org/t/p/w1280/5-bg.jpg")
         self.assertEqual(meta["poster"], "https://img.anili.st/5.jpg")
 
+    def test_a_slow_anime_lookup_does_not_hold_up_the_catalog(self):
+        async def _slow(*args, **kwargs):
+            await asyncio.sleep(0.2)
+            return "/late.jpg"
+
+        with mock.patch.object(main, "_ANIME_BACKDROP_WAIT", 0.01), \
+                mock.patch.object(main, "_anime_trending_backdrop", side_effect=_slow):
+            meta = self._metas("/trending/sekrit/catalog/series/pp.trending.anime.json")[0]
+        self.assertEqual(meta["background"], "https://img.anili.st/5-banner.jpg")
+
     def test_unmapped_anime_falls_back_to_its_anilist_banner(self):
         async def _unresolved(*args, **kwargs):
             return None

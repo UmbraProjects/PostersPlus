@@ -8125,6 +8125,14 @@ def _list_version(rankings: dict[str, int]) -> str:
     return hashlib.sha256(order.encode()).hexdigest()[:10]
 
 
+# How long a trending catalog waits on an AniList row's TMDB backdrop.  An
+# unmapped title goes through the resolver (AniList, then TMDB, each allowed
+# 15 s), and a catalog row that never needed the network before must not hang
+# a client on a slow AniList: past this the row keeps its AniList banner and
+# the lookup finishes in the background, cached for the next request.
+_ANIME_BACKDROP_WAIT = 4.0
+
+
 async def _anime_trending_backdrop(
     client: httpx.AsyncClient, entry_id: str, kind: str, sem: asyncio.Semaphore,
 ) -> str | None:
@@ -8193,7 +8201,11 @@ async def _trending_catalog_meta(
     by_anilist = entry_id.startswith("anilist:")
     kind = trending_kind(endpoint)
     if by_anilist and _cfg.SERVER_TMDB_KEY:
-        tmdb_backdrop = await _anime_trending_backdrop(client, entry_id, kind, sem)
+        lookup = _spawn_background(_anime_trending_backdrop(client, entry_id, kind, sem))
+        try:
+            tmdb_backdrop = await asyncio.wait_for(asyncio.shield(lookup), _ANIME_BACKDROP_WAIT)
+        except asyncio.TimeoutError:
+            tmdb_backdrop = None
         if tmdb_backdrop:
             detail = {**detail, "backdrop": tmdb_backdrop}
     want_backdrop = not detail.get("backdrop")
