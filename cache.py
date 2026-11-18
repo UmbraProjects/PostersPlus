@@ -2,6 +2,7 @@
 import hashlib
 import logging
 import os
+import shutil
 import sqlite3
 import threading
 import tempfile
@@ -32,6 +33,8 @@ from config import (
     COMPOSITE_CACHE_TTL,
     COMPOSITE_CACHE_TTL_JITTER,
     COMPOSITE_MAX_ENTRIES,
+    COMPOSITE_MAX_GB,
+    CACHE_MIN_FREE_GB,
     COMPOSITE_MEM_ENTRIES,
     QUALITY_OLD_CACHE_DURATION,
     DIGITAL_RELEASE_MAX_AGE_DAYS,
@@ -499,6 +502,7 @@ def init_db() -> None:
     # A provisional render kept for PROVISIONAL_CACHE_TTL: a hit on it must
     # be answered as one (no validator).
     _add_column_if_missing(conn, "final_poster_cache", "provisional", "INTEGER")
+    _init_composite_totals(conn)
 
     # Which source a trending snapshot came from.  Without this, changing
     # TRENDING_SOURCE_* had no visible effect until the snapshot aged out on its
@@ -516,6 +520,59 @@ def init_db() -> None:
     _clear_bulk_letterboxd_rows(conn)
 
     conn.commit()
+
+
+def _init_composite_totals(conn: sqlite3.Connection) -> None:
+    """The composites' total size, kept current by triggers, for
+    COMPOSITE_MAX_GB and /stats.  A SUM over the table reads a page per row
+    (seconds on a cold cache of hundreds of thousands), and composites are
+    deleted from a dozen places, so the triggers keep the total instead of
+    every one of them.
+
+    size is the image's length, stored at write time.  Rows from before the
+    column have none, so the triggers fall back to LENGTH(jpeg_bytes), which
+    SQLite answers from the row header without reading the blob.  The insert
+    trigger runs BEFORE so it can take off the row an INSERT OR REPLACE is
+    about to replace: that delete fires no delete trigger (recursive_triggers
+    is off, SQLite's default).  Called inside init_db's BEGIN IMMEDIATE, so
+    the first total is taken with no other worker writing."""
+    _add_column_if_missing(conn, "final_poster_cache", "size", "INTEGER")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS final_poster_totals ("
+        " id INTEGER PRIMARY KEY CHECK (id = 1), bytes INTEGER NOT NULL)"
+    )
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS final_poster_bytes_insert
+        BEFORE INSERT ON final_poster_cache BEGIN
+            UPDATE final_poster_totals SET bytes = bytes
+                + COALESCE(NEW.size, LENGTH(NEW.jpeg_bytes))
+                - COALESCE((SELECT COALESCE(size, LENGTH(jpeg_bytes))
+                            FROM final_poster_cache WHERE cache_key = NEW.cache_key), 0)
+            WHERE id = 1;
+        END
+    """)
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS final_poster_bytes_delete
+        AFTER DELETE ON final_poster_cache BEGIN
+            UPDATE final_poster_totals
+            SET bytes = bytes - COALESCE(OLD.size, LENGTH(OLD.jpeg_bytes)) WHERE id = 1;
+        END
+    """)
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS final_poster_bytes_update
+        AFTER UPDATE OF jpeg_bytes, size ON final_poster_cache BEGIN
+            UPDATE final_poster_totals SET bytes = bytes
+                - COALESCE(OLD.size, LENGTH(OLD.jpeg_bytes))
+                + COALESCE(NEW.size, LENGTH(NEW.jpeg_bytes))
+            WHERE id = 1;
+        END
+    """)
+    # Checked first: the SELECT would otherwise sum the table on every start.
+    if conn.execute("SELECT 1 FROM final_poster_totals WHERE id = 1").fetchone() is None:
+        conn.execute(
+            "INSERT INTO final_poster_totals (id, bytes) "
+            "SELECT 1, COALESCE(SUM(COALESCE(size, LENGTH(jpeg_bytes))), 0) FROM final_poster_cache"
+        )
 
 
 _WRONG_TYPE_MISSES_DONE = "cleanup:mdblist-wrong-type-misses:v1"
@@ -815,22 +872,27 @@ def set_cached_final_poster(
             while len(_composite_l1) > COMPOSITE_MEM_ENTRIES:
                 _composite_l1.popitem(last=False)
 
-    # L2: persist to SQLite for warm restarts
+    # L2: persist to SQLite for warm restarts — unless the volume is nearly
+    # full, when the poster is still served, just not kept.
+    if disk_low():
+        return expires_at
     try:
         with _db_lock:
             get_db().execute(
                 """
                 INSERT OR REPLACE INTO final_poster_cache
                     (cache_key, jpeg_bytes, cached_at, request_params, expires_at,
-                     render_rev, render_facts, provisional)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     render_rev, render_facts, provisional, size)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (cache_key, jpeg_bytes, now, request_params, expires_at, render_rev,
                  json.dumps(render_facts) if render_facts is not None else None,
-                 1 if provisional else None),
+                 1 if provisional else None, len(jpeg_bytes)),
             )
             if COMPOSITE_MAX_ENTRIES > 0:
                 _enforce_composite_cap()
+            if _composite_max_bytes() > 0:
+                _enforce_composite_bytes_cap(_BYTES_EVICT_PER_WRITE)
             get_db().commit()
     except Exception as exc:
         logger.error(f"Final poster cache write error: {exc}")
@@ -873,6 +935,95 @@ def _enforce_composite_cap() -> None:
         logger.info(f"Composite cache cap: evicted {overflow} oldest entries")
         count -= overflow
     _composite_count_estimate = count
+
+
+# COMPOSITE_MAX_GB: past the cap the oldest composites go until the total is
+# back under _BYTES_LOW_WATER of it, so a cache at its cap evicts in batches
+# rather than on every write.  A write evicts at most _BYTES_EVICT_PER_WRITE
+# rows, so lowering the cap a long way doesn't hold _db_lock for one request's
+# write while gigabytes are freed; prune_caches finishes the job in batches.
+_BYTES_LOW_WATER = 0.95
+_BYTES_EVICT_PER_WRITE = 500
+_EVICT_CHUNK = 500
+
+
+def _composite_max_bytes() -> int:
+    return int(COMPOSITE_MAX_GB * 1024 ** 3) if COMPOSITE_MAX_GB > 0 else 0
+
+
+def composite_total_bytes(db: sqlite3.Connection | None = None) -> int | None:
+    """The composites' total size from the trigger-kept total (see
+    _init_composite_totals); None when the row is missing."""
+    try:
+        row = (db or get_db()).execute(
+            "SELECT bytes FROM final_poster_totals WHERE id = 1").fetchone()
+    except sqlite3.Error:
+        return None
+    return int(row[0]) if row else None
+
+
+def _enforce_composite_bytes_cap(limit: int) -> int:
+    """Evict the oldest composites, at most *limit* of them, while the total
+    is over COMPOSITE_MAX_GB.  Called with _db_lock held, inside the caller's
+    transaction.  Returns how many went."""
+    cap = _composite_max_bytes()
+    db = get_db()
+    total = composite_total_bytes(db)
+    if not cap or total is None or total <= cap:
+        return 0
+    excess = total - int(cap * _BYTES_LOW_WATER)
+    keys, freed = [], 0
+    for key, size in db.execute(
+        "SELECT cache_key, COALESCE(size, LENGTH(jpeg_bytes)) FROM final_poster_cache "
+        "ORDER BY cached_at ASC LIMIT ?", (limit,),
+    ).fetchall():
+        keys.append(key)
+        freed += size or 0
+        if freed >= excess:
+            break
+    for i in range(0, len(keys), _EVICT_CHUNK):
+        chunk = keys[i:i + _EVICT_CHUNK]
+        db.execute(f"DELETE FROM final_poster_cache WHERE cache_key IN ({','.join('?' * len(chunk))})", chunk)
+    if keys:
+        logger.info(f"Composite size cap: evicted {len(keys)} oldest entries ({freed / 1e6:.0f} MB)")
+    return len(keys)
+
+
+# CACHE_MIN_FREE_GB: the free space on the cache volume, looked at no more
+# than every _DISK_CHECK_EVERY seconds (a statvfs is cheap, but this sits on
+# every composite and image write).
+_DISK_CHECK_EVERY = 10.0
+_DISK_WARN_EVERY = 600.0
+_disk_checked_at: float | None = None
+_disk_is_low = False
+_disk_warned_at = 0.0
+
+
+def disk_low() -> bool:
+    """Whether the cache volume is below CACHE_MIN_FREE_GB of free space, when
+    rendered posters and downloaded images are served without being stored."""
+    global _disk_checked_at, _disk_is_low, _disk_warned_at
+    if CACHE_MIN_FREE_GB <= 0:
+        return False
+    now = time.monotonic()
+    if _disk_checked_at is not None and now - _disk_checked_at < _DISK_CHECK_EVERY:
+        return _disk_is_low
+    _disk_checked_at = now
+    try:
+        free = shutil.disk_usage(os.path.dirname(os.path.abspath(DB_PATH))).free
+    except OSError:
+        return _disk_is_low
+    low = free < CACHE_MIN_FREE_GB * 1024 ** 3
+    if low and (not _disk_is_low or now - _disk_warned_at >= _DISK_WARN_EVERY):
+        _disk_warned_at = now
+        logger.warning(
+            f"Cache volume has {free / 1024 ** 3:.2f} GB free, under CACHE_MIN_FREE_GB="
+            f"{CACHE_MIN_FREE_GB:g}: posters are served but not cached until space is freed"
+        )
+    elif _disk_is_low and not low:
+        logger.info(f"Cache volume has {free / 1024 ** 3:.2f} GB free again; caching resumed")
+    _disk_is_low = low
+    return low
 
 
 def delete_cached_final_poster(cache_key: str) -> None:
@@ -1099,13 +1250,11 @@ def get_cache_stats() -> dict:
             except Exception:
                 stats[table] = None
 
-        try:
-            (total,) = db.execute(
-                "SELECT COALESCE(SUM(LENGTH(jpeg_bytes)), 0) FROM final_poster_cache"
-            ).fetchone()
-            stats["composite_bytes"] = int(total)
-        except Exception:
-            stats["composite_bytes"] = None
+        # The trigger-kept total (see _init_composite_totals), not a SUM: that
+        # read a page per row, seconds on a big cold cache.
+        stats["composite_bytes"] = composite_total_bytes(db)
+        stats["composite_max_bytes"] = _composite_max_bytes() or None
+        stats["disk_low"] = disk_low()
 
         try:
             stats["db_file_bytes"] = os.path.getsize(DB_PATH)
@@ -1163,6 +1312,15 @@ def prune_caches() -> None:
                 break
         if pruned:
             logger.info(f"Pruned {pruned} expired composite cache entries")
+
+        # COMPOSITE_MAX_GB, for what a write's bounded eviction left over
+        # (the cap lowered a long way), in batches like the expiry above.
+        while _composite_max_bytes() > 0:
+            with _db_lock:
+                evicted = _enforce_composite_bytes_cap(_PRUNE_BATCH)
+                get_db().commit()
+            if evicted < _PRUNE_BATCH:
+                break
 
         with _db_lock:
             db = get_db()
@@ -1861,6 +2019,8 @@ def get_cached_tmdb_poster(cache_key: str) -> bytes | None:
 def set_cached_tmdb_poster(cache_key: str, data: bytes) -> None:
     # Store as .jpg — written by tmdb.py as JPEG q=92 RGB, then converted
     # back to RGBA on load.  ~4x faster decode vs PNG, ~5x smaller on disk.
+    if disk_low():
+        return
     try:
         path = _safe_cache_path(TMDB_POSTER_CACHE_DIR, cache_key)
         _atomic_write(path, data)
@@ -1914,6 +2074,8 @@ def get_cached_tmdb_logo(cache_key: str) -> bytes | None:
 
 
 def set_cached_tmdb_logo(cache_key: str, data: bytes) -> None:
+    if disk_low():
+        return
     try:
         path = _safe_cache_path(TMDB_LOGO_CACHE_DIR, cache_key)
         _remove_if_dir(path)

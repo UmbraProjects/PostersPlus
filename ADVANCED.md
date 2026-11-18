@@ -202,6 +202,12 @@ The address clients reach this instance on, e.g. `https://posters.example.com`. 
 
 Default: blank (derived from the request)
 
+### `CONFIGURATOR_FRAME_ANCESTORS`
+
+Other sites allowed to show the configurator inside a frame, for example a Homarr or Organizr dashboard. List origins comma-separated (`https://home.example.com, http://10.0.0.5:7575`), or `*` for any. By default only the instance itself may frame the configurator, sent as `Content-Security-Policy: frame-ancestors 'self'`. That stops another page from overlaying it and steering clicks while it holds the visitor's API keys and the access key. Entries that aren't origins are ignored with a warning in the log.
+
+Default: blank (this instance only)
+
 ---
 
 ## Ratings without MDBList

@@ -9,6 +9,7 @@ Everything here can be set from the [admin dashboard](README.md#admin-dashboard)
 - [Custom trending sources](#custom-trending-sources) and the [trending catalogs addon](#trending-catalogs-addon)
 - [Customising directors, studios and cast](#customising-directors-studios-and-cast)
 - [Caching](#caching) and [cache warming](#cache-warming)
+- [Running a public instance](#running-a-public-instance)
 - [Plex and Jellyfin sync](#plex-and-jellyfin-sync)
 
 Tuning knobs a running instance never needs are in [ADVANCED.md](ADVANCED.md). Poster URL parameters are in [URL_REFERENCE.md](URL_REFERENCE.md).
@@ -81,7 +82,7 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `ADMIN_KEY` | - | Enables the [admin dashboard](README.md#admin-dashboard) at `/admin`. At least 12 characters. Env-only: it is the one setting the dashboard cannot manage, because it is what protects the dashboard. |
 | `PUBLIC_SHARE_ORIGIN` | - | Explicitly declare this instance public for Share settings by setting its HTTPS origin, e.g. https://posters.example.com (no path, credentials, query or fragment). Blank keeps the instance private and shares use https://postersplus.cc. Shared URLs used directly in clients send requests to that public server and use its configuration and resources. Set only for an instance intended for public use without an access key; this does not change access controls. |
 | `ACCESS_KEY` | - | Shared secret every poster and configurator request must carry as access_key. Leave blank for open access. |
-| `CONFIGURATOR_EXTERNAL_AUTH` | `false` | Turn on only if the configurator sits behind its own login (Authelia, Pangolin, an SSO proxy). The configurator then opens without ?access_key= and fills the access key into previews and copied URLs itself, while posters still require it. Anyone who can reach the configurator can read the access key, so it is only as safe as that login, and the login must cover every path the configurator uses: `/`, `/server-caps`, `/search`, `/resolve-imdb`, `/resolve-tmdb` and `/debug/fallback-gallery` (/server-caps hands out the key). No effect without an access key. `true` or `false`. |
+| `CONFIGURATOR_EXTERNAL_AUTH` | `false` | Turn on only if the configurator sits behind its own login (Authelia, Pangolin, an SSO proxy). The configurator then opens without ?access_key= and fills the access key into previews and copied URLs itself, while posters still require it. Anyone who can reach the configurator can read the access key, so it is only as safe as that login, and the login must cover every path the configurator uses: `/`, `/server-caps`, `/search`, `/resolve-imdb`, `/resolve-tmdb`, `/trending-top10`, `/report` and `/debug/fallback-gallery` (/server-caps hands out the key). No effect without an access key. `true` or `false`. |
 | `SHOW_ADMIN_LINK` | `false` | Show an Admin link in the configurator's header, pointing at this dashboard. Off by default so visitors to a public instance aren't invited to try it; the dashboard still needs ADMIN_KEY either way, and the link stays hidden while the dashboard is disabled. `true` or `false`. |
 | `MAX_POSTER_RESOLUTION` | `500` | Largest portrait width the resolution URL parameter (500, 780, 1000, 1500, 2000) may request. 500 turns larger sizes off; a request above the limit gets the largest allowed size. Larger posters cost far more CPU and memory to render (2000 px is about 12x a 500), so raise this only on an instance you control. One of `500`, `780`, `1000`, `1500`, `2000`. |
 | `PREVIEW_AT_RESOLUTION` | `false` | Render the configurator's live preview at the poster resolution picked there, instead of always at 500 wide. Useful for judging sharpness; each settings change then costs a render at that size (a 2000 px render is about 12x a 500). Only used when `MAX_POSTER_RESOLUTION` is `780` or `1000` or `1500` or `2000`. `true` or `false`. |
@@ -173,6 +174,8 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `QUALITY_OLD_CACHE_DURATION` | `90` | Stream quality for older titles is stable, so it is cached this long; new titles keep a 1-day window. |
 | `COMPOSITE_CACHE_TTL` | `604800` | How long a fully rendered poster is kept before it is re-rendered. Default 604800 (7 days). |
 | `COMPOSITE_MAX_ENTRIES` | `500000` | Oldest entries are evicted past this many. A composite is roughly 50-150 KB, so the default 500000 holds about 50 GB. 0 relies on the TTL alone, which lets requests with ever-new settings grow the cache without bound. |
+| `COMPOSITE_MAX_GB` | `0` | Oldest rendered posters are evicted once the composite cache holds more than this many GB, down to 95% of it. Works alongside the entry cap; whichever is reached first applies. 0 turns the size cap off. |
+| `CACHE_MIN_FREE_GB` | `1` | When the cache volume has less free space than this, posters are still rendered and served but not written to the cache until space is freed. 0 turns the check off. |
 
 #### Cache warming
 
@@ -560,6 +563,21 @@ PostersPlus uses SQLite (WAL mode) for metadata and rendered-poster caching, plu
 | Quality badges (new) | 1 day |
 | Quality badges (older) | 90 days |
 | Composite posters | 7 days |
+
+Rendered posters are kept per title and per effective setting, so the composite cache grows with every distinct look clients ask for. Two caps bound it: `COMPOSITE_MAX_ENTRIES` by count and `COMPOSITE_MAX_GB` by size (off by default). Whichever is reached first evicts the oldest composites. A composite is roughly 65 KB at the default 500 px, about 100 KB landscape and up to about 570 KB at 2000 px, so the size cap is the one that matches your disk. Separately, `CACHE_MIN_FREE_GB` (1 GB by default) stops writing composites and downloaded source images while the cache volume has less free space than that. Posters are still rendered and served, and caching resumes on its own once space is freed.
+
+---
+
+## Running a public instance
+
+Anyone who can reach a public instance can make it render and store posters, and spend its TMDB and MDBList quota. The app limits what one request can cost, but it does not rate-limit clients itself. That belongs in front of it:
+
+- **Rate-limit at the reverse proxy.** For example, Traefik's `ratelimit` middleware or Pangolin's rate-limit rules, keyed on the client address. Cached posters are cheap, but a stream of requests with new settings or new title ids renders and stores each one.
+- **Keep `MAX_POSTER_RESOLUTION` at the default 500, or 780 at most.** Larger sizes cost several times the CPU, memory and disk per poster.
+- **Size the cache to the disk.** Set `COMPOSITE_MAX_GB` comfortably below the volume's free space, and leave `CACHE_MIN_FREE_GB` on as the backstop.
+- **Set `PUBLIC_URL`.** Without it, the trending addon builds its poster links from the request's forwarded headers (see [ADVANCED.md](ADVANCED.md#public_url)).
+- **Pass client addresses through.** Set `FORWARDED_ALLOW_IPS` to the proxy's address or network, not `*` unless nothing but the proxy can reach port 8000. Otherwise every visitor shares one address for the admin login lockout and the report limits. With the proxy in place, don't publish port 8000 on a public interface: requests that skip the proxy also skip its rate limits and logins.
+- **Use long keys.** `ADMIN_KEY` needs at least 12 characters. An `ACCESS_KEY` shorter than 12 is throttled per address after wrong guesses.
 
 ---
 

@@ -135,6 +135,52 @@ class LogRedactionTests(unittest.TestCase):
         main._TruncateUrlFilter().filter(record)
         self.assertNotIn("USERKEY", record.getMessage())
 
+    def test_the_admin_key_in_the_dashboard_address_is_redacted(self):
+        # uvicorn's access line for the one page load that carries it.
+        record = logging.LogRecord(
+            "uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d',
+            ("203.0.113.9:1", "GET", "/admin?admin_key=OPERATORSECRET", "1.1", 200), None,
+        )
+        main._TruncateUrlFilter().filter(record)
+        self.assertNotIn("OPERATORSECRET", record.getMessage())
+        self.assertEqual(main._TruncateUrlFilter._redact("/admin?admin_key=S3CRET&x=1"),
+                         "/admin?admin_key=***&x=1")
+
+
+class ConfiguratorPageHeaderTests(unittest.TestCase):
+    """The configurator holds the user's API keys and the access key, so it
+    may be framed only by this instance and the origins the operator names."""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+        p = mock.patch.object(main._cfg, "ACCESS_KEY", None)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_the_page_and_its_revalidation_carry_the_headers(self):
+        first = self.client.get("/")
+        again = self.client.get("/", headers={"If-None-Match": first.headers["etag"]})
+        self.assertEqual(again.status_code, 304)
+        for response in (first, again):
+            with self.subTest(status=response.status_code):
+                self.assertIn("frame-ancestors 'self';", response.headers["content-security-policy"])
+                self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+                self.assertEqual(response.headers["referrer-policy"], "same-origin")
+
+    def test_the_fallback_gallery_carries_them_too(self):
+        r = self.client.get("/debug/fallback-gallery")
+        self.assertIn("frame-ancestors", r.headers["content-security-policy"])
+
+    def test_named_origins_may_frame_it_and_junk_is_dropped(self):
+        with mock.patch.object(main._cfg, "CONFIGURATOR_FRAME_ANCESTORS",
+                               "https://home.example.com/, http://10.0.0.5:7575 javascript:x 'none'"):
+            csp = main._configurator_page_headers()["Content-Security-Policy"]
+        self.assertTrue(csp.startswith(
+            "frame-ancestors 'self' https://home.example.com http://10.0.0.5:7575;"), csp)
+        with mock.patch.object(main._cfg, "CONFIGURATOR_FRAME_ANCESTORS", "*"):
+            self.assertIn("frame-ancestors 'self' *;",
+                          main._configurator_page_headers()["Content-Security-Policy"])
+
 
 class AdminLockoutTests(unittest.TestCase):
     def setUp(self):

@@ -79,7 +79,11 @@ ACCESS_KEY            = _env('ACCESS_KEY', "", group='Access & serving', kind='s
 # through a browser, so /poster keeps its access key, but the configurator no
 # longer asks for one and hands the key to the page itself.  Anyone who can open
 # the configurator can therefore read the key — it is only as safe as that login.
-CONFIGURATOR_EXTERNAL_AUTH = _env('CONFIGURATOR_EXTERNAL_AUTH', "false", group='Access & serving', kind='bool', label='Configurator protected externally', help="Turn on only if the configurator sits behind its own login (Authelia, Pangolin, an SSO proxy). The configurator then opens without ?access_key= and fills the access key into previews and copied URLs itself, while posters still require it. Anyone who can reach the configurator can read the access key, so it is only as safe as that login, and the login must cover every path the configurator uses: `/`, `/server-caps`, `/search`, `/resolve-imdb`, `/resolve-tmdb` and `/debug/fallback-gallery` (/server-caps hands out the key). No effect without an access key.").strip().lower() in ("1", "true", "yes")
+CONFIGURATOR_EXTERNAL_AUTH = _env('CONFIGURATOR_EXTERNAL_AUTH', "false", group='Access & serving', kind='bool', label='Configurator protected externally', help="Turn on only if the configurator sits behind its own login (Authelia, Pangolin, an SSO proxy). The configurator then opens without ?access_key= and fills the access key into previews and copied URLs itself, while posters still require it. Anyone who can reach the configurator can read the access key, so it is only as safe as that login, and the login must cover every path the configurator uses: `/`, `/server-caps`, `/search`, `/resolve-imdb`, `/resolve-tmdb`, `/trending-top10`, `/report` and `/debug/fallback-gallery` (/server-caps hands out the key). No effect without an access key.").strip().lower() in ("1", "true", "yes")
+# Which other sites may show the configurator in a frame (frame-ancestors).
+# Only this instance by default, so another page can't lay the configurator,
+# which holds the user's API keys and the access key, under its own clicks.
+CONFIGURATOR_FRAME_ANCESTORS = _env('CONFIGURATOR_FRAME_ANCESTORS', "", group='Access & serving', kind='list', label='Configurator frame origins', help="Other sites allowed to show the configurator inside a frame, such as a Homarr or Organizr dashboard: origins like https://home.example.com, comma-separated, or * for any. Blank lets only this instance frame it.", placeholder='https://home.example.com', advanced=True).strip()
 # Off by default: on a public instance an Admin link in every visitor's header
 # only invites people to try keys against the dashboard.  _flag isn't defined
 # yet at this point, hence the inline parse.
@@ -665,6 +669,15 @@ PROVISIONAL_CACHE_TTL      = int(_env('PROVISIONAL_CACHE_TTL', "300", group='Cac
 # alone), which let any client that can request posters fill the disk with
 # distinct render settings.
 COMPOSITE_MAX_ENTRIES      = int(_env('COMPOSITE_MAX_ENTRIES', "500000", group='Caching', kind='int', label='Composite cache max entries', help='Oldest entries are evicted past this many. A composite is roughly 50-150 KB, so the default 500000 holds about 50 GB. 0 relies on the TTL alone, which lets requests with ever-new settings grow the cache without bound.', min=0, max=10000000))
+# The same cap by size.  A count can't bound the disk on its own: a composite
+# is ~65 KB at 500 px, ~100 KB landscape and ~570 KB at 2000 px.  Past it the
+# oldest composites go until the cache is back under 95% of it.  0 = no size
+# cap, only the count above.
+COMPOSITE_MAX_GB           = float(_env('COMPOSITE_MAX_GB', "0", group='Caching', kind='float', label='Composite cache max size (GB)', help='Oldest rendered posters are evicted once the composite cache holds more than this many GB, down to 95% of it. Works alongside the entry cap; whichever is reached first applies. 0 turns the size cap off.', min=0, max=100000))
+# Below this much free space on the cache volume, rendered posters and source
+# images are still served but no longer stored, so a full disk can't take the
+# SQLite cache (and every other write on the volume) down with it.
+CACHE_MIN_FREE_GB          = float(_env('CACHE_MIN_FREE_GB', "1", group='Caching', kind='float', label='Minimum free disk (GB)', help='When the cache volume has less free space than this, posters are still rendered and served but not written to the cache until space is freed. 0 turns the check off.', min=0, max=100000))
 # Number of fully-rendered composites kept in each worker's in-memory LRU (L1).
 # Off by default: an L1 hit only saves a SQLite point read (~0.7 ms cold,
 # ~0.04 ms once the OS page cache has it, against ~4 ms for the whole hit),

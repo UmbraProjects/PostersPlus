@@ -3,6 +3,10 @@
 # the oldest version known to support the APIs we use (FastAPI lifespan,
 # Pillow's Resampling.LANCZOS, the httpx 0.25 AsyncClient surface).
 fastapi>=0.100,<1.0
+# FastAPI's own dependency, held at 1.45.2+: earlier releases have a traceparent
+# ReDoS (CVE-2026-126360).  Not reachable here (FastAPI reads traceparent only
+# from HTTP headers, which can't carry the newline it needs), but kept out of the image.
+opentelemetry-api>=1.45.2,<2
 uvicorn>=0.20,<1.0
 Pillow>=13.0,<14
 httpx>=0.25,<1.0

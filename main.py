@@ -56,10 +56,11 @@ class _TruncateUrlFilter(logging.Filter):
          else that might inadvertently include a key.
     """
     _MAX = 80
-    # Match query params we hold (tmdb_key, mdblist_key, access_key) AND the
+    # Match query params we hold (tmdb_key, mdblist_key, access_key, and the
+    # admin_key the dashboard page accepts once in its address) AND the
     # upstream parameter names we forward keys under (api_key, apikey).
     _KEY_RE = re.compile(
-        r'((?:tmdb_key|mdblist_key|access_key|api_key|apikey)=)[^&\s\'\"]*',
+        r'((?:tmdb_key|mdblist_key|access_key|admin_key|api_key|apikey)=)[^&\s\'\"]*',
         re.IGNORECASE,
     )
 
@@ -10108,7 +10109,34 @@ async def fallback_gallery(style: str = "minimal", access_key: str = ""):
   <p>Live no-art render for every genre — {len(_genres)} genres, "{style}" set.</p>
 </header>
 <div class="grid">{tiles}</div></body></html>"""
-    return HTMLResponse(content=html)
+    return HTMLResponse(content=html, headers=_CONFIGURATOR_PAGE_HEADERS)
+
+
+_FRAME_ORIGIN_RE = re.compile(r"https?://(?:\*\.)?[A-Za-z0-9.-]+(?::\d{1,5})?")
+
+
+def _configurator_page_headers() -> dict[str, str]:
+    """Headers for the configurator's pages.  The page keeps the user's API
+    keys (localStorage) and the access key, so other sites may not frame it
+    unless CONFIGURATOR_FRAME_ANCESTORS names them; base-uri and object-src
+    take away the cheap ways an injected tag would reach further.  No script
+    policy: the page's script is inline, so one would have to allow it."""
+    ancestors = ["'self'"]
+    for token in _cfg.CONFIGURATOR_FRAME_ANCESTORS.replace(",", " ").split():
+        token = token.rstrip("/")
+        if token == "*" or _FRAME_ORIGIN_RE.fullmatch(token):
+            ancestors.append(token)
+        else:
+            logger.warning(f"CONFIGURATOR_FRAME_ANCESTORS: ignoring {token!r}, not an origin like https://home.example.com")
+    return {
+        "Content-Security-Policy": f"frame-ancestors {' '.join(ancestors)}; base-uri 'self'; object-src 'none'",
+        "X-Content-Type-Options": "nosniff",
+        # The page's address carries ?access_key=; this keeps it to our own requests.
+        "Referrer-Policy": "same-origin",
+    }
+
+
+_CONFIGURATOR_PAGE_HEADERS = _configurator_page_headers()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -10132,6 +10160,7 @@ async def get_configurator(request: Request, access_key: str = "", reload: str =
     _cache_headers = {
         "Cache-Control": "no-cache, must-revalidate",
         "ETag":          _configurator_etag or '""',
+        **_CONFIGURATOR_PAGE_HEADERS,
     }
     if (
         _configurator_etag
