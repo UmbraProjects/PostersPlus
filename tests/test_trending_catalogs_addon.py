@@ -307,7 +307,8 @@ class AddonLandscapeTests(_AddonTest):
         self.assertEqual(meta["posterShape"], "landscape")
         self.assertEqual(_poster_query(meta["poster"])["shape"], ["landscape"])
         self.assertEqual(meta["poster"], meta["landscapePoster"])
-        self.assertNotIn("background", meta)
+        # The clean backdrop, not the render: a hero draws its own title.
+        self.assertEqual(meta["background"], "https://image.tmdb.org/t/p/w1280/a-bg.jpg")
 
     def test_without_settings_the_poster_is_the_backdrop(self):
         async def _meta(client, tmdb_id, key, media_type, lang, secondary=""):
@@ -320,7 +321,8 @@ class AddonLandscapeTests(_AddonTest):
         self.assertEqual([m["poster"] for m in metas], [
             "https://image.tmdb.org/t/p/w780/a-bg.jpg", "https://image.tmdb.org/t/p/w780/b-bg.jpg"])
         self.assertTrue(all(m["posterShape"] == "landscape" for m in metas))
-        self.assertTrue(all(m["background"] == m["poster"] for m in metas))
+        self.assertEqual([m["background"] for m in metas], [
+            "https://image.tmdb.org/t/p/w1280/a-bg.jpg", "https://image.tmdb.org/t/p/w1280/b-bg.jpg"])
 
     def test_a_title_without_a_backdrop_keeps_its_portrait_poster(self):
         async def _meta(client, tmdb_id, key, media_type, lang, secondary=""):
@@ -341,7 +343,44 @@ class AddonLandscapeTests(_AddonTest):
     def test_without_the_segment_rows_stay_portrait(self):
         metas = self._metas("/trending/sekrit/catalog/movie/pp.trending.movie.json")
         self.assertTrue(all(m["posterShape"] == "poster" for m in metas))
-        self.assertTrue(all("background" not in m for m in metas))
+
+    def test_portrait_rows_carry_the_backdrop_as_background(self):
+        # For a client's hero, which otherwise zooms the 2:3 poster across
+        # the screen; with poster settings too, where the poster is a render.
+        async def _meta(client, tmdb_id, key, media_type, lang, secondary=""):
+            return ([], False, [], "2026", "B", "/b.jpg", "/b-bg.jpg", {})
+
+        seg = _cfg_segment("badge_display_mode=6")
+        for path in ("/trending/sekrit/catalog/movie/pp.trending.movie.json",
+                     f"/trending/sekrit/{seg}/catalog/movie/pp.trending.movie.json"):
+            with self.subTest(path=path), \
+                    mock.patch.object(main, "_coalesced_fetch_poster_metadata", side_effect=_meta):
+                metas = self._metas(path)
+                self.assertTrue(all(m["posterShape"] == "poster" for m in metas))
+                self.assertEqual([m["background"] for m in metas], [
+                    "https://image.tmdb.org/t/p/w1280/a-bg.jpg",
+                    "https://image.tmdb.org/t/p/w1280/b-bg.jpg"])
+
+    def test_anime_prefers_the_mapped_tmdb_backdrop_over_the_banner(self):
+        async def _meta(client, tmdb_id, key, media_type, lang, secondary=""):
+            self.assertEqual((tmdb_id, media_type), ("900", "tv"))
+            return ([], False, [], "2026", "Five", "/5.jpg", "/5-bg.jpg", {})
+
+        with mock.patch.object(main.anime_ids, "lookup",
+                               return_value=main.anime_ids.MappedIds("900", None)), \
+                mock.patch.object(main, "_coalesced_fetch_poster_metadata", side_effect=_meta):
+            meta = self._metas("/trending/sekrit/catalog/series/pp.trending.anime.json")[0]
+        self.assertEqual(meta["background"], "https://image.tmdb.org/t/p/w1280/5-bg.jpg")
+        self.assertEqual(meta["poster"], "https://img.anili.st/5.jpg")
+
+    def test_unmapped_anime_falls_back_to_its_anilist_banner(self):
+        async def _unresolved(*args, **kwargs):
+            return None
+
+        with mock.patch.object(main.anime_ids, "lookup", return_value=None), \
+                mock.patch.object(main.anime_resolve, "resolve", side_effect=_unresolved):
+            meta = self._metas("/trending/sekrit/catalog/series/pp.trending.anime.json")[0]
+        self.assertEqual(meta["background"], "https://img.anili.st/5-banner.jpg")
 
     def test_segment_order_and_unknown_letters(self):
         seg = _cfg_segment("badge_display_mode=6")

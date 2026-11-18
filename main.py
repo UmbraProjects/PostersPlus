@@ -7927,6 +7927,9 @@ _TMDB_POSTER_BASE = "https://image.tmdb.org/t/p/w500"
 # A landscape row's art when no poster settings ride in the URL: TMDB's
 # backdrop, at the size its 16:9 tiles need.
 _TMDB_BACKDROP_BASE = "https://image.tmdb.org/t/p/w780"
+# A catalog item's "background": clients draw it full width behind a hero or
+# a details page, so a size up from a row's landscape art.
+_TMDB_BACKGROUND_BASE = "https://image.tmdb.org/t/p/w1280"
 _ADDON_HEADERS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"}
 
 
@@ -8122,6 +8125,37 @@ def _list_version(rankings: dict[str, int]) -> str:
     return hashlib.sha256(order.encode()).hexdigest()[:10]
 
 
+async def _anime_trending_backdrop(
+    client: httpx.AsyncClient, entry_id: str, kind: str, sem: asyncio.Semaphore,
+) -> str | None:
+    """The TMDB backdrop of an AniList trending row's title, or None.
+
+    Preferred over the row's AniList banner: that is a ~4.7:1 strip, which a
+    hero (tall on a phone, 16:9 on a TV) has to zoom far into.  A later season
+    maps to its parent show, so this is the show's backdrop rather than the
+    season's, as AIOMetadata's anime metas give.  An entry the mapping lacks
+    goes through the same resolver its poster renders use, which caches."""
+    raw = entry_id.split(":", 1)[1]
+    if not (raw.isascii() and raw.isdigit()):
+        return None
+    anilist_id = int(raw)
+    mapped = anime_ids.lookup("anilist", anilist_id, kind)
+    async with sem:
+        try:
+            if not anime_resolve._usable(mapped, kind):
+                mapped = await anime_resolve.resolve(
+                    client, "anilist", anilist_id, kind, _cfg.SERVER_TMDB_KEY)
+            if not (mapped and mapped.tmdb_id):
+                return None
+            (_g, _t, _l, _y, _n, _p, backdrop_path, _d) = await _coalesced_fetch_poster_metadata(
+                client, mapped.tmdb_id, _cfg.SERVER_TMDB_KEY, kind, _cfg.DEFAULT_LOGO_LANGUAGE,
+            )
+        except Exception as exc:
+            logger.warning(f"Trending catalog: no TMDB backdrop for {entry_id}: {exc}")
+            return None
+    return backdrop_path or None
+
+
 async def _trending_catalog_meta(
     client: httpx.AsyncClient, entry_id: str, ctype: str, endpoint: str,
     details: dict, sem: asyncio.Semaphore,
@@ -8146,14 +8180,23 @@ async def _trending_catalog_meta(
     client lays a row out by its items' shape and most never read
     landscapePoster.  That is the landscape render where there are poster
     settings, else the title's backdrop; a title with no backdrop keeps its
-    portrait poster, still marked as one, rather than have it cropped."""
+    portrait poster, still marked as one, rather than have it cropped.
+
+    Every item carries the title's backdrop as "background", whatever the
+    row's shape: a client's hero or featured slot draws it full width, and
+    with none falls back to the 2:3 poster (Nuvio's hero zoomed a Posters+
+    portrait, rank ribbon and all, across the screen).  The landscape render
+    is no stand-in, since a hero draws its own title over the art."""
     detail = details.get(entry_id) or {}
     # AniList's rows are "anilist:<id>"; everything else (an anime list from a
     # custom source too) is a TMDB id of the list's kind.
     by_anilist = entry_id.startswith("anilist:")
     kind = trending_kind(endpoint)
-    # Art is only wanted where the row isn't drawn by Posters+.
-    want_backdrop = landscape and poster_cfg is None and not detail.get("backdrop")
+    if by_anilist and _cfg.SERVER_TMDB_KEY:
+        tmdb_backdrop = await _anime_trending_backdrop(client, entry_id, kind, sem)
+        if tmdb_backdrop:
+            detail = {**detail, "backdrop": tmdb_backdrop}
+    want_backdrop = not detail.get("backdrop")
     if (not by_anilist and _cfg.SERVER_TMDB_KEY
             and (want_backdrop or (not (detail.get("name") and detail.get("poster"))
                                    and (poster_cfg is None or not detail.get("name"))))):
@@ -8203,13 +8246,12 @@ async def _trending_catalog_meta(
         if poster and poster.startswith("/"):
             poster = _TMDB_POSTER_BASE + poster
     shape = "poster"
-    background = None
+    backdrop = detail.get("backdrop")
+    background = (_TMDB_BACKGROUND_BASE + backdrop if backdrop and backdrop.startswith("/")
+                  else backdrop)
     if landscape:
-        if landscape_url is None:
-            background = detail.get("backdrop")
-            if background and background.startswith("/"):
-                background = _TMDB_BACKDROP_BASE + background
-        art = landscape_url or background
+        art = landscape_url or (_TMDB_BACKDROP_BASE + backdrop
+                                if backdrop and backdrop.startswith("/") else backdrop)
         if art:
             poster, shape = art, "landscape"
     meta = {
