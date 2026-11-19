@@ -994,7 +994,7 @@ from ratings import (
     _score_color_alt,
     _score_color_metal,
 )
-from tmdb import composite_logo, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_landscape_crop, fetch_trending_rank_entry, fetch_anime_trending_rank_entry, _expire_overlapping_lists, trending_kind, anime_split, ANIME_ENDPOINTS, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_following_episode_date, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, logo_priority_falls_back_to_art, split_logo_priority_at_art, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, resolve_tvdb_to_tmdb, IdResolveError, TmdbIdGone, tmdb_bearer_auth, tmdb_key_rejected, mark_tmdb_id_gone, tmdb_id_gone, forget_imdb_mapping_to, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS, fetch_logo_image, logo_language_steps, logo_step_available, _image_matches_language, sanitise_source_url, fetch_cropped_art
+from tmdb import composite_logo, logo_drop_shadow, LOGO_SHADOW_CHOICES, logo_centre_y, fetch_logo, image_language_order, fetch_poster_metadata, fetch_poster_image, fetch_backdrop_image, fetch_landscape_image, fetch_landscape_crop, fetch_trending_rank_entry, fetch_anime_trending_rank_entry, _expire_overlapping_lists, trending_kind, anime_split, ANIME_ENDPOINTS, ensure_trending_snapshot, fetch_trending_candidates, fetch_popular_candidates, fetch_supplemental_candidates, fetch_catalog_candidates, fetch_release_status, fetch_upcoming_movie_release, fetch_following_episode_date, fetch_recent_movie_digital_release_date, svg_logo_supported, tmdb_metadata_cache_key, _CROP_VERSION, _fetch_metahub_logo, LOGO_ABS_MAX_H, parse_logo_priority, logo_priority_sources, logo_priority_uses_custom, logo_priority_draws_text, logo_priority_falls_back_to_art, split_logo_priority_at_art, resolve_imdb_to_tmdb, resolve_tmdb_to_imdb, resolve_tvdb_to_tmdb, IdResolveError, TmdbIdGone, tmdb_bearer_auth, tmdb_key_rejected, mark_tmdb_id_gone, tmdb_id_gone, forget_imdb_mapping_to, poster_image_cache_key, backdrop_image_cache_key, trending_source_url, _compute_movie_status_from_dates, _parse_tmdb_date, fetch_badge_facts, fetch_network_logo_path, poster_canvas, set_poster_canvas, POSTER_WIDTHS, fetch_logo_image, logo_language_steps, logo_step_available, _image_matches_language, sanitise_source_url, fetch_cropped_art
 # How long a poster rendered while its trending list was unreadable is kept:
 # the same as that list's retry cooldown.
 from tmdb import _TRENDING_SOURCE_RETRY_SECS as _TRENDING_UNREAD_TTL
@@ -2126,6 +2126,10 @@ class RequestConfig:
     logo_max_h_ratio:   float = field(default_factory=lambda: _cfg.LOGO_MAX_H_RATIO)
     logo_bottom_ratio:  float = field(default_factory=lambda: _cfg.LOGO_BOTTOM_RATIO)
     logo_bottom_anchor:  bool  = False
+    # Soft black shadow under the (light) logo or drawn title, so it reads
+    # over the art without sitting down in the vignette: off | soft | strong.
+    # Portrait only — the landscape logo always has its own soft shadow.
+    logo_shadow:         str   = "off"
     sash_winner_star:    bool  = False
 
     badge_height:            int   = field(default_factory=lambda: _cfg.BADGE_HEIGHT)
@@ -3054,6 +3058,7 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "accent_bar_style": "floating
                               "quality_after_digital": False, "landscape_art_source": "tmdb",
                               "landscape_greyscale": False, "landscape_badge_style": "glass",
                               "landscape_greyscale_logo": False, "greyscale_logo": False,
+                              "logo_shadow": "off",
                               "landscape_greyscale_rating": False, "greyscale_rating": False,
                               "landscape_badge_shape": "pill", "landscape_badge_case": "auto",
                               "landscape_separator": "bullet",
@@ -3483,6 +3488,9 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.logo_max_h_ratio   = _f("logo_max_h_ratio",   cfg.logo_max_h_ratio,  0.0, 1.0)
     cfg.logo_bottom_ratio  = _f("logo_bottom_ratio",  cfg.logo_bottom_ratio, 0.0, 1.0)
     cfg.logo_bottom_anchor = _b("logo_bottom_anchor", cfg.logo_bottom_anchor)
+    _lsh = (params.get("logo_shadow") or "").strip().lower()
+    if _lsh in LOGO_SHADOW_CHOICES:
+        cfg.logo_shadow = _lsh
     cfg.sash_winner_star   = _b("sash_winner_star",   cfg.sash_winner_star)
 
     # badge_height in pixels — generous enough to cover any reasonable customisation
@@ -5163,6 +5171,7 @@ def _build_poster(
             max_h_ratio=cfg.logo_max_h_ratio,
             bottom_ratio=cfg.logo_bottom_ratio,
             bottom_anchor=cfg.logo_bottom_anchor,
+            shadow=cfg.logo_shadow,
         )
     elif fallback_title:
         # ── Genre-aware font selection ────────────────────────────────────────
@@ -5351,6 +5360,7 @@ def _build_poster(
             else:
                 centre_y = logo_centre_y(height, cfg.logo_bottom_ratio)
                 logo_y = int(centre_y - text_layer.height / 2)
+            logo_drop_shadow(image, text_layer, logo_x, logo_y, cfg.logo_shadow)
             image.paste(text_layer, (logo_x, logo_y), text_layer)
 
 

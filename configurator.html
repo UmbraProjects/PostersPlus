@@ -3489,6 +3489,15 @@ try{if(localStorage.getItem('postersplus_theme')==='light')document.documentElem
                   </label>
                 </div>
                 <div class="field">
+                  <label class="field-label" data-tip="A soft dark shadow under a light logo (or the drawn title), so it stays readable over bright or busy art without moving it down into the vignette. Strong adds a wider halo. Dark logos are left without one.">Logo Shadow</label>
+                  <select class="segmented-source" id="cfg-logo-shadow" onchange="build(); queuePreviewReload()">
+                    <option value="off">Off</option>
+                    <option value="soft">Soft</option>
+                    <option value="strong">Strong</option>
+                  </select>
+                  <div class="segmented" data-for="cfg-logo-shadow"></div>
+                </div>
+                <div class="field">
                   <label class="field-label">Logo Width</label>
                   <div class="range-row">
                     <input type="range" id="cfg-logo-w" min="0.40" max="1.00" step="0.01" value="0.75" oninput="updateRange(this,'rng-lw'); build(); queuePreviewReload()">
@@ -7862,6 +7871,7 @@ function buildBaseParams({ usePlaceholders = false, domainOverride = null, full 
     params.set('logo_max_h_ratio',    n('cfg-logo-h').toFixed(2));
     params.set('logo_bottom_ratio',   n('cfg-logo-bottom').toFixed(2));
     if (c('tog-logo-bottom-anchor')) params.set('logo_bottom_anchor', 'true');
+    { const _lsh = vEl('cfg-logo-shadow'); if (_lsh && _lsh !== 'off') params.set('logo_shadow', _lsh); }
   }
 
   // ── Info Sash ──────────────────────────────────────────────────────────────
@@ -11449,6 +11459,7 @@ function importUrl(urlStr, { silent = false, settingsOnly = false, preserveClien
   if (p.has('logo_max_h_ratio'))     _setEl('cfg-logo-h',              p.get('logo_max_h_ratio'));
   if (p.has('logo_bottom_ratio'))    _setEl('cfg-logo-bottom',         p.get('logo_bottom_ratio'));
   if (p.has('logo_bottom_anchor'))   _setEl('tog-logo-bottom-anchor',  p.get('logo_bottom_anchor'));
+  _setEl('cfg-logo-shadow', p.get('logo_shadow') || 'off');
   if (p.has('textless'))             _setEl('tog-textless',            p.get('textless'));
   if (p.has('use_original_art'))   _setEl('cfg-art', ['true', '1'].includes(p.get('use_original_art')) ? 'original' : 'textless');
   if (p.has('original_art_source')) _setEl('cfg-original-art-source', p.get('original_art_source'));

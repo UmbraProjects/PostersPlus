@@ -293,6 +293,7 @@ Every setting has a short name, and the configurator writes those: `vpcb=e0b84f`
 | `logo_max_h_ratio` | `lmhr` |
 | `logo_max_w_ratio` | `lmwr` |
 | `logo_priority` | `lp` |
+| `logo_shadow` | `lsh` |
 | `meta_order` | `mo` |
 | `minimalist_append_mode` | `mam` |
 | `minimalist_center` | `mc` |

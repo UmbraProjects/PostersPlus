@@ -4237,6 +4237,62 @@ async def fetch_release_status(
 
 
 
+# logo_shadow levels, in fractions of the canvas height so a 2000-tall render
+# matches the 750 one.  "soft" is the landscape logo's own shadow; "strong"
+# adds a wide centred halo under it that darkens a busy or bright patch enough
+# for a white wordmark to hold up away from the bottom vignette.
+#   (blur, dx, dy, alpha, spread)
+# ``spread`` grows the ink before the blur: a hairline wordmark has too little
+# alpha for a plain blur to darken anything, so the halo pass widens it first.
+_LOGO_SHADOW_LEVELS: dict[str, tuple[tuple[float, float, float, int, float], ...]] = {
+    "soft":   ((0.012, 0.0027, 0.0067, 200, 0.0),),
+    "strong": ((0.028, 0.0, 0.004, 220, 0.010), (0.010, 0.0027, 0.0067, 230, 0.0)),
+}
+LOGO_SHADOW_CHOICES = ("off", *_LOGO_SHADOW_LEVELS)
+
+
+def logo_drop_shadow(image: Image.Image, logo: Image.Image, x: int, y: int,
+                     level: str) -> None:
+    """Composite a soft black shadow of ``logo`` (placed at x, y) onto
+    ``image``, ahead of the logo itself.  Skipped for dark ink: a black
+    shadow behind a black logo only smears it."""
+    passes = _LOGO_SHADOW_LEVELS.get(level)
+    if not passes:
+        return
+    stats = _logo_color_stats(logo)
+    if stats is None:
+        return
+    r, g, b = stats[0]
+    if (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0 < 0.30:
+        return
+    mask = logo.getchannel("A")
+    h = image.height
+    for blur, dx, dy, alpha, spread in passes:
+        radius = max(1.0, blur * h)
+        grow = round(spread * h)
+        # Padded canvas: blurring on one exactly the logo's size clamps at
+        # the edges and leaves a straight-edged box (see landscape._drop_shadow).
+        pad = int(radius * 3) + grow + 1
+        sheet = Image.new("L", (mask.width + 2 * pad, mask.height + 2 * pad), 0)
+        sheet.paste(mask.point(lambda a, _al=alpha: a * _al // 255), (pad, pad))
+        if grow > 0:
+            sheet = sheet.filter(ImageFilter.MaxFilter(2 * grow + 1))
+        sheet = sheet.filter(ImageFilter.GaussianBlur(radius))
+        sx, sy = x + round(dx * h) - pad, y + round(dy * h) - pad
+        left, top = max(0, -sx), max(0, -sy)
+        right  = min(sheet.width,  image.width  - sx)
+        bottom = min(sheet.height, image.height - sy)
+        if right <= left or bottom <= top:
+            continue
+        sheet = sheet.crop((left, top, right, bottom))
+        layer = Image.new("RGBA", sheet.size, (0, 0, 0, 0))
+        layer.putalpha(sheet)
+        if image.mode == "RGBA":
+            image.alpha_composite(layer, (sx + left, sy + top))
+        else:
+            image.paste(layer, (sx + left, sy + top), layer)
+
+
 def composite_logo(
     image: Image.Image,
     logo: Image.Image,
@@ -4245,6 +4301,7 @@ def composite_logo(
     max_h_ratio: float = LOGO_MAX_H_RATIO,
     bottom_ratio: float = LOGO_BOTTOM_RATIO,
     bottom_anchor: bool = False,
+    shadow: str = "off",
 ) -> None:
     width, height = image.size
 
@@ -4397,6 +4454,7 @@ def composite_logo(
         if not recoloured and bg_lum < 0.40:
             logo = ensure_light_logo(logo)
 
+    logo_drop_shadow(image, logo, logo_x, logo_y, shadow)
     image.paste(logo, (logo_x, logo_y), logo)
 
 
