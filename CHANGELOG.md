@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Logo fit: optical sizing and centring
+
+- New **Logo Fit** setting (`logo_fit=box|optical`, short `lfit`; portrait).
+  Box (default) is the old behaviour. Optical sizes and places the logo by what
+  you see: every logo gets the same optical size (solid ink, faint glows and
+  shadows left out), stacked logos may grow 35% past the height cap to match a
+  wide one, the ink's centre sits on the poster's centre line, and the ink's
+  lowest row on the baseline. On 14 sample titles the size spread fell from
+  2.8× to 2.1× and the worst off-centre logo from 33 px to under 1 px.
+
+### Art gain, bottom fade curve, logo punch, wide logo shadow
+
+- Three new portrait settings and a Logo Shadow level, all off by default, so existing URLs render
+  exactly as before. **Art Brightness** (`art_gain`, short `ag`, 0.5–1)
+  darkens the art a little before anything is drawn on it. **Bottom Fade
+  Curve** (`bottom_gradient_curve`, `bgc`, 0–4) sets the bottom band's fade as
+  1 − (1 − t)^curve, for the black and the tinted band alike; 0 keeps each
+  band's own shape. **Logo Punch** (`logo_punch`, `lpu`, 0–1) lifts the logo's
+  saturation and contrast. **Logo Shadow** gains a **Wide** level
+  (`logo_shadow=wide`): a broad soft halo cut from the logo's shape, spread
+  to 0.3 of the logo's height.
+
 ### Edge Rating Bar on portrait
 
 - New **Bar Style** under the portrait Rating Bar (`accent_bar_style=edge`,

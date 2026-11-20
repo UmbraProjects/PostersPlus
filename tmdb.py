@@ -19,7 +19,7 @@ import top10_charts
 import tvdb
 
 logger = logging.getLogger(__name__)
-from PIL import Image, ImageFilter
+from PIL import Image, ImageEnhance, ImageFilter
 
 # SVG title-logo support — TMDB serves many of its highest-voted logos as SVG.
 # Soft import so the service still runs (PNG-only) if cairosvg is unavailable.
@@ -4248,7 +4248,11 @@ _LOGO_SHADOW_LEVELS: dict[str, tuple[tuple[float, float, float, int, float], ...
     "soft":   ((0.012, 0.0027, 0.0067, 200, 0.0),),
     "strong": ((0.028, 0.0, 0.004, 220, 0.010), (0.010, 0.0027, 0.0067, 230, 0.0)),
 }
-LOGO_SHADOW_CHOICES = ("off", *_LOGO_SHADOW_LEVELS)
+# "wide" (from PR 68): one broad, centred halo cut from the logo's shape, its
+# blur a share of the logo's own height rather than the canvas's.
+#   (strength 0-1, blur radius as a share of the logo's height)
+_LOGO_SHADOW_WIDE = (0.5, 0.3)
+LOGO_SHADOW_CHOICES = ("off", *_LOGO_SHADOW_LEVELS, "wide")
 
 
 def logo_drop_shadow(image: Image.Image, logo: Image.Image, x: int, y: int,
@@ -4257,13 +4261,16 @@ def logo_drop_shadow(image: Image.Image, logo: Image.Image, x: int, y: int,
     ``image``, ahead of the logo itself.  Skipped for dark ink: a black
     shadow behind a black logo only smears it."""
     passes = _LOGO_SHADOW_LEVELS.get(level)
-    if not passes:
+    if not passes and level != "wide":
         return
     stats = _logo_color_stats(logo)
     if stats is None:
         return
     r, g, b = stats[0]
     if (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0 < 0.30:
+        return
+    if level == "wide":
+        draw_logo_shadow(image, logo, (x, y), *_LOGO_SHADOW_WIDE)
         return
     mask = logo.getchannel("A")
     h = image.height
@@ -4302,6 +4309,8 @@ def composite_logo(
     bottom_ratio: float = LOGO_BOTTOM_RATIO,
     bottom_anchor: bool = False,
     shadow: str = "off",
+    punch: float = 0.0,
+    fit: str = "box",
 ) -> None:
     width, height = image.size
 
@@ -4327,6 +4336,7 @@ def composite_logo(
     lw, lh = logo.width, logo.height
     if lw <= 0 or lh <= 0:
         return
+    cropped = logo
 
     # ── Normalise size by AREA, with hard caps on both axes ───────────────────
     # We target a constant geometric mean of the two caps (one overall size),
@@ -4401,6 +4411,11 @@ def composite_logo(
         centre_y = logo_centre_y(height, bottom_ratio)
         logo_y   = int(centre_y - logo.height / 2)
 
+    if fit == "optical":
+        placed = optical_fit(cropped, width, height, max_w, max_h, bottom_ratio, bottom_anchor)
+        if placed is not None:
+            logo, logo_x, logo_y = placed
+
     # ── Background-aware legibility adjustments ──────────────────────────────
     # Sample the poster region the logo will cover (pure poster, sampled before
     # the paste) and derive its mean colour + luminance.
@@ -4454,8 +4469,103 @@ def composite_logo(
         if not recoloured and bg_lum < 0.40:
             logo = ensure_light_logo(logo)
 
+    # Finish, after any recolouring so it works on the logo as drawn.
+    if punch > 0:
+        logo = punch_logo(logo, punch)
     logo_drop_shadow(image, logo, logo_x, logo_y, shadow)
     image.paste(logo, (logo_x, logo_y), logo)
+
+
+# logo_fit=optical: size and place a logo by what you see rather than by its box.
+LOGO_SOLID_ALPHA    = 128    # ink: faint glows, shadows and anti-aliasing below this don't count
+LOGO_OPTICAL_TARGET = 0.589  # optical size, as a share of the caps' geometric mean (keeps the typical logo's size)
+LOGO_STACKED_HEIGHT = 1.35   # height cap multiplier for stacked logos (narrower than 1.2 × their height)
+LOGO_EDGE_MARGIN    = 0.04   # the ink stays this share of the width clear of either edge
+
+
+def _ink_geometry(logo: Image.Image):
+    """(mass, left, top, right, bottom, cx, cy) of *logo*'s solid ink, or None
+    when it has none.  mass is the summed opacity of the ink pixels."""
+    a = np.asarray(logo.getchannel("A"), dtype=np.float32)
+    ink = np.where(a > LOGO_SOLID_ALPHA, a / 255.0, 0.0)
+    mass = float(ink.sum())
+    if mass <= 0:
+        return None
+    ys, xs = np.nonzero(ink)
+    cx = float((ink.sum(axis=0) * np.arange(ink.shape[1])).sum() / mass)
+    cy = float((ink.sum(axis=1) * np.arange(ink.shape[0])).sum() / mass)
+    return mass, int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max()), cx, cy
+
+
+def optical_fit(logo: Image.Image, width: int, height: int, max_w: int, max_h: int,
+                bottom_ratio: float, bottom_anchor: bool):
+    """(resized logo, x, y) for logo_fit=optical, or None to keep the box fit.
+
+    Size: every logo gets the same optical size, √(√ink area × √ink-box area)
+    — how much ink it shows and how much room it takes — then the caps: the
+    ink's width ≤ max_w, its height ≤ max_h (×LOGO_STACKED_HEIGHT for stacked
+    logos, so they can match a wide one's presence).  Place: the ink's centre
+    on the poster's centre line, and with bottom_anchor its lowest row on the
+    baseline, otherwise its centre on logo_centre_y."""
+    geo = _ink_geometry(logo)
+    if geo is None:
+        return None
+    mass, left, top, right, bottom, _cx, _cy = geo
+    ink_w, ink_h = right - left + 1, bottom - top + 1
+    optical = (mass * ink_w * ink_h) ** 0.25
+    target = LOGO_OPTICAL_TARGET * (max_w * max_h) ** 0.5
+    cap_h = max_h * (LOGO_STACKED_HEIGHT if ink_w < 1.2 * ink_h else 1.0)
+    scale = min(target / optical, max_w / ink_w, cap_h / ink_h)
+    logo = logo.resize((max(1, round(logo.width * scale)), max(1, round(logo.height * scale))),
+                       Image.Resampling.LANCZOS)
+    geo = _ink_geometry(logo)
+    if geo is None:
+        return None
+    _mass, left, _top, right, bottom, cx, cy = geo
+    margin = round(width * LOGO_EDGE_MARGIN)
+    x = round(width / 2 - cx)
+    x = max(margin - left, min(x, width - margin - right))
+    if bottom_anchor:
+        y = height - int(height * bottom_ratio) - bottom - 1
+    else:
+        y = round(logo_centre_y(height, bottom_ratio) - cy)
+    return logo, x, y
+
+
+def punch_logo(logo: Image.Image, amount: float) -> Image.Image:
+    """*logo* with more saturation and contrast, scaled by *amount* (0-1);
+    its alpha is kept as it was."""
+    alpha = logo.getchannel("A")
+    rgb = ImageEnhance.Color(logo.convert("RGB")).enhance(1 + 0.8 * amount)
+    rgb = ImageEnhance.Contrast(rgb).enhance(1 + 0.35 * amount)
+    out = rgb.convert("RGBA")
+    out.putalpha(alpha)
+    return out
+
+
+def draw_logo_shadow(image: Image.Image, logo: Image.Image, at: tuple[int, int],
+                     strength: float, radius_ratio: float) -> None:
+    """Paint a soft dark halo cut from *logo*'s shape onto *image*, under where
+    the logo goes at *at*.  The blur radius is *radius_ratio* of the logo's
+    height; *strength* (0-1) sets how dark it gets."""
+    radius = max(1.0, radius_ratio * logo.height)
+    pad = int(radius * 3)
+    mask = Image.new("L", (logo.width + 2 * pad, logo.height + 2 * pad), 0)
+    mask.paste(logo.getchannel("A"), (pad, pad))
+    mask = mask.filter(ImageFilter.GaussianBlur(radius))
+    mask = mask.point(lambda v: min(255, int(v * strength * 1.4)))
+    layer = Image.new("RGBA", mask.size, (0, 0, 0, 0))
+    layer.putalpha(mask)
+    sx, sy = at[0] - pad, at[1] - pad
+    if image.mode == "RGBA":
+        # alpha_composite needs the layer inside the canvas; paste would also
+        # overwrite the canvas's own alpha with the halo's.
+        left, top = max(0, -sx), max(0, -sy)
+        right, bottom = min(layer.width, image.width - sx), min(layer.height, image.height - sy)
+        if right > left and bottom > top:
+            image.alpha_composite(layer.crop((left, top, right, bottom)), (sx + left, sy + top))
+    else:
+        image.paste(layer, (sx, sy), layer)
 
 
 # ---------------------------------------------------------------------------

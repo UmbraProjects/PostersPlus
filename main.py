@@ -2130,6 +2130,12 @@ class RequestConfig:
     # over the art without sitting down in the vignette: off | soft | strong.
     # Portrait only — the landscape logo always has its own soft shadow.
     logo_shadow:         str   = "off"
+    # Logo finish: punch lifts the logo's own saturation and contrast.  0 = off.
+    logo_punch:          float = 0.0
+    # How a logo is sized and placed.  "box" (default): by its bounding box.
+    # "optical": by what you see (tmdb.optical_fit) — its solid ink sized to
+    # one optical size, centred on the ink, the ink's bottom on the baseline.
+    logo_fit:            str   = "box"
     sash_winner_star:    bool  = False
 
     badge_height:            int   = field(default_factory=lambda: _cfg.BADGE_HEIGHT)
@@ -2302,6 +2308,15 @@ class RequestConfig:
     top_gradient_height: float | None = None
     bottom_gradient_opacity: float | None = None
     bottom_gradient_height: float | None = None
+    # Shape of the bottom band's fade, as the exponent of 1 - (1 - t)^curve:
+    # below 1 the darkening builds gently and saves its depth for the bottom
+    # edge, above 1 it arrives sooner.  0 keeps each band's own shape (the
+    # black band's ease-out, the tinted band's smoothstep).  Portrait only.
+    bottom_gradient_curve: float = 0.0
+    # Multiplies the art's colour before anything is drawn over it, so the
+    # whole poster sits a little darker and the logo and labels lift off it.
+    # 1.0 leaves the art as it is.  Portrait only.
+    art_gain: float = 1.0
     hide_genre: bool = False
     # Drops the release year from the label in every rating mode, and from the
     # landscape info strip.  Minimalist's Year mode carries the score in the
@@ -3077,6 +3092,9 @@ _SIGNATURE_OMIT_AT_DEFAULT = {"poster_width": 500, "accent_bar_style": "floating
                               "anime_provider_art": "provider",
                               "landscape_anime_provider_art": "provider",
                               "landscape_poster_pick": "top",
+                              "art_gain": 1.0, "bottom_gradient_curve": 0.0,
+                              "logo_punch": 0.0,
+                              "logo_fit": "box",
                               **{name: RequestConfig.__dataclass_fields__[name].default
                                  for name in _LANDSCAPE_BADGE_TUNING}}
 
@@ -3267,6 +3285,12 @@ def build_request_config(params: dict) -> RequestConfig:
     cfg.top_gradient_height     = _f("top_gradient_height",     cfg.top_gradient_height,     0.0, 1.0)
     cfg.bottom_gradient_opacity = _f("bottom_gradient_opacity", cfg.bottom_gradient_opacity, 0.0, 255.0)
     cfg.bottom_gradient_height  = _f("bottom_gradient_height",  cfg.bottom_gradient_height,  0.0, 1.0)
+    # 0 is "the band's own shape"; anything else is the exponent, kept off the
+    # degenerate ends (a near-zero exponent is a flat block, a huge one a line).
+    cfg.bottom_gradient_curve   = _f("bottom_gradient_curve",   cfg.bottom_gradient_curve,   0.0, 4.0)
+    if 0.0 < cfg.bottom_gradient_curve < 0.2:
+        cfg.bottom_gradient_curve = 0.2
+    cfg.art_gain                = _f("art_gain",                cfg.art_gain,                0.5, 1.0)
     cfg.hide_genre = _b("hide_genre", cfg.hide_genre)
     cfg.hide_year = _b("hide_year", cfg.hide_year)
     cfg.hide_rating = _b("hide_rating", cfg.hide_rating)
@@ -3491,6 +3515,10 @@ def build_request_config(params: dict) -> RequestConfig:
     _lsh = (params.get("logo_shadow") or "").strip().lower()
     if _lsh in LOGO_SHADOW_CHOICES:
         cfg.logo_shadow = _lsh
+    cfg.logo_punch         = _f("logo_punch",         cfg.logo_punch,         0.0, 1.0)
+    _lfit = str(params.get("logo_fit", "")).strip().lower()
+    if _lfit in ("box", "optical"):
+        cfg.logo_fit = _lfit
     cfg.sash_winner_star   = _b("sash_winner_star",   cfg.sash_winner_star)
 
     # badge_height in pixels — generous enough to cover any reasonable customisation
@@ -4758,6 +4786,19 @@ def build_poster(image: Image.Image, score: int | str, genre: str, cfg: "Request
         return _build_poster(image, score, genre, cfg, *args, **kwargs)
 
 
+def _apply_art_gain(image: Image.Image, gain: float) -> Image.Image:
+    """*image* with its colour channels multiplied by *gain*; alpha untouched.
+    At 1.0 (the default) the image itself comes back, unchanged."""
+    if gain >= 1.0:
+        return image
+    lut = [round(v * gain) for v in range(256)]
+    bands = image.split()
+    return Image.merge(image.mode, [
+        band if name == "A" else band.point(lut)
+        for name, band in zip(image.getbands(), bands)
+    ])
+
+
 def _build_poster(
     image: Image.Image,
     score: int | str,
@@ -4778,6 +4819,9 @@ def _build_poster(
     cinema_run: "graphic_badges.CinemaRun | None" = None,   # the cinema badge's facts
 ) -> Image.Image:
 
+    # Before anything samples the art (vignette colours, frost, contrast
+    # checks), so everything drawn over it is chosen against what is shown.
+    image = _apply_art_gain(image, cfg.art_gain)
     width, height = image.size
     # The cinema disc rides with the logos into row_items.  A frosted one
     # takes the frost colour, which isn't sampled yet: it is laid out as the
@@ -4963,12 +5007,18 @@ def _build_poster(
         bottom_height = max(1, int(height * bottom_height_ratio))
         bottom_start  = height - bottom_height
         if _bottom_tinted:
-            bottom_alpha = _vignette_fog_ramp(bottom_height, bottom_max_alpha, rising=True)
+            if cfg.bottom_gradient_curve > 0:
+                # The chosen shape in place of the fog's smoothstep.
+                t_bot = np.linspace(0, 1, bottom_height, dtype=np.float32)
+                bottom_alpha = (1 - (1 - t_bot) ** cfg.bottom_gradient_curve) * bottom_max_alpha
+            else:
+                bottom_alpha = _vignette_fog_ramp(bottom_height, bottom_max_alpha, rising=True)
             bottom_overlay = _band_overlay(np.round(bottom_alpha))
         else:
             t_bot = np.linspace(0, 1, bottom_height, dtype=np.float32)
+            curve = cfg.bottom_gradient_curve or _BOTTOM_GRADIENT_CURVE
             bottom_overlay = _band_overlay(
-                (1 - (1 - t_bot) ** _BOTTOM_GRADIENT_CURVE) * bottom_max_alpha)
+                (1 - (1 - t_bot) ** curve) * bottom_max_alpha)
 
     # One colour for both tinted bands: the most confident of each band's own
     # pick (which is the whole-poster pick unless its seam found a better one).
@@ -5172,6 +5222,8 @@ def _build_poster(
             bottom_ratio=cfg.logo_bottom_ratio,
             bottom_anchor=cfg.logo_bottom_anchor,
             shadow=cfg.logo_shadow,
+            punch=cfg.logo_punch,
+            fit=cfg.logo_fit,
         )
     elif fallback_title:
         # ── Genre-aware font selection ────────────────────────────────────────
