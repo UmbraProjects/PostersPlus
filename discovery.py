@@ -641,6 +641,10 @@ def _season_episode_count(seasons: list[dict], season_number: int | None) -> int
 # Data container
 # ---------------------------------------------------------------------------
 
+# Longest single season TMDB's "Miniseries" type is believed for (see is_mini_series).
+MINI_SERIES_TYPED_MAX_EPISODES = 20
+
+
 @dataclass
 class DiscoveryMeta:
     """All discoverable facts about a title, computed once and cached."""
@@ -661,7 +665,7 @@ class DiscoveryMeta:
 
     # Structural facts (computed from TMDB metadata)
     is_short_film:  bool = False   # movie, runtime < 40 min
-    is_mini_series: bool = False   # TV, 1 season, ≤ 8 episodes
+    is_mini_series: bool = False   # TV, 1 season: ≤ 8 episodes, or ≤ 20 when TMDB types it Miniseries
     is_binge_ready: bool = False   # TV, ≥ 3 seasons, prestige episode count
 
     # Language (from TMDB metadata)
@@ -835,10 +839,13 @@ def extract_discovery_meta(
         num_seasons  = tmdb_data.get("number_of_seasons")  or 0
         num_episodes = tmdb_data.get("number_of_episodes") or 0
 
-        meta.is_mini_series = (
-            num_seasons == 1
-            and 0 < num_episodes <= 8
-        )
+        # TMDB's own type first: regional limited series run 10-15 episodes,
+        # past the count below.  The type alone isn't trusted: TMDB also files
+        # 100-475 episode daily soaps and a 20-season show as Miniseries, so it
+        # counts for one season of up to MINI_SERIES_TYPED_MAX_EPISODES.
+        # Without it, 1 season of at most 8 episodes.
+        meta.is_mini_series = num_seasons == 1 and 0 < num_episodes <= (
+            MINI_SERIES_TYPED_MAX_EPISODES if tmdb_data.get("tmdb_type") == "Miniseries" else 8)
 
         if num_seasons >= 3 and num_episodes > 0:
             eps_per_season = num_episodes / num_seasons

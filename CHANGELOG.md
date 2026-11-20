@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Mini Series follows TMDB's own Miniseries type
+
+- A show TMDB types as **Miniseries** gets the Mini Series sash with one
+  season of up to 20 episodes; any other show still needs one season of up
+  to eight. Limited series outside the US and UK often run 10 to 15 episodes
+  (most Arabic ones do) and missed it. The limit is there because TMDB also
+  types some long daily soaps and multi-season shows as Miniseries. TMDB's
+  type is kept with the rest of a show's cached metadata, so a show cached
+  before this picks it up when its metadata next refreshes.
+
 ### Logo fit: optical sizing and centring
 
 - New **Logo Fit** setting (`logo_fit=box|optical`, short `lfit`; portrait).
