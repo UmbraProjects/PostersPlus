@@ -415,6 +415,21 @@ async def admin_status(request: Request, x_admin_key: str = Header(default="")):
         "keys":     len(_settings.file_values()),
         "writable": _writable(),
     }
+    stats["composite_max_entries"] = _cfg.COMPOSITE_MAX_ENTRIES
+    tr = dict(stats.get("trending") or {})
+    tr_spec = _settings.REGISTRY.get("TRENDING_LIST_SOURCES")
+    tr_labels = tr_spec.labels if tr_spec else {}
+    tr_raw = [x.strip() for x in (_cfg.TRENDING_LIST_SOURCES or "").split(",") if x.strip()]
+    tr_extras = []
+    for entry in (_cfg.TRENDING_SOURCE_CHOICES or "").split(","):
+        parts = [p.strip() for p in entry.strip().split("|", 2)]
+        if len(parts) == 3 and parts[0] and parts[1]:
+            tr_extras.append({"type": parts[0].lower(), "name": parts[1]})
+    tr["catalogs_enabled"] = _cfg.TRENDING_CATALOGS_ENABLED
+    tr["list_choice"] = _cfg.TRENDING_LIST_CHOICE
+    tr["list_sources"] = [tr_labels.get(k, k) for k in tr_raw]
+    tr["extra_sources"] = tr_extras
+    stats["trending"] = tr
     return _json(stats)
 
 

@@ -68,10 +68,10 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 
 | Variable | Default | Description |
 |---|---|---|
-| `TMDB_API_KEY` | - | Fetches posters, logos and metadata. Strongly recommended; without one (and no per-client tmdb_key) titles render from Cinemeta and need an imdb_id on the request. Either the API key or the longer API Read Access Token works. |
+| `TMDB_API_KEY` | - | Fetches posters, logos and metadata (API key or Read Access Token). Without one (or per-client tmdb_key), titles fall back to Cinemeta and require an imdb_id. |
 | `MDBLIST_API_KEY` | - | Ratings, awards, keywords and age ratings. Without it the score reads N/A and the MDBList-only sashes are unavailable. |
 | `MDBLIST_API_KEY_2` | - | Retried in the same request when the primary key is rate-limited; a key that has spent its daily quota stays parked until MDBList's reset. |
-| `TVDB_API_KEY` | - | Optional TheTVDB v4 key. When set, TVDB is a fallback art source (logos, backdrops, optionally posters) for titles where TMDB returns nothing usable, reducing fallbacks to text titles and genre canvases. Blank disables it entirely. |
+| `TVDB_API_KEY` | - | Optional TheTVDB v4 key for fallback logos, backdrops and posters when TMDB has no usable art. Blank disables TVDB. |
 | `TVDB_SUBSCRIBER_PIN` | - | Only for user-supported (subscriber) TVDB keys; leave blank for company keys. |
 | `FANART_API_KEY` | - | Optional Fanart project key, needed for the Fanart poster source (see FANART_POSTERS). |
 
@@ -80,13 +80,13 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | Variable | Default | Description |
 |---|---|---|
 | `ADMIN_KEY` | - | Enables the [admin dashboard](README.md#admin-dashboard) at `/admin`. At least 12 characters. Env-only: it is the one setting the dashboard cannot manage, because it is what protects the dashboard. |
-| `PUBLIC_SHARE_ORIGIN` | - | Explicitly declare this instance public for Share settings by setting its HTTPS origin, e.g. https://posters.example.com (no path, credentials, query or fragment). Blank keeps the instance private and shares use https://postersplus.cc. Shared URLs used directly in clients send requests to that public server and use its configuration and resources. Set only for an instance intended for public use without an access key; this does not change access controls. |
+| `PUBLIC_SHARE_ORIGIN` | - | HTTPS origin (e.g. https://posters.example.com, no path/query) to mark this instance public for Share settings; blank keeps shares on https://postersplus.cc. Only for public keyless instances — does not alter access controls. |
 | `ACCESS_KEY` | - | Shared secret every poster and configurator request must carry as access_key. Leave blank for open access. |
-| `CONFIGURATOR_EXTERNAL_AUTH` | `false` | Turn on only if the configurator sits behind its own login (Authelia, Pangolin, an SSO proxy). The configurator then opens without ?access_key= and fills the access key into previews and copied URLs itself, while posters still require it. Anyone who can reach the configurator can read the access key, so it is only as safe as that login, and the login must cover every path the configurator uses: `/`, `/server-caps`, `/search`, `/resolve-imdb`, `/resolve-tmdb`, `/trending-top10`, `/report` and `/debug/fallback-gallery` (/server-caps hands out the key). No effect without an access key. `true` or `false`. |
-| `SHOW_ADMIN_LINK` | `false` | Show an Admin link in the configurator's header, pointing at this dashboard. Off by default so visitors to a public instance aren't invited to try it; the dashboard still needs ADMIN_KEY either way, and the link stays hidden while the dashboard is disabled. `true` or `false`. |
-| `MAX_POSTER_RESOLUTION` | `500` | Largest portrait width the resolution URL parameter (500, 780, 1000, 1500, 2000) may request. 500 turns larger sizes off; a request above the limit gets the largest allowed size. Larger posters cost far more CPU and memory to render (2000 px is about 12x a 500), so raise this only on an instance you control. One of `500`, `780`, `1000`, `1500`, `2000`. |
-| `PREVIEW_AT_RESOLUTION` | `false` | Render the configurator's live preview at the poster resolution picked there, instead of always at 500 wide. Useful for judging sharpness; each settings change then costs a render at that size (a 2000 px render is about 12x a 500). Only used when `MAX_POSTER_RESOLUTION` is `780` or `1000` or `1500` or `2000`. `true` or `false`. |
-| `CDN_CACHE_TTL` | `auto` | Cache-Control: public, max-age=N on poster responses, capped at the composite's remaining life so a cached copy never outlives the trending rank or release status baked into it. auto (the default) advertises that remaining life with no fixed ceiling: a trending poster expires in a day, a settled title lasts the full composite TTL. A number caps it; 0 sends no Cache-Control. |
+| `CONFIGURATOR_EXTERNAL_AUTH` | `false` | Enable only if an external login (Authelia, Pangolin, SSO) protects all configurator paths (`/`, `/server-caps`, `/search`, `/resolve-imdb`, `/resolve-tmdb`, `/trending-top10`, `/report`, `/debug/fallback-gallery`). Opens without ?access_key= and injects the key via /server-caps; posters still require it. No effect without ACCESS_KEY. `true` or `false`. |
+| `SHOW_ADMIN_LINK` | `false` | Show an Admin link in the configurator header. Still requires ADMIN_KEY to sign in and stays hidden when the dashboard is disabled. `true` or `false`. |
+| `MAX_POSTER_RESOLUTION` | `500` | Max portrait width allowed via the resolution parameter (higher requests clamp here; 500 disables larger sizes). High sizes cost far more CPU/RAM (2000 px ≈ 12× 500 px). One of `500`, `780`, `1000`, `1500`, `2000`. |
+| `PREVIEW_AT_RESOLUTION` | `false` | Render configurator live previews at the selected resolution instead of 500 px. Useful for judging sharpness, but heavier per change (2000 px ≈ 12× 500 px). Only used when `MAX_POSTER_RESOLUTION` is `780` or `1000` or `1500` or `2000`. `true` or `false`. |
+| `CDN_CACHE_TTL` | `auto` | Sets Cache-Control: public, max-age=N on posters, never exceeding the composite's remaining life. auto advertises full remaining TTL (1 day for trending, composite TTL for settled); a number caps it; 0 omits the header. |
 
 #### Quality source
 
@@ -95,7 +95,7 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `QUALITY_SOURCE` | `aiostreams` | Where stream-quality badges come from. QualiCache never scrapes on the request path; a cold title returns pending instead of blocking. One of `aiostreams`, `scraper`, `qualicache`. |
 | `AIOSTREAMS_URL` | - | Base URL of your AIOStreams instance. Used when the quality source is aiostreams. Only used when `QUALITY_SOURCE` is `aiostreams`. |
 | `AIOSTREAMS_AUTH` | - | AIOStreams credentials as Base64 user:password. Only used when `QUALITY_SOURCE` is `aiostreams`. |
-| `SCRAPER_URL` | - | Base URL of a Stremio stream addon, e.g. https://torrentio.strem.fun/. Only used when the quality source is scraper. Standalone addons like Torrentio and Comet work best; Stremthru Torz requires auth and should be used through AIOStreams instead. Only used when `QUALITY_SOURCE` is `scraper`. |
+| `SCRAPER_URL` | - | Base URL of a Stremio stream addon (used when quality source is scraper). Works best with standalone addons like Torrentio or Comet; use AIOStreams for Stremthru Torz. Only used when `QUALITY_SOURCE` is `scraper`. |
 | `QUALICACHE_URL` | - | Base URL of a QualiCache instance. Only used when the quality source is qualicache. Only used when `QUALITY_SOURCE` is `qualicache`. |
 | `QUALICACHE_API_KEY` | - | Must match QualiCache's own ACCESS_KEY when it has one. Only used when `QUALITY_SOURCE` is `qualicache`. |
 | `QUALICACHE_MIN_TRUST` | `medium` | Lowest release-group tier to accept from QualiCache. Only used when `QUALITY_SOURCE` is `qualicache`. One of `high`, `medium`, `low`. |
@@ -107,44 +107,44 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `IMAGE_FORMAT` | `webp` | Output format for composited posters. WebP is smaller at the same quality. One of `webp`, `jpeg`. |
 | `JPEG_QUALITY` | `85` | JPEG output quality (70-95), used when the image format is jpeg. Raise to 92 for higher fidelity; lower to reduce file size. |
 | `WEBP_QUALITY` | `85` | WebP output quality (70-95), used when the image format is webp (the default). Higher is better quality and larger files. |
-| `DEFAULT_LOGO_LANGUAGE` | `en` | ISO language or locale code for title logos and poster language preference when a request names none. Region-qualified locales (fr-fr, es-es, es-mx, pt-br) select artwork tagged for that region only, falling back to English rather than to the bare language. TMDB_LANGUAGE is accepted as a legacy alias in the environment. |
+| `DEFAULT_LOGO_LANGUAGE` | `en` | Default ISO language/locale for logos and posters. Regional locales (fr-fr, es-es, es-mx, pt-br) match that region only and fall back to English, not the bare language. Legacy env alias: TMDB_LANGUAGE. |
 
 #### Trending
 
 | Variable | Default | Description |
 |---|---|---|
-| `TRENDING_FETCH_TIME` | - | Local time of day (e.g. 04:00) to refresh the trending list used by the Trending sashes. Every poster showing a rank is cached until then, so the ranks all change at once. Blank refreshes 24 hours after the previous refresh instead. |
+| `TRENDING_FETCH_TIME` | - | Daily local time (e.g. 04:00) to refresh trending lists so ranked posters expire and update together. Blank refreshes every 24h from the last run. |
 | `TRENDING_FETCH_TIMEZONE` | `UTC` | IANA timezone for the fetch time, e.g. America/New_York. |
 | `TRENDING_FETCH_COUNT` | `40` | Ranks 1 to this number get the Trending sash. |
 | `TRENDING_BROAD_FETCH_COUNT` | `100` | Lower-ranked trending titles, from the trending count up to this rank, qualify for the lower-priority Trending (Broad) sash. |
-| `TRENDING_SOURCE_MOVIE` | - | An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces TMDB's global movie trending list. Blank keeps TMDB's list. |
-| `TRENDING_SOURCE_TV` | - | An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces TMDB's global TV trending list for both sashes and cache warming. Blank keeps TMDB's list. |
-| `TRENDING_SOURCE_ANIME` | - | An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces AniList's trending anime series, for the Trending Anime catalog and the rank on every anime series poster. Blank keeps AniList's list. Only used while the trending catalogs addon is on. |
-| `TRENDING_SOURCE_ANIME_MOVIE` | - | An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces AniList's trending anime films, for the Trending Anime Movies catalog and the rank on every anime film poster. Blank keeps AniList's list. Only used while the trending catalogs addon is on. |
-| `TRENDING_CATALOGS_ENABLED` | `true` | Serve the trending lists behind the Trending sashes as a Stremio addon with Trending Movies, Series, Anime and Anime Movies catalogs, at /trending/manifest.json (/trending/<access key>/manifest.json when an access key is set). Import it into your metadata addon and the "#N Today" labels match the row order. Anime then ranks on its own lists (from AniList, unless an anime trending source is set) and leaves the movie and TV lists, so every anime poster, whatever id it is requested by, carries its rank in the anime catalogs. On by default; turn off to serve no addon. `true` or `false`. |
-| `TRENDING_HIDE_UNRELEASED` | `false` | Leave titles that are not out at home yet off the trending lists: films still in cinemas or not released at all, series whose first episode has not aired, anime series AniList lists as not yet airing, and anime films not out at home by their TMDB dates. The remaining titles are ranked 1, 2, 3 without gaps, so the catalogs and the rank on every poster still agree. Takes effect at the next trending refresh. Off by default. `true` or `false`. |
-| `TRENDING_HIDE_GENRES` | - | Leave titles of these genres off the trending lists, the trending sashes' ranks and the trending catalogs alike. The remaining titles are ranked 1, 2, 3 without gaps, so catalog rows and the rank on every poster still agree. TV's merged genres count as both halves: Sci-Fi & Fantasy is Sci-Fi and Fantasy, Action & Adventure is Action and Adventure. Takes effect at the next trending refresh. Comma-separated, any of `Action`, `Adventure`, `Animation`, `Comedy`, `Crime`, `Documentary`, `Drama`, `Family`, `Fantasy`, `History`, `Horror`, `Kids`, `Music`, `Mystery`, `News`, `Reality`, `Rom-Com`, `Romance`, `Sci-Fi`, `Soap`, `Talk`, `Thriller`, `War`, `Western`. |
-| `TRENDING_HIDE_MIXED_GENRES` | `true` | On: any title with a hidden genre is left off, so hiding Romance also hides a Comedy + Romance film. Off: only titles whose genres are all hidden ones are, so that film stays. Hiding Rom-Com covers titles that are both Comedy and Romance. `true` or `false`. |
-| `TRENDING_HIDE_KDRAMAS` | `false` | Leave Korean dramas off the TV trending list, its ranks and the Trending Series catalogs: series whose original language is Korean and that TMDB files as Drama or Soap. Korean variety, reality and animated series stay. The remaining titles are ranked 1, 2, 3 without gaps. Takes effect at the next trending refresh. Off by default. `true` or `false`. |
-| `TRENDING_LIST_CHOICE` | `true` | Let each visitor pick their trending lists in the configurator: any number of sources per type from TMDB's today and this week lists, AniList, the public lists below, the sources set here and the extra choices, each one a catalog of its own, and whether titles not out at home yet are left off. Their posters rank on the one list they mark per type. Each different pick is its own list, built when first asked for and refreshed when it is due; visitors who pick alike share one. Off: everyone gets the lists set here. `true` or `false`. |
-| `TRENDING_MAX_PICKS` | `8` | The most catalogs a visitor may pick for each of Movies, Series, Anime and Anime Movies. Every list picked is fetched, refreshed while it is in use and has its posters rendered, and Streaming Top 10 offers a chart for each service in each country, so this keeps one install from asking for hundreds. Picks past the limit in an existing install URL are dropped from the end. Only used when `TRENDING_LIST_CHOICE` is `true`. |
-| `TRENDING_LIST_SOURCES` | `imdb,trakt,simkl,justwatch,rottentomatoes,tvstats,top10,shudder,flixpatrol` | Which public trending lists visitors may pick in the Trending Catalogs Addon's Configure dialog, besides TMDB's and AniList's own. IMDb, Trakt, JustWatch, Rotten Tomatoes, Television Stats and the streaming services' US Top 10s are read from the MDBList user snoak's daily mirrors of them, SIMKL from its own hourly lists; none needs a key. Shudder's (popular, and new in the last two years) are read from TMDB with the server's key. Streaming Top 10 adds every streaming service's daily Top 10 in each of 119 countries (FlixPatrol's charts, as fp-crawler publishes them; see TRENDING_TOP10_URL). A list is fetched only once someone picks it. Only used when `TRENDING_LIST_CHOICE` is `true`. Comma-separated, any of `imdb`, `trakt`, `simkl`, `justwatch`, `rottentomatoes`, `tvstats`, `top10`, `shudder`, `flixpatrol`. |
+| `TRENDING_SOURCE_MOVIE` | - | MDBList page or TMDB-shaped JSON endpoint replacing TMDB's movie trending list. Blank uses TMDB. |
+| `TRENDING_SOURCE_TV` | - | MDBList page or TMDB-shaped JSON endpoint replacing TMDB's TV trending list (for sashes and cache warming). Blank uses TMDB. |
+| `TRENDING_SOURCE_ANIME` | - | MDBList page or TMDB-shaped JSON endpoint replacing AniList's trending anime series (catalog and poster ranks). Blank uses AniList. Requires the trending catalogs addon. |
+| `TRENDING_SOURCE_ANIME_MOVIE` | - | MDBList page or TMDB-shaped JSON endpoint replacing AniList's trending anime films (catalog and poster ranks). Blank uses AniList. Requires the trending catalogs addon. |
+| `TRENDING_CATALOGS_ENABLED` | `true` | Serve Trending Movies, Series, Anime and Anime Movies as a Stremio addon at /trending/manifest.json (or /trending/<access key>/manifest.json) so "#N Today" ranks match catalog order. Anime moves to its own AniList (or custom) lists across all ID types. `true` or `false`. |
+| `TRENDING_HIDE_UNRELEASED` | `false` | Exclude titles not yet out at home (unreleased/cinema-only films, unaired series, not-yet-airing AniList anime, anime films without home TMDB dates). Remaining titles re-rank without gaps at the next refresh. `true` or `false`. |
+| `TRENDING_HIDE_GENRES` | - | Exclude selected genres from trending lists, sashes and catalogs (re-ranked without gaps at the next refresh). Merged TV genres match both halves (e.g. Sci-Fi & Fantasy counts as Sci-Fi and Fantasy). Comma-separated, any of `Action`, `Adventure`, `Animation`, `Comedy`, `Crime`, `Documentary`, `Drama`, `Family`, `Fantasy`, `History`, `Horror`, `Kids`, `Music`, `Mystery`, `News`, `Reality`, `Rom-Com`, `Romance`, `Sci-Fi`, `Soap`, `Talk`, `Thriller`, `War`, `Western`. |
+| `TRENDING_HIDE_MIXED_GENRES` | `true` | On: hide titles with any hidden genre (hiding Romance hides Comedy + Romance). Off: hide only if all genres are hidden. Rom-Com matches Comedy + Romance. `true` or `false`. |
+| `TRENDING_HIDE_KDRAMAS` | `false` | Exclude Korean Drama/Soap series from TV trending lists, sashes and catalogs (keeps Korean variety, reality and animation). Re-ranks without gaps at the next refresh. `true` or `false`. |
+| `TRENDING_LIST_CHOICE` | `true` | Let visitors choose their own trending catalogs in the configurator (from TMDB, AniList, public lists, and custom sources), toggle hiding unreleased titles, and pick one list per type for poster ranks. Identical picks share cached lists. Off: everyone uses server lists. `true` or `false`. |
+| `TRENDING_MAX_PICKS` | `8` | Max catalogs a visitor can pick per type (Movies, Series, Anime, Anime Movies), capping background fetches and renders (especially with Streaming Top 10 charts). Excess picks in existing URLs are dropped from the end. Only used when `TRENDING_LIST_CHOICE` is `true`. |
+| `TRENDING_LIST_SOURCES` | `imdb,trakt,simkl,justwatch,rottentomatoes,tvstats,top10,shudder,flixpatrol` | Extra public lists visitors can pick alongside TMDB and AniList (fetched only when picked). IMDb, Trakt, JustWatch, RT, TV Stats and US Top 10s use snoak's daily MDBList mirrors and SIMKL uses its hourly lists (no key); Shudder uses the server TMDB key; Streaming Top 10 adds FlixPatrol charts across 119 countries (see TRENDING_TOP10_URL). Only used when `TRENDING_LIST_CHOICE` is `true`. Comma-separated, any of `imdb`, `trakt`, `simkl`, `justwatch`, `rottentomatoes`, `tvstats`, `top10`, `shudder`, `flixpatrol`. |
 
 #### Sashes
 
 | Variable | Default | Description |
 |---|---|---|
 | `BLOCKBUSTER_TOP_N` | `10` | A film gets the Blockbuster sash when it is among this many highest-grossing films of its release year (TMDB worldwide revenue). |
-| `BLOCKBUSTER_MIN_REVENUE` | `100000000` | A film must also have grossed at least this much in today's dollars (adjusted for US inflation to its release year: $100M is about $17M for 1975), so an early year TMDB has little box-office data for doesn't hand the sash to a small film. 0 turns the floor off. |
+| `BLOCKBUSTER_MIN_REVENUE` | `100000000` | Minimum inflation-adjusted gross in today's USD (e.g. $100M ≈ $17M in 1975) so sparse early TMDB data doesn't award small films. 0 disables. |
 
 #### Watchlist
 
 | Variable | Default | Description |
 |---|---|---|
-| `WATCHLIST_SOURCE` | - | Self-hosted only: marks every title in one user's watchlist with a Watchlist sash. mdblist (the watchlist of the MDBList key's account, or of MDBLIST_WATCHLIST_API_KEY's when set; also the free route for Trakt, which MDBList mirrors), simkl, trakt, pmdb (a PublicMetaDB watchlist), or any MDBList list page URL. Blank disables the feature. |
-| `WATCHLIST_REFRESH_MINUTES` | `30` | How often the watchlist source is re-checked. Each check is one cheap call (one MDBList page per 500 titles; SIMKL's activities timestamp, with the list only re-read when it changed; two Trakt calls; one PMDB list lookup plus one page per 500 titles, well inside PMDB's free-tier hourly limit at the default interval). Only used when `WATCHLIST_SOURCE` is set. |
-| `MDBLIST_WATCHLIST_API_KEY` | - | Reads the watchlist of this key's MDBList account instead of MDBLIST_API_KEY's, so a personal account's watchlist can be used without that key also spending its quota on ratings and cache warming. Blank uses MDBLIST_API_KEY. Only used when `WATCHLIST_SOURCE` is `mdblist`. |
-| `SIMKL_CLIENT_ID` | - | From a free app at simkl.com/settings/developer. Register it as "TV, devices & command line": PostersPlus links by code (the device/PIN flow), so that type needs no secret and no redirect URL. The account is then linked once from the admin dashboard's Watchlist group. Only used when `WATCHLIST_SOURCE` is `simkl`. |
+| `WATCHLIST_SOURCE` | - | Self-hosted only: marks watchlist titles with a sash. Accepts mdblist (uses MDBLIST_WATCHLIST_API_KEY or MDBLIST_API_KEY; also mirrors Trakt for free), simkl, trakt, pmdb, or any MDBList list URL. Blank disables. |
+| `WATCHLIST_REFRESH_MINUTES` | `30` | Minutes between watchlist checks (lightweight: 1 page/500 titles on MDBList/PMDB, timestamp check on SIMKL, 2 calls on Trakt). Only used when `WATCHLIST_SOURCE` is set. |
+| `MDBLIST_WATCHLIST_API_KEY` | - | Optional separate MDBList key for reading a personal watchlist without spending its quota on ratings/warming. Blank uses MDBLIST_API_KEY. Only used when `WATCHLIST_SOURCE` is `mdblist`. |
+| `SIMKL_CLIENT_ID` | - | From simkl.com/settings/developer registered as "TV, devices & command line" (device/PIN flow; needs no secret or redirect URL). Link the account here once saved. Only used when `WATCHLIST_SOURCE` is `simkl`. |
 | `TRAKT_CLIENT_ID` | - | From an existing Trakt API app (creating one needs Trakt VIP). Only used when `WATCHLIST_SOURCE` is `trakt`. |
 | `TRAKT_USERNAME` | - | The public profile whose watchlist is read. Only used when `WATCHLIST_SOURCE` is `trakt`. |
 | `PMDB_API_KEY` | - | A PublicMetaDB API key (pm-...), created under Settings → API on publicmetadb.com. Only read access is used. Only used when `WATCHLIST_SOURCE` is `pmdb`. |
@@ -153,15 +153,15 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 
 | Variable | Default | Description |
 |---|---|---|
-| `REPORTS_ENABLED` | `false` | Add a Report button to the configurator's live preview so users can flag a poster (text on a textless poster, wrong art, wrong logo, wrong details). Reports land in the dashboard's Reports view. Needs the admin dashboard (ADMIN_KEY) to read them. Behind a reverse proxy, set FORWARDED_ALLOW_IPS to the proxy's address: the limits below are per address, and reports stay paused while every visitor arrives as the proxy. `true` or `false`. |
-| `REPORTS_PER_IP` | `10` | How many reports one address may file in 24 hours. Further reports are refused with a message saying so. Reports you resolve stop counting, so someone whose reports are right is not held back; dismissed and deleted ones still count. Only used when `REPORTS_ENABLED` is `true`. |
-| `REPORTS_PURGE_THRESHOLD` | `50` | An address that sends more than this many reports within 7 days, refused ones included and resolved ones not, has its unresolved reports deleted and is blocked from reporting. Blocked addresses are listed in the Reports view, where they can be unblocked. 0 turns this off. Only used when `REPORTS_ENABLED` is `true`. |
+| `REPORTS_ENABLED` | `false` | Adds a Report button to configurator previews (wrong art/logo/details or text on textless); reports appear in the Reports view (requires ADMIN_KEY). Behind a proxy, set FORWARDED_ALLOW_IPS or per-IP limits stay paused. `true` or `false`. |
+| `REPORTS_PER_IP` | `10` | Max reports per IP in 24 hours. Resolved reports stop counting toward the limit; dismissed and deleted ones still count. Only used when `REPORTS_ENABLED` is `true`. |
+| `REPORTS_PURGE_THRESHOLD` | `50` | Exceeding this many reports in 7 days (including refused, excluding resolved) purges that IP's open reports and blocks it (manageable in Reports). 0 disables. Only used when `REPORTS_ENABLED` is `true`. |
 
 #### Ratings
 
 | Variable | Default | Description |
 |---|---|---|
-| `IMDB_DATASET_ENABLED` | `false` | Download IMDb's free, no-key, daily-refreshed ratings dataset into a local table so the imdb rating weight can be served without MDBList. Selected per request or instance with imdb_rating_source=dataset. `true` or `false`. |
+| `IMDB_DATASET_ENABLED` | `false` | Download IMDb's free daily ratings dataset locally (no key) to serve IMDb scores without MDBList when imdb_rating_source=dataset. `true` or `false`. |
 | `IMDB_DATASET_PATH` | `/app/cache/imdb_ratings.db` | Where the dataset's SQLite table is kept. Only used when `IMDB_DATASET_ENABLED` is `true`. |
 | `IMDB_DATASET_REFRESH_HOURS` | `24` | How often the dataset is re-downloaded. Only used when `IMDB_DATASET_ENABLED` is `true`. |
 | `IMDB_DATASET_MIN_VOTES` | `10` | Titles with fewer IMDb votes than this are ignored, as the rating minimum votes does for MDBList sources. Only used when `IMDB_DATASET_ENABLED` is `true`. |
@@ -172,19 +172,19 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | Variable | Default | Description |
 |---|---|---|
 | `QUALITY_OLD_CACHE_DURATION` | `90` | Stream quality for older titles is stable, so it is cached this long; new titles keep a 1-day window. |
-| `COMPOSITE_CACHE_TTL` | `604800` | How long a fully rendered poster is kept before it is re-rendered. Default 604800 (7 days). |
-| `COMPOSITE_MAX_ENTRIES` | `500000` | Oldest entries are evicted past this many. A composite is roughly 50-150 KB, so the default 500000 holds about 50 GB. 0 relies on the TTL alone, which lets requests with ever-new settings grow the cache without bound. |
-| `COMPOSITE_MAX_GB` | `0` | Oldest rendered posters are evicted once the composite cache holds more than this many GB, down to 95% of it. Works alongside the entry cap; whichever is reached first applies. 0 turns the size cap off. |
-| `CACHE_MIN_FREE_GB` | `1` | When the cache volume has less free space than this, posters are still rendered and served but not written to the cache until space is freed. 0 turns the check off. |
+| `COMPOSITE_CACHE_TTL` | `604800` | Seconds to keep a rendered poster before re-rendering (604800 = 7 days). |
+| `COMPOSITE_MAX_ENTRIES` | `500000` | Max cached composites before evicting oldest (~50–150 KB each; 500000 ≈ 50 GB). 0 relies on TTL only (unbounded growth). |
+| `COMPOSITE_MAX_GB` | `0` | Composite cache size cap in GB; evicts oldest down to 95% when exceeded (works alongside the entry cap). 0 disables. |
+| `CACHE_MIN_FREE_GB` | `1` | Stop writing to cache (still rendering/serving) if volume free space drops below this GB floor. 0 disables. |
 
 #### Cache warming
 
 | Variable | Default | Description |
 |---|---|---|
-| `CACHE_WARM_ENABLED` | `false` | Pre-populate the TMDB and MDBList caches for trending, popular and catalog titles in the background. Off by default; enable once the server keys' quotas are understood. `true` or `false`. |
-| `CACHE_WARM_TMDB_BUDGET` | `2000` | Ceiling on actual TMDB API calls per warm cycle; cache hits do not count. Also sets how many trending, popular and top-rated titles a cycle walks, so it decides how many titles the MDBList bulk requests can rate. Only used when `CACHE_WARM_ENABLED` is `true`. |
-| `CACHE_WARM_MDBLIST_BUDGET` | `500` | Ceiling on MDBList requests per warm cycle. Stale ratings are fetched in bulk, up to 200 titles to a request that counts once; only when bulk is unavailable does each title cost its own request. Only used when `CACHE_WARM_ENABLED` is `true`. |
-| `CACHE_WARM_MDBLIST_RESERVE` | `300` | MDBList's limit is a per-key daily quota (1,000/day on a free key) shared with live poster requests. The warmer stops spending a key once its remaining daily requests, reported by MDBList on every response, fall to this floor, so a cycle cannot leave the rest of the day without ratings. 0 disables the floor. Only used when `CACHE_WARM_ENABLED` is `true`. |
+| `CACHE_WARM_ENABLED` | `false` | Pre-warm TMDB and MDBList caches in the background for trending, popular and catalog titles. Enable once API quotas are understood. `true` or `false`. |
+| `CACHE_WARM_TMDB_BUDGET` | `2000` | Max uncached TMDB API calls per cycle; also caps how many trending/popular/top-rated titles are walked for MDBList bulk rating. Only used when `CACHE_WARM_ENABLED` is `true`. |
+| `CACHE_WARM_MDBLIST_BUDGET` | `500` | Max MDBList requests per cycle (stale ratings batch up to 200 titles per call when bulk is available). Only used when `CACHE_WARM_ENABLED` is `true`. |
+| `CACHE_WARM_MDBLIST_RESERVE` | `300` | Stop warming a key once its remaining MDBList daily quota (1,000/day free) drops to this reserve, preserving quota for live renders. 0 disables. Only used when `CACHE_WARM_ENABLED` is `true`. |
 | `CACHE_WARM_INTERVAL_HOURS` | `24` | Hours between the end of one warm cycle and the start of the next. Ignored after the first cycle once a warm hour is set. Only used when `CACHE_WARM_ENABLED` is `true`. |
 
 #### TVDB fallback art
@@ -193,52 +193,52 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 |---|---|---|
 | `TVDB_USE_LOGOS` | `true` | Use TVDB clearlogos when TMDB and Metahub have none. `true` or `false`. |
 | `TVDB_USE_BACKDROPS` | `true` | Use TVDB backgrounds when no textless TMDB poster or backdrop exists. `true` or `false`. |
-| `TVDB_USE_POSTERS` | `false` | Use TVDB posters as a last resort. To replace a poster with text, only a no-language TVDB poster is used (these are textless), and only when text detection also finds it clean. For a title with no art at all, a TVDB poster in the user's language comes after those. `true` or `false`. |
-| `TVDB_POSTER_SOURCE` | `false` | Let users pick TVDB as their poster source: its best no-language poster (TVDB's no-language posters are textless), or under Original Art its best poster in their language. Landscape users can pick TVDB backdrops the same way. TMDB when TVDB has none. Needs the TVDB key. Adds poster downloads, cache and text scans for users who pick it. `true` or `false`. |
-| `TVDB_LOGO_PRIORITY` | `3` | Where a TVDB clearlogo sits in the logo chain: 1 before TMDB and Metahub, 2 after TMDB but before Metahub, 3 last resort (only when both have nothing). TVDB logos are often higher quality, so 1 or 2 improve results but change logos currently sourced from TMDB or Metahub. One of `1`, `2`, `3`. |
+| `TVDB_USE_POSTERS` | `false` | Last-resort TVDB posters: uses OCR-clean no-language (textless) posters to replace texted art, or user-language posters when no art exists. `true` or `false`. |
+| `TVDB_POSTER_SOURCE` | `false` | Offer TVDB as a poster/backdrop source (textless no-language, or user-language under Original Art; falls back to TMDB). Needs TVDB key; adds downloads, cache and OCR scans. `true` or `false`. |
+| `TVDB_LOGO_PRIORITY` | `3` | TVDB clearlogo order: 1 before TMDB & Metahub, 2 between TMDB and Metahub, 3 last resort. Higher priority (1 or 2) can improve quality but changes existing logos. One of `1`, `2`, `3`. |
 | `TVDB_CONCURRENCY` | `3` | Maximum concurrent outbound TVDB requests per worker. |
 
 #### Fanart
 
 | Variable | Default | Description |
 |---|---|---|
-| `FANART_POSTERS` | `false` | Let users pick Fanart as their poster source, for every title or for anime only: its most-liked textless poster, or under Original Art its most-liked poster in their language. TMDB when Fanart has none. Needs the Fanart key and, for series, the TVDB key. Adds poster downloads, cache and text scans for users who pick it. `true` or `false`. |
+| `FANART_POSTERS` | `false` | Offer Fanart as a poster source (all titles or anime only; most-liked textless, or user-language under Original Art; TMDB fallback). Needs Fanart key (+ TVDB key for series). `true` or `false`. |
 
 #### Artwork sharing
 
 | Variable | Default | Description |
 |---|---|---|
-| `ART_OVERRIDES_SHARE` | `false` | Let other Posters+ instances follow the art you pick in the dashboard's Artwork view: every override is served read-only at /art-overrides/export.json, and uploaded or linked images at /custom-art/. Nothing else is shared. Off by default. `true` or `false`. |
-| `ART_OVERRIDES_REMOTE_URL` | - | Another Posters+ instance whose Artwork overrides to use here, e.g. https://posters.example.com (its dashboard address works too). That instance must have Share artwork overrides on. Checked hourly; your own overrides win wherever both have one. Images it uploaded are copied here once. Blank follows none. |
+| `ART_OVERRIDES_SHARE` | `false` | Expose your Artwork overrides read-only at /art-overrides/export.json (and uploaded/linked images at /custom-art/) for other instances to follow. Nothing else is shared. `true` or `false`. |
+| `ART_OVERRIDES_REMOTE_URL` | - | Another Posters+ instance (with Share artwork overrides on) to sync Artwork overrides from hourly (e.g. https://posters.example.com). Local overrides win; uploaded images copy once. Blank disables. |
 
 #### Cinemeta fallback
 
 | Variable | Default | Description |
 |---|---|---|
-| `CINEMETA_ENABLED` | `true` | Render from Stremio's Cinemeta catalogue (IMDb-keyed, no API key) when no TMDB key is available or TMDB has no record for the IMDb id, and try its Metahub art before the genre canvas when TMDB has no artwork. Needs an imdb_id (or a tt... stremio_id) on the request. `true` or `false`. |
+| `CINEMETA_ENABLED` | `true` | Fallback to Stremio Cinemeta (no key, needs imdb_id / tt… stremio_id) when TMDB is unavailable or lacks a record, and try Metahub art before genre canvases. `true` or `false`. |
 
 #### Anime sources
 
 | Variable | Default | Description |
 |---|---|---|
-| `ANIME_SOURCES_ENABLED` | `true` | Serve art, titles, genres and a community score from AniList and Kitsu when a client passes an anilist_id or kitsu_id (or a kitsu:/anilist: stremio_id). Clients that only speak imdb/tmdb are unaffected. Neither provider needs an API key. `true` or `false`. |
-| `ANIME_COMPOSITE_LOGO` | `true` | Composite a title logo over anime cover art. That art rarely carries a logotype (or only a small block of Japanese corner text), so a proper logo is usually an improvement; off serves the provider's art untouched. Logos come from TMDB, Metahub or TVDB, so the request needs a tmdb_id or imdb_id, or anime id mapping to supply one. `true` or `false`. |
-| `ANIME_ID_MAP_ENABLED` | `true` | Fill in the TMDB and IMDb ids an anime request didn't send, from the community Kitsu/AniList mapping list (downloaded daily into a local table). Lets a client that only sends a kitsu: or anilist: id get TMDB logos, landscape backdrops and IMDb-keyed ratings; art still comes from the anime provider. Also what lets a MyAnimeList id (mal_id, or a mal: stremio_id) render, as the Kitsu or AniList entry it maps to. `true` or `false`. |
-| `ANIME_SEASON_ART` | `true` | In landscape, give an anime's later seasons and cours their own art instead of the show's single TMDB backdrop: Kitsu's cover image for that season when it is big enough and carries no title, else TMDB's still of the season's first episode. Requests by AniList id borrow Kitsu's cover through the id mapping. Season 1 and anything with an operator's Artwork pick are unchanged. On by default. Only used when `ANIME_ID_MAP_ENABLED` is `true`. `true` or `false`. |
+| `ANIME_SOURCES_ENABLED` | `true` | Serve art, titles, genres and scores from AniList/Kitsu (no key) when passed anilist_id, kitsu_id, or kitsu:/anilist: stremio_id. IMDb/TMDB clients unaffected. `true` or `false`. |
+| `ANIME_COMPOSITE_LOGO` | `true` | Overlay a TMDB/Metahub/TVDB title logo onto anime cover art (needs tmdb_id, imdb_id, or anime ID mapping). Off serves the provider's cover art untouched. `true` or `false`. |
+| `ANIME_ID_MAP_ENABLED` | `true` | Resolve missing TMDB/IMDb IDs via the daily Kitsu/AniList mapping table so kitsu:/anilist: requests get TMDB logos, backdrops and IMDb ratings (provider art kept), and mal_id / mal: requests can render. `true` or `false`. |
+| `ANIME_SEASON_ART` | `true` | Use per-season art in landscape for later anime seasons/cours (clean Kitsu cover via ID mapping, else TMDB first-episode still) instead of the show backdrop. Leaves Season 1 and Artwork overrides unchanged. Only used when `ANIME_ID_MAP_ENABLED` is `true`. `true` or `false`. |
 
 #### Rendering
 
 | Variable | Default | Description |
 |---|---|---|
-| `RANDOM_POSTERS` | `false` | Let users pick a random one of the top five posters (TMDB, Fanart or TVDB) instead of the top one. Each title can then store up to five posters in the disk cache instead of one; the pick changes when the poster re-renders. `true` or `false`. |
+| `RANDOM_POSTERS` | `false` | Let users pick randomly from the top 5 posters (TMDB/Fanart/TVDB), changing on re-render. Stores up to 5 posters per title in disk cache. `true` or `false`. |
 
 #### Text detection
 
 | Variable | Default | Description |
 |---|---|---|
 | `TEXTLESS_TEXT_DETECTION` | `true` | Detect title text on posters TMDB mislabelled as textless and skip compositing a logo over them. Uses the PP-OCRv5 Mobile detector. `true` or `false`. |
-| `TEXTLESS_DETECTION_MAX_VOTES` | `3000` | Foreground OCR vote limit. Titles with more TMDB votes render without waiting, skip composite caching, and enter the idle background scan queue. Raise for foreground accuracy; lower for faster stale-cache bursts. Changing it invalidates cached composites. Only used when `TEXTLESS_TEXT_DETECTION` is `true`. |
-| `TEXTLESS_BACKDROP_FALLBACK` | `true` | When a poster TMDB tags as textless turns out to have its title burned in, use the runner-up textless poster (titles with 6+ of them) or a crop of the backdrop with a logo instead. Adds about half a second to the first render of those titles. Changing it invalidates cached composites. Only used when `TEXTLESS_TEXT_DETECTION` is `true`. `true` or `false`. |
+| `TEXTLESS_DETECTION_MAX_VOTES` | `3000` | Foreground OCR vote ceiling: titles above this render immediately (uncached) and queue for background OCR. Raise for accuracy, lower for faster bursts; changes invalidate cache. Only used when `TEXTLESS_TEXT_DETECTION` is `true`. |
+| `TEXTLESS_BACKDROP_FALLBACK` | `true` | When a "textless" poster has burned-in text, use a runner-up textless poster (if 6+ exist) or a cropped backdrop + logo (~0.5s on first render). Changes invalidate cache. Only used when `TEXTLESS_TEXT_DETECTION` is `true`. `true` or `false`. |
 
 #### Performance
 
@@ -248,8 +248,8 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `QUALITY_BG_CONCURRENCY` | `5` | Caps concurrent background quality fetches when many uncached titles appear at once. |
 | `QUALITY_WAIT_TIMEOUT` | `30` | How long a request with wait_for_quality=true waits for the scraper. |
 | `MDBLIST_CONCURRENCY` | `3` | Maximum concurrent outbound MDBList requests per worker. MDBList drops requests past roughly 3 per key. |
-| `MDBLIST_MIN_INTERVAL` | `0.2` | Minimum seconds between the start of one outbound MDBList request and the next, across live renders and cache warming. MDBList has a short per-IP burst limit on top of the daily quota, and 3 unpaced concurrent calls can reach it during a cold catalog warm; 0.2 holds the server to 5 calls per second. 0 turns the pacing off. |
-| `POSTER_RENDER_CONCURRENCY` | `8` | Maximum uncached poster renders in flight per worker. Cache hits are never held back; a burst of fresh renders (a cold catalog grid) queues past this rather than exhausting the upstream connection pool. Raise on a machine with headroom, lower on a small VPS. |
+| `MDBLIST_MIN_INTERVAL` | `0.2` | Min seconds between outbound MDBList calls (live + warming) to avoid per-IP burst limits (0.2 = 5/s). 0 disables pacing. |
+| `POSTER_RENDER_CONCURRENCY` | `8` | Max concurrent uncached renders per worker (cache hits bypass this); excess bursts queue instead of exhausting upstream connections. |
 
 <!-- settings-reference:end -->
 

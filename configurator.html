@@ -821,6 +821,75 @@
 
   select option { background: var(--black2); color: var(--text-primary); }
 
+  /* ── CUSTOM GOLD-BORDERED DROPDOWNS ── */
+  .pp-dd-native { display: none !important; }
+  .pp-dd-btn {
+    position: relative;
+    display: inline-flex; align-items: center; justify-content: flex-start;
+    width: 100%;
+    background: var(--black2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.4;
+    padding: 9px 34px 9px 13px;
+    cursor: pointer; text-align: left;
+    transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
+  }
+  .pp-dd-btn:hover:not(:disabled):not(.open) { border-color: var(--silver-dim); background: var(--black3); }
+  .pp-dd-btn.open, .pp-dd-btn.open:hover, .pp-dd-btn:focus-visible {
+    outline: none;
+    border-color: var(--gold-dim);
+    background: var(--black3);
+    box-shadow: 0 0 0 2px var(--gold-faint);
+  }
+  .pp-dd-btn:disabled { opacity: 0.45; cursor: default; }
+  .pp-dd-val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pp-dd-chev {
+    position: absolute; right: 11px; top: 50%; transform: translateY(-50%);
+    color: var(--gold-dim); display: flex; pointer-events: none;
+    transition: transform 0.16s ease, color 0.15s;
+  }
+  .pp-dd-btn.open .pp-dd-chev { transform: translateY(-50%) rotate(180deg); color: var(--gold); }
+  .pp-dd-menu {
+    position: fixed; z-index: 5000;
+    max-width: calc(100vw - 24px);
+    background: var(--black2);
+    border: 1px solid var(--border-active);
+    border-radius: 10px;
+    box-shadow: 0 14px 36px rgba(0,0,0,0.52);
+    overflow: hidden;
+  }
+  html.light-mode .pp-dd-menu { box-shadow: 0 12px 30px rgba(0,0,0,0.16); }
+  .pp-dd-list {
+    max-height: 270px; overflow-y: auto; padding: 5px;
+    scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+  }
+  .pp-dd-list::-webkit-scrollbar { width: 5px; }
+  .pp-dd-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+  .pp-dd-grp {
+    padding: 6px 9px 3px;
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .pp-dd-opt {
+    width: 100%;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 7px 10px;
+    background: transparent; border: 0; border-radius: 6px;
+    color: var(--text-secondary);
+    font-family: var(--mono); font-size: 12px; text-align: left;
+    cursor: pointer; user-select: none;
+    transition: background-color 0.12s, color 0.12s;
+  }
+  .pp-dd-opt > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pp-dd-opt:hover:not(:disabled) { background: var(--black3); color: var(--text-primary); }
+  .pp-dd-opt.on, .pp-dd-opt.on:hover:not(:disabled) { color: var(--gold-bright); font-weight: 500; }
+  .pp-dd-opt:disabled { opacity: 0.4; cursor: default; }
+  .pp-dd-chk { color: var(--gold); flex-shrink: 0; display: inline-flex; }
+
   /* ── TMDB SEARCH ── */
   .search-wrap { position: relative; }
 
@@ -2027,9 +2096,9 @@
   .tl-rank-row { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-secondary); }
   .tl-rank-row[hidden] { display: none; }
   .tl-rank-row > span { flex: 0 0 110px; }
-  .tl-rank-row select { flex: 1; min-width: 0; }
+  .tl-rank-row select, .tl-rank-row .pp-dd-btn { flex: 1; min-width: 0; }
   .tl-top10 { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  .tl-top10 select { flex: 1 1 160px; min-width: 0; }
+  .tl-top10 select, .tl-top10 .pp-dd-btn { flex: 1 1 160px; min-width: 0; }
   /* As tall as the dropdowns beside it, and no gap for an empty hint. */
   .tl-top10 .btn-search { align-self: stretch; }
   #tl-top10-hint:empty { display: none; }
@@ -2151,7 +2220,7 @@
     .preview-actions .btn { min-height: 44px; }
     .btn-row { flex-wrap: wrap; }
     .btn { flex: 1 1 100%; justify-content: center; min-height: 44px; }
-    input[type="text"], input[type="number"], select { min-height: 44px; font-size: 16px; }
+    input[type="text"], input[type="number"], select, .pp-dd-btn { min-height: 44px; font-size: 16px; }
     input[type="range"] { height: 28px; background: transparent; touch-action: pan-x; }
     input[type="range"]::-webkit-slider-runnable-track { height: 4px; }
     input[type="range"]::-webkit-slider-thumb {
@@ -10022,6 +10091,166 @@ function initSegmented() {
   document.querySelectorAll('.segmented[data-for]').forEach(buildSegmented);
   syncSegmented();
 }
+
+// ── CUSTOM GOLD-BORDERED DROPDOWNS ───────────────────────────────────────────
+// Enhances every non-segmented <select> with a floating gold-bordered menu
+// matching the exact width of its trigger button while keeping the underlying
+// <select> as the single source of truth.
+(function initCustomSelects() {
+  let ddOpen = null;
+  const chevSvg = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+  const chkSvg  = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+  const valDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+  const idxDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'selectedIndex');
+
+  function closeMenu() {
+    if (!ddOpen) return;
+    if (ddOpen.el) ddOpen.el.remove();
+    if (ddOpen.btn) {
+      ddOpen.btn.classList.remove('open');
+      ddOpen.btn.setAttribute('aria-expanded', 'false');
+    }
+    ddOpen = null;
+  }
+  function positionMenu() {
+    if (!ddOpen) return;
+    if (!ddOpen.btn.isConnected) { closeMenu(); return; }
+    const r = ddOpen.btn.getBoundingClientRect();
+    if (r.width === 0 || r.bottom < 0 || r.top > window.innerHeight) { closeMenu(); return; }
+    const el = ddOpen.el;
+    el.style.width = Math.min(Math.round(r.width), window.innerWidth - 24) + 'px';
+    const mh = el.offsetHeight || 240;
+    const spaceBelow = window.innerHeight - r.bottom - 12;
+    const top = spaceBelow >= Math.min(mh, 180) || spaceBelow >= r.top
+      ? r.bottom + 6
+      : Math.max(12, r.top - mh - 6);
+    const left = Math.max(12, Math.min(Math.round(r.left), window.innerWidth - el.offsetWidth - 12));
+    el.style.top = top + 'px';
+    el.style.left = left + 'px';
+  }
+  function syncBtn(sel) {
+    const btn = sel._ppBtn;
+    if (!btn) return;
+    const opt = sel.options[sel.selectedIndex] || sel.options[0];
+    const val = btn.querySelector('.pp-dd-val');
+    if (val) val.textContent = opt ? opt.textContent : '';
+    btn.disabled = sel.disabled;
+    const hidden = sel.hidden || sel.style.display === 'none' || sel.classList.contains('segmented-source');
+    btn.style.display = hidden ? 'none' : '';
+  }
+  function openMenu(sel, btn, e) {
+    if (e) e.stopPropagation();
+    if (sel.disabled) return;
+    if (ddOpen && ddOpen.sel === sel) { closeMenu(); return; }
+    closeMenu();
+    const el = document.createElement('div');
+    el.className = 'pp-dd-menu';
+    el.addEventListener('click', ev => ev.stopPropagation());
+    const list = document.createElement('div');
+    list.className = 'pp-dd-list';
+    list.setAttribute('role', 'listbox');
+    const addOpt = opt => {
+      if (opt.hidden || opt.style.display === 'none') return;
+      const active = opt === sel.options[sel.selectedIndex];
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'pp-dd-opt' + (active ? ' on' : '');
+      b.setAttribute('role', 'option');
+      b.setAttribute('aria-selected', active ? 'true' : 'false');
+      b.disabled = opt.disabled;
+      const lbl = document.createElement('span');
+      lbl.textContent = opt.textContent;
+      b.appendChild(lbl);
+      if (active) {
+        const chk = document.createElement('span');
+        chk.className = 'pp-dd-chk';
+        chk.setAttribute('aria-hidden', 'true');
+        chk.innerHTML = chkSvg;
+        b.appendChild(chk);
+      }
+      b.addEventListener('click', () => {
+        if (opt.disabled) return;
+        const changed = sel.value !== opt.value || sel.selectedIndex !== opt.index;
+        sel.selectedIndex = opt.index;
+        syncBtn(sel);
+        closeMenu();
+        btn.focus();
+        if (changed) {
+          sel.dispatchEvent(new Event('input', { bubbles: true }));
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+      list.appendChild(b);
+    };
+    for (const child of sel.children) {
+      if (child.tagName === 'OPTGROUP') {
+        if (child.hidden || child.style.display === 'none') continue;
+        const g = document.createElement('div');
+        g.className = 'pp-dd-grp';
+        g.textContent = child.label;
+        list.appendChild(g);
+        for (const opt of child.children) if (opt.tagName === 'OPTION') addOpt(opt);
+      } else if (child.tagName === 'OPTION') {
+        addOpt(child);
+      }
+    }
+    el.appendChild(list);
+    document.body.appendChild(el);
+    btn.classList.add('open');
+    btn.setAttribute('aria-expanded', 'true');
+    ddOpen = { sel, btn, el };
+    positionMenu();
+    const activeBtn = list.querySelector('.pp-dd-opt.on');
+    if (activeBtn) activeBtn.scrollIntoView({ block: 'nearest' });
+  }
+  function enhance(sel) {
+    if (!sel || sel._ppBtn || sel.multiple || sel.classList.contains('segmented-source')) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pp-dd-btn';
+    btn.setAttribute('aria-haspopup', 'listbox');
+    btn.setAttribute('aria-expanded', 'false');
+    if (sel.getAttribute('aria-label')) btn.setAttribute('aria-label', sel.getAttribute('aria-label'));
+    if (sel.title) btn.title = sel.title;
+    btn.innerHTML = `<span class="pp-dd-val"></span><span class="pp-dd-chev" aria-hidden="true">${chevSvg}</span>`;
+    btn.addEventListener('click', e => openMenu(sel, btn, e));
+    sel._ppBtn = btn;
+    sel.classList.add('pp-dd-native');
+    sel.insertAdjacentElement('afterend', btn);
+    if (valDesc) {
+      Object.defineProperty(sel, 'value', {
+        configurable: true,
+        get() { return valDesc.get.call(this); },
+        set(v) { valDesc.set.call(this, v); syncBtn(this); },
+      });
+    }
+    if (idxDesc) {
+      Object.defineProperty(sel, 'selectedIndex', {
+        configurable: true,
+        get() { return idxDesc.get.call(this); },
+        set(v) { idxDesc.set.call(this, v); syncBtn(this); },
+      });
+    }
+    sel.addEventListener('change', () => syncBtn(sel));
+    sel.addEventListener('input', () => syncBtn(sel));
+    new MutationObserver(() => syncBtn(sel)).observe(sel, {
+      childList: true, subtree: true, attributes: true,
+      attributeFilter: ['disabled', 'hidden', 'style', 'class', 'selected'],
+    });
+    syncBtn(sel);
+  }
+  function scan(root = document) {
+    root.querySelectorAll('select:not(.pp-dd-native):not(.segmented-source)').forEach(enhance);
+  }
+  new MutationObserver(() => scan()).observe(document.body, { childList: true, subtree: true });
+  scan();
+  document.addEventListener('click', closeMenu);
+  window.addEventListener('keydown', e => { if (e.key === 'Escape' && ddOpen) closeMenu(); });
+  window.addEventListener('resize', positionMenu);
+  window.addEventListener('scroll', e => {
+    if (ddOpen && !(e.target && ddOpen.el && ddOpen.el.contains(e.target))) positionMenu();
+  }, true);
+})();
 
 // ── TOOLTIPS ─────────────────────────────────────────────────────────────────
 // Anything carrying data-tip gets a tooltip on hover, keyboard focus or tap.

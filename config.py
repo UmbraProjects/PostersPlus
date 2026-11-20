@@ -71,41 +71,41 @@ LOG_DIR               = "/app/cache/logs"
 
 # Environment
 
-PUBLIC_SHARE_ORIGIN   = _env('PUBLIC_SHARE_ORIGIN', "", group='Access & serving', kind='url', label='Public share origin', help="Explicitly declare this instance public for Share settings by setting its HTTPS origin, e.g. https://posters.example.com (no path, credentials, query or fragment). Blank keeps the instance private and shares use https://postersplus.cc. Shared URLs used directly in clients send requests to that public server and use its configuration and resources. Set only for an instance intended for public use without an access key; this does not change access controls.", placeholder='https://posters.example.com').strip()
-PUBLIC_URL            = _env('PUBLIC_URL', "", group='Access & serving', kind='url', label='Public URL', help="The address clients reach this instance on, e.g. https://posters.example.com. Used for the poster links the trending catalogs addon hands out. Blank derives it from each request's Host / X-Forwarded-Host / X-Forwarded-Proto headers, which works behind most proxies but lets a forged header change the links in a response a shared cache might keep.", placeholder='https://posters.example.com', advanced=True).strip().rstrip("/")
+PUBLIC_SHARE_ORIGIN   = _env('PUBLIC_SHARE_ORIGIN', "", group='Access & serving', kind='url', label='Public share origin', help="HTTPS origin (e.g. https://posters.example.com, no path/query) to mark this instance public for Share settings; blank keeps shares on https://postersplus.cc. Only for public keyless instances — does not alter access controls.", placeholder='https://posters.example.com').strip()
+PUBLIC_URL            = _env('PUBLIC_URL', "", group='Access & serving', kind='url', label='Public URL', help="Public base URL for poster links in the trending catalogs addon (e.g. https://posters.example.com). Blank derives it from Host / X-Forwarded-* headers (spoofable behind shared caches).", placeholder='https://posters.example.com', advanced=True).strip().rstrip("/")
 ACCESS_KEY            = _env('ACCESS_KEY', "", group='Access & serving', kind='secret', label='Access key', help='Shared secret every poster and configurator request must carry as access_key. Leave blank for open access.') or None
 # For operators who protect the configurator with a separate login (Authelia,
 # Pangolin, an SSO proxy...): posters are fetched by clients that can't sign in
 # through a browser, so /poster keeps its access key, but the configurator no
 # longer asks for one and hands the key to the page itself.  Anyone who can open
 # the configurator can therefore read the key — it is only as safe as that login.
-CONFIGURATOR_EXTERNAL_AUTH = _env('CONFIGURATOR_EXTERNAL_AUTH', "false", group='Access & serving', kind='bool', label='Configurator protected externally', help="Turn on only if the configurator sits behind its own login (Authelia, Pangolin, an SSO proxy). The configurator then opens without ?access_key= and fills the access key into previews and copied URLs itself, while posters still require it. Anyone who can reach the configurator can read the access key, so it is only as safe as that login, and the login must cover every path the configurator uses: `/`, `/server-caps`, `/search`, `/resolve-imdb`, `/resolve-tmdb`, `/trending-top10`, `/report` and `/debug/fallback-gallery` (/server-caps hands out the key). No effect without an access key.").strip().lower() in ("1", "true", "yes")
+CONFIGURATOR_EXTERNAL_AUTH = _env('CONFIGURATOR_EXTERNAL_AUTH', "false", group='Access & serving', kind='bool', label='Configurator protected externally', help="Enable only if an external login (Authelia, Pangolin, SSO) protects all configurator paths (`/`, `/server-caps`, `/search`, `/resolve-imdb`, `/resolve-tmdb`, `/trending-top10`, `/report`, `/debug/fallback-gallery`). Opens without ?access_key= and injects the key via /server-caps; posters still require it. No effect without ACCESS_KEY.").strip().lower() in ("1", "true", "yes")
 # Which other sites may show the configurator in a frame (frame-ancestors).
 # Only this instance by default, so another page can't lay the configurator,
 # which holds the user's API keys and the access key, under its own clicks.
-CONFIGURATOR_FRAME_ANCESTORS = _env('CONFIGURATOR_FRAME_ANCESTORS', "", group='Access & serving', kind='list', label='Configurator frame origins', help="Other sites allowed to show the configurator inside a frame, such as a Homarr or Organizr dashboard: origins like https://home.example.com, comma-separated, or * for any. Blank lets only this instance frame it.", placeholder='https://home.example.com', advanced=True).strip()
+CONFIGURATOR_FRAME_ANCESTORS = _env('CONFIGURATOR_FRAME_ANCESTORS', "", group='Access & serving', kind='list', label='Configurator frame origins', help="Origins allowed to embed the configurator in an iframe (e.g. https://home.example.com for Homarr/Organizr, or * for any). Blank allows only same-origin.", placeholder='https://home.example.com', advanced=True).strip()
 # Off by default: on a public instance an Admin link in every visitor's header
 # only invites people to try keys against the dashboard.  _flag isn't defined
 # yet at this point, hence the inline parse.
-SHOW_ADMIN_LINK       = _env('SHOW_ADMIN_LINK', "false", group='Access & serving', kind='bool', label='Admin link in configurator', help="Show an Admin link in the configurator's header, pointing at this dashboard. Off by default so visitors to a public instance aren't invited to try it; the dashboard still needs ADMIN_KEY either way, and the link stays hidden while the dashboard is disabled.").strip().lower() in ("1", "true", "yes")
+SHOW_ADMIN_LINK       = _env('SHOW_ADMIN_LINK', "false", group='Access & serving', kind='bool', label='Admin link in configurator', help="Show an Admin link in the configurator header. Still requires ADMIN_KEY to sign in and stays hidden when the dashboard is disabled.").strip().lower() in ("1", "true", "yes")
 # Poster reports (reports.py): a Report button on the configurator's preview
 # that files into the dashboard's Reports view.  Limits are per address, so
 # behind a reverse proxy FORWARDED_ALLOW_IPS has to be set; reports pause
 # while it isn't (see reports.forwarding_state).
-REPORTS_ENABLED         = _env('REPORTS_ENABLED', "false", group='Poster reports', kind='bool', label='Poster reports', help="Add a Report button to the configurator's live preview so users can flag a poster (text on a textless poster, wrong art, wrong logo, wrong details). Reports land in the dashboard's Reports view. Needs the admin dashboard (ADMIN_KEY) to read them. Behind a reverse proxy, set FORWARDED_ALLOW_IPS to the proxy's address: the limits below are per address, and reports stay paused while every visitor arrives as the proxy.").strip().lower() in ("1", "true", "yes")
-REPORTS_PER_IP          = int(_env('REPORTS_PER_IP', "10", group='Poster reports', kind='int', label='Reports per address per day', help='How many reports one address may file in 24 hours. Further reports are refused with a message saying so. Reports you resolve stop counting, so someone whose reports are right is not held back; dismissed and deleted ones still count.', min=1, max=1000, show_if=('REPORTS_ENABLED', 'true')))
-REPORTS_PURGE_THRESHOLD = int(_env('REPORTS_PURGE_THRESHOLD', "50", group='Poster reports', kind='int', label='Mass-report threshold', help='An address that sends more than this many reports within 7 days, refused ones included and resolved ones not, has its unresolved reports deleted and is blocked from reporting. Blocked addresses are listed in the Reports view, where they can be unblocked. 0 turns this off.', min=0, max=100000, show_if=('REPORTS_ENABLED', 'true')))
+REPORTS_ENABLED         = _env('REPORTS_ENABLED', "false", group='Poster reports', kind='bool', label='Poster reports', help="Adds a Report button to configurator previews (wrong art/logo/details or text on textless); reports appear in the Reports view (requires ADMIN_KEY). Behind a proxy, set FORWARDED_ALLOW_IPS or per-IP limits stay paused.").strip().lower() in ("1", "true", "yes")
+REPORTS_PER_IP          = int(_env('REPORTS_PER_IP', "10", group='Poster reports', kind='int', label='Reports per address per day', help='Max reports per IP in 24 hours. Resolved reports stop counting toward the limit; dismissed and deleted ones still count.', min=1, max=1000, show_if=('REPORTS_ENABLED', 'true')))
+REPORTS_PURGE_THRESHOLD = int(_env('REPORTS_PURGE_THRESHOLD', "50", group='Poster reports', kind='int', label='Mass-report threshold', help="Exceeding this many reports in 7 days (including refused, excluding resolved) purges that IP's open reports and blocks it (manageable in Reports). 0 disables.", min=0, max=100000, show_if=('REPORTS_ENABLED', 'true')))
 # Largest portrait width the resolution URL parameter may ask for.  Off (500,
 # the default canvas) unless raised: a 2000 px render costs ~12x the CPU of a
 # 500 and a large peak of memory, so a public instance must not let anyone
 # request them.  Requests above the cap get the largest allowed size instead.
-MAX_POSTER_RESOLUTION = int(_env('MAX_POSTER_RESOLUTION', "500", group='Access & serving', kind='choice', label='Maximum poster resolution', help="Largest portrait width the resolution URL parameter (500, 780, 1000, 1500, 2000) may request. 500 turns larger sizes off; a request above the limit gets the largest allowed size. Larger posters cost far more CPU and memory to render (2000 px is about 12x a 500), so raise this only on an instance you control.", choices=('500', '780', '1000', '1500', '2000')))
+MAX_POSTER_RESOLUTION = int(_env('MAX_POSTER_RESOLUTION', "500", group='Access & serving', kind='choice', label='Maximum poster resolution', help="Max portrait width allowed via the resolution parameter (higher requests clamp here; 500 disables larger sizes). High sizes cost far more CPU/RAM (2000 px ≈ 12× 500 px).", choices=('500', '780', '1000', '1500', '2000')))
 # Whether the configurator's live preview renders at the resolution picked
 # there.  Off: the preview stays at 500 wide (it is displayed smaller than that
 # anyway, and every fixed-pixel setting scales with the canvas, so it looks the
 # same); on, every settings change while a large size is picked costs a full
 # render at that size.
-PREVIEW_AT_RESOLUTION = _env('PREVIEW_AT_RESOLUTION', "false", group='Access & serving', show_if=('MAX_POSTER_RESOLUTION', ('780', '1000', '1500', '2000')), kind='bool', label='Preview at chosen resolution', help="Render the configurator's live preview at the poster resolution picked there, instead of always at 500 wide. Useful for judging sharpness; each settings change then costs a render at that size (a 2000 px render is about 12x a 500).").strip().lower() in ("1", "true", "yes")
+PREVIEW_AT_RESOLUTION = _env('PREVIEW_AT_RESOLUTION', "false", group='Access & serving', show_if=('MAX_POSTER_RESOLUTION', ('780', '1000', '1500', '2000')), kind='bool', label='Preview at chosen resolution', help="Render configurator live previews at the selected resolution instead of 500 px. Useful for judging sharpness, but heavier per change (2000 px ≈ 12× 500 px).").strip().lower() in ("1", "true", "yes")
 QUALITY_SOURCE        = _env('QUALITY_SOURCE', "aiostreams", group='Quality source', kind='choice', label='Quality source', help='Where stream-quality badges come from. QualiCache never scrapes on the request path; a cold title returns pending instead of blocking.', choices=('aiostreams', 'scraper', 'qualicache')).lower().strip()
 AIOSTREAMS_URL        = _env('AIOSTREAMS_URL', "", group='Quality source', show_if=('QUALITY_SOURCE', 'aiostreams'), kind='url', label='AIOStreams URL', help='Base URL of your AIOStreams instance. Used when the quality source is aiostreams.', placeholder='https://aiostreams.example.com')
 AIOSTREAMS_AUTH       = _env('AIOSTREAMS_AUTH', "", group='Quality source', show_if=('QUALITY_SOURCE', 'aiostreams'), kind='secret', label='AIOStreams auth', help='AIOStreams credentials as Base64 user:password.')
@@ -128,7 +128,7 @@ AIOSTREAMS_AUTH       = _env('AIOSTREAMS_AUTH', "", group='Quality source', show
 # Setting QUALITY_SOURCE to a non-aiostreams backend while AIOSTREAMS_URL/AUTH
 # are also set is a misconfiguration — the AIOStreams settings are ignored and a
 # warning is logged at startup.
-SCRAPER_URL           = _env('SCRAPER_URL', "", group='Quality source', show_if=('QUALITY_SOURCE', 'scraper'), kind='url', label='Scraper URL', help='Base URL of a Stremio stream addon, e.g. https://torrentio.strem.fun/. Only used when the quality source is scraper. Standalone addons like Torrentio and Comet work best; Stremthru Torz requires auth and should be used through AIOStreams instead.', placeholder='https://torrentio.strem.fun/').strip()
+SCRAPER_URL           = _env('SCRAPER_URL', "", group='Quality source', show_if=('QUALITY_SOURCE', 'scraper'), kind='url', label='Scraper URL', help='Base URL of a Stremio stream addon (used when quality source is scraper). Works best with standalone addons like Torrentio or Comet; use AIOStreams for Stremthru Torz.', placeholder='https://torrentio.strem.fun/').strip()
 QUALICACHE_URL        = _env('QUALICACHE_URL', "", group='Quality source', show_if=('QUALITY_SOURCE', 'qualicache'), kind='url', label='QualiCache URL', help='Base URL of a QualiCache instance. Only used when the quality source is qualicache.', placeholder='http://qualicache:8000').strip()
 QUALICACHE_API_KEY    = _env('QUALICACHE_API_KEY', "", group='Quality source', show_if=('QUALITY_SOURCE', 'qualicache'), kind='secret', label='QualiCache API key', help="Must match QualiCache's own ACCESS_KEY when it has one.").strip()
 QUALICACHE_MIN_TRUST_VALUES = ("high", "medium", "low")
@@ -138,7 +138,7 @@ QUALICACHE_MIN_TRUST = (
     if QUALICACHE_MIN_TRUST_RAW in QUALICACHE_MIN_TRUST_VALUES
     else "medium"
 )
-SERVER_TMDB_KEY       = _env('TMDB_API_KEY', "", group='API keys', kind='secret', label='TMDB API key', help='Fetches posters, logos and metadata. Strongly recommended; without one (and no per-client tmdb_key) titles render from Cinemeta and need an imdb_id on the request. Either the API key or the longer API Read Access Token works.').strip()
+SERVER_TMDB_KEY       = _env('TMDB_API_KEY', "", group='API keys', kind='secret', label='TMDB API key', help='Fetches posters, logos and metadata (API key or Read Access Token). Without one (or per-client tmdb_key), titles fall back to Cinemeta and require an imdb_id.').strip()
 SERVER_MDBLIST_KEY    = _env('MDBLIST_API_KEY', "", group='API keys', kind='secret', label='MDBList API key', help='Ratings, awards, keywords and age ratings. Without it the score reads N/A and the MDBList-only sashes are unavailable.').strip()
 SERVER_MDBLIST_KEY_2  = _env('MDBLIST_API_KEY_2', "", group='API keys', kind='secret', label='MDBList API key (second)', help="Retried in the same request when the primary key is rate-limited; a key that has spent its daily quota stays parked until MDBList's reset.").strip()
 
@@ -148,7 +148,7 @@ SERVER_MDBLIST_KEY_2  = _env('MDBLIST_API_KEY_2', "", group='API keys', kind='se
 # TMDB returns nothing usable, to reduce fallbacks to text titles / genre canvas.
 # Unlike TMDB/MDBList (api key per request), TVDB v4 requires a one-month bearer
 # token obtained from POST /login; the key is exchanged for a token internally.
-SERVER_TVDB_KEY       = _env('TVDB_API_KEY', "", group='API keys', kind='secret', label='TheTVDB API key', help='Optional TheTVDB v4 key. When set, TVDB is a fallback art source (logos, backdrops, optionally posters) for titles where TMDB returns nothing usable, reducing fallbacks to text titles and genre canvases. Blank disables it entirely.').strip()
+SERVER_TVDB_KEY       = _env('TVDB_API_KEY', "", group='API keys', kind='secret', label='TheTVDB API key', help='Optional TheTVDB v4 key for fallback logos, backdrops and posters when TMDB has no usable art. Blank disables TVDB.').strip()
 # Only required for user-supported ("subscriber") TVDB keys; blank for company keys.
 TVDB_SUBSCRIBER_PIN   = _env('TVDB_SUBSCRIBER_PIN', "", group='API keys', kind='secret', label='TheTVDB subscriber PIN', help='Only for user-supported (subscriber) TVDB keys; leave blank for company keys.').strip()
 
@@ -163,22 +163,22 @@ def _flag(raw: str, default: bool) -> bool:
 # title text and must be vetted by text detection before use.
 TVDB_USE_LOGOS        = _flag(_env("TVDB_USE_LOGOS", "true", group='TVDB fallback art', kind='bool', label='Use TVDB logos', help='Use TVDB clearlogos when TMDB and Metahub have none.'), True)
 TVDB_USE_BACKDROPS    = _flag(_env("TVDB_USE_BACKDROPS", "true", group='TVDB fallback art', kind='bool', label='Use TVDB backdrops', help='Use TVDB backgrounds when no textless TMDB poster or backdrop exists.'), True)
-TVDB_USE_POSTERS      = _flag(_env("TVDB_USE_POSTERS", "false", group='TVDB fallback art', kind='bool', label='Use TVDB posters', help='Use TVDB posters as a last resort. To replace a poster with text, only a no-language TVDB poster is used (these are textless), and only when text detection also finds it clean. For a title with no art at all, a TVDB poster in the user\'s language comes after those.'), False)
+TVDB_USE_POSTERS      = _flag(_env("TVDB_USE_POSTERS", "false", group='TVDB fallback art', kind='bool', label='Use TVDB posters', help='Last-resort TVDB posters: uses OCR-clean no-language (textless) posters to replace texted art, or user-language posters when no art exists.'), False)
 # A user-selectable poster source, like FANART_POSTERS: poster_source=tvdb
 # takes TVDB's best no-language poster (textless in practice), or under
 # original art its best poster in the request's language order.
-TVDB_POSTER_SOURCE    = _flag(_env("TVDB_POSTER_SOURCE", "false", group='TVDB fallback art', kind='bool', label='Offer TVDB posters', help='Let users pick TVDB as their poster source: its best no-language poster (TVDB\'s no-language posters are textless), or under Original Art its best poster in their language. Landscape users can pick TVDB backdrops the same way. TMDB when TVDB has none. Needs the TVDB key. Adds poster downloads, cache and text scans for users who pick it.'), False)
+TVDB_POSTER_SOURCE    = _flag(_env("TVDB_POSTER_SOURCE", "false", group='TVDB fallback art', kind='bool', label='Offer TVDB posters', help='Offer TVDB as a poster/backdrop source (textless no-language, or user-language under Original Art; falls back to TMDB). Needs TVDB key; adds downloads, cache and OCR scans.'), False)
 
 # Optional fanart.tv source.  With a project key AND FANART_POSTERS on, the
 # configurator offers poster_source=fanart (most-liked fanart.tv poster, TMDB
 # fallback).  Off by default: it adds poster downloads, disk cache and text
 # scans alongside the TMDB art.  Random picks are RANDOM_POSTERS.
 FANART_API_KEY        = _env('FANART_API_KEY', "", group='API keys', kind='secret', label='Fanart API key', help='Optional Fanart project key, needed for the Fanart poster source (see FANART_POSTERS).').strip()
-FANART_POSTERS        = _flag(_env("FANART_POSTERS", "false", group='Fanart', kind='bool', label='Offer Fanart posters', help='Let users pick Fanart as their poster source, for every title or for anime only: its most-liked textless poster, or under Original Art its most-liked poster in their language. TMDB when Fanart has none. Needs the Fanart key and, for series, the TVDB key. Adds poster downloads, cache and text scans for users who pick it.'), False)
+FANART_POSTERS        = _flag(_env("FANART_POSTERS", "false", group='Fanart', kind='bool', label='Offer Fanart posters', help='Offer Fanart as a poster source (all titles or anime only; most-liked textless, or user-language under Original Art; TMDB fallback). Needs Fanart key (+ TVDB key for series).'), False)
 
 # Artwork overrides shared between instances (art_overrides.py, "Sharing").
-ART_OVERRIDES_SHARE      = _flag(_env("ART_OVERRIDES_SHARE", "false", group='Artwork sharing', kind='bool', label='Share artwork overrides', help='Let other Posters+ instances follow the art you pick in the dashboard\'s Artwork view: every override is served read-only at /art-overrides/export.json, and uploaded or linked images at /custom-art/. Nothing else is shared. Off by default.'), False)
-ART_OVERRIDES_REMOTE_URL = _env('ART_OVERRIDES_REMOTE_URL', "", group='Artwork sharing', kind='url', label='Follow artwork from', help="Another Posters+ instance whose Artwork overrides to use here, e.g. https://posters.example.com (its dashboard address works too). That instance must have Share artwork overrides on. Checked hourly; your own overrides win wherever both have one. Images it uploaded are copied here once. Blank follows none.", placeholder='https://posters.example.com').strip()
+ART_OVERRIDES_SHARE      = _flag(_env("ART_OVERRIDES_SHARE", "false", group='Artwork sharing', kind='bool', label='Share artwork overrides', help='Expose your Artwork overrides read-only at /art-overrides/export.json (and uploaded/linked images at /custom-art/) for other instances to follow. Nothing else is shared.'), False)
+ART_OVERRIDES_REMOTE_URL = _env('ART_OVERRIDES_REMOTE_URL', "", group='Artwork sharing', kind='url', label='Follow artwork from', help="Another Posters+ instance (with Share artwork overrides on) to sync Artwork overrides from hourly (e.g. https://posters.example.com). Local overrides win; uploaded images copy once. Blank disables.", placeholder='https://posters.example.com').strip()
 
 # Where a TVDB clearlogo sits in the logo source chain:
 #   1 = TVDB first      — beats both TMDB and the Metahub CDN
@@ -188,7 +188,7 @@ ART_OVERRIDES_REMOTE_URL = _env('ART_OVERRIDES_REMOTE_URL', "", group='Artwork s
 # TVDB clearlogos are often higher quality than TMDB/Metahub, so 1 or 2 generally
 # improves results — at the cost of altering logos that currently come from those
 # sources.  Ignored entirely when no TVDB key is set.
-TVDB_LOGO_PRIORITY    = max(1, min(3, int(_env('TVDB_LOGO_PRIORITY', "3", group='TVDB fallback art', kind='choice', label='TVDB logo priority', help='Where a TVDB clearlogo sits in the logo chain: 1 before TMDB and Metahub, 2 after TMDB but before Metahub, 3 last resort (only when both have nothing). TVDB logos are often higher quality, so 1 or 2 improve results but change logos currently sourced from TMDB or Metahub.', choices=('1', '2', '3')))))
+TVDB_LOGO_PRIORITY    = max(1, min(3, int(_env('TVDB_LOGO_PRIORITY', "3", group='TVDB fallback art', kind='choice', label='TVDB logo priority', help='TVDB clearlogo order: 1 before TMDB & Metahub, 2 between TMDB and Metahub, 3 last resort. Higher priority (1 or 2) can improve quality but changes existing logos.', choices=('1', '2', '3')))))
 # Caps concurrent TVDB API calls so a burst of uncached misses can't stampede it.
 TVDB_CONCURRENCY      = max(1, int(_env('TVDB_CONCURRENCY', "3", group='TVDB fallback art', kind='int', label='TVDB concurrency', help='Maximum concurrent outbound TVDB requests per worker.', min=1, max=32)))
 
@@ -197,7 +197,7 @@ TVDB_CONCURRENCY      = max(1, int(_env('TVDB_CONCURRENCY', "3", group='TVDB fal
 # or TMDB has no record for the IMDb id. Also an extra no-art rescue tier
 # (Metahub background, then poster) when TMDB knows a title but has no artwork.
 # When a TMDB key is present and TMDB knows the title, nothing here runs.
-CINEMETA_ENABLED = _flag(_env("CINEMETA_ENABLED", "true", group='Cinemeta fallback', kind='bool', label='Cinemeta fallback', help="Render from Stremio's Cinemeta catalogue (IMDb-keyed, no API key) when no TMDB key is available or TMDB has no record for the IMDb id, and try its Metahub art before the genre canvas when TMDB has no artwork. Needs an imdb_id (or a tt... stremio_id) on the request."), True)
+CINEMETA_ENABLED = _flag(_env("CINEMETA_ENABLED", "true", group='Cinemeta fallback', kind='bool', label='Cinemeta fallback', help="Fallback to Stremio Cinemeta (no key, needs imdb_id / tt… stremio_id) when TMDB is unavailable or lacks a record, and try Metahub art before genre canvases."), True)
 CINEMETA_API_BASE = _env('CINEMETA_API_BASE', "https://v3-cinemeta.strem.io", group='Cinemeta fallback', kind='url', label='Cinemeta API base', help='Override only if you proxy Cinemeta.', advanced=True).strip().rstrip("/")
 
 # Anime-native art sources (AniList / Kitsu).
@@ -206,13 +206,13 @@ CINEMETA_API_BASE = _env('CINEMETA_API_BASE', "https://v3-cinemeta.strem.io", gr
 # are completely unaffected.  Nothing is ever converted TO an anime id.  Neither provider requires an API key.
 # A MyAnimeList id (mal_id, or mal: in stremio_id) is rendered as the Kitsu or
 # AniList id the mapping below gives it, so it needs ANIME_ID_MAP_ENABLED.
-ANIME_SOURCES_ENABLED = _flag(_env("ANIME_SOURCES_ENABLED", "true", group='Anime sources', kind='bool', label='Anime sources', help='Serve art, titles, genres and a community score from AniList and Kitsu when a client passes an anilist_id or kitsu_id (or a kitsu:/anilist: stremio_id). Clients that only speak imdb/tmdb are unaffected. Neither provider needs an API key.'), True)
+ANIME_SOURCES_ENABLED = _flag(_env("ANIME_SOURCES_ENABLED", "true", group='Anime sources', kind='bool', label='Anime sources', help='Serve art, titles, genres and scores from AniList/Kitsu (no key) when passed anilist_id, kitsu_id, or kitsu:/anilist: stremio_id. IMDb/TMDB clients unaffected.'), True)
 # Composite a title logo over anime cover art. On by default: that art either
 # carries no logotype or a small block of Japanese corner text most viewers
 # can't read, so a proper logo is usually an improvement. Turn off to serve the
 # provider's art untouched. Logos come from TMDB/Metahub/TVDB as usual — neither
 # anime provider ships them — so this needs a tmdb_id or imdb_id on the request.
-ANIME_COMPOSITE_LOGO  = _flag(_env("ANIME_COMPOSITE_LOGO", "true", group='Anime sources', kind='bool', label='Composite logo on anime art', help="Composite a title logo over anime cover art. That art rarely carries a logotype (or only a small block of Japanese corner text), so a proper logo is usually an improvement; off serves the provider's art untouched. Logos come from TMDB, Metahub or TVDB, so the request needs a tmdb_id or imdb_id, or anime id mapping to supply one."), True)
+ANIME_COMPOSITE_LOGO  = _flag(_env("ANIME_COMPOSITE_LOGO", "true", group='Anime sources', kind='bool', label='Composite logo on anime art', help="Overlay a TMDB/Metahub/TVDB title logo onto anime cover art (needs tmdb_id, imdb_id, or anime ID mapping). Off serves the provider's cover art untouched."), True)
 # Fill in the tmdb_id / imdb_id an anime request did not bring, from the
 # community Kitsu/AniList -> TMDB/IMDb mapping (Fribb's anime-lists, the same
 # data AIOMetadata resolves its placeholders from).  The art and metadata spine
@@ -221,13 +221,13 @@ ANIME_COMPOSITE_LOGO  = _flag(_env("ANIME_COMPOSITE_LOGO", "true", group='Anime 
 # enrichment.  This is what makes a client that can only send "{id}" for an
 # anime title (Nuvio's own pattern resolver: "kitsu:7442" and nothing else)
 # render the same poster as one that goes through AIOMetadata.
-ANIME_ID_MAP_ENABLED = _flag(_env("ANIME_ID_MAP_ENABLED", "true", group='Anime sources', kind='bool', label='Anime id mapping', help="Fill in the TMDB and IMDb ids an anime request didn't send, from the community Kitsu/AniList mapping list (downloaded daily into a local table). Lets a client that only sends a kitsu: or anilist: id get TMDB logos, landscape backdrops and IMDb-keyed ratings; art still comes from the anime provider. Also what lets a MyAnimeList id (mal_id, or a mal: stremio_id) render, as the Kitsu or AniList entry it maps to."), True)
+ANIME_ID_MAP_ENABLED = _flag(_env("ANIME_ID_MAP_ENABLED", "true", group='Anime sources', kind='bool', label='Anime id mapping', help="Resolve missing TMDB/IMDb IDs via the daily Kitsu/AniList mapping table so kitsu:/anilist: requests get TMDB logos, backdrops and IMDb ratings (provider art kept), and mal_id / mal: requests can render."), True)
 ANIME_ID_MAP_URL     = _env('ANIME_ID_MAP_URL', "https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-full.json", group='Anime sources', show_if=('ANIME_ID_MAP_ENABLED', 'true'), kind='url', label='Anime id mapping source', help="Where the mapping list is downloaded from. Must be Fribb's anime-list-full.json format.", advanced=True).strip()
 ANIME_ID_MAP_PATH    = "/app/cache/anime_ids.db"
 ANIME_ID_MAP_REFRESH_HOURS = 24
 # A later season's own art in landscape, rather than the show's one backdrop
 # every season shares on TMDB (anime_season.py).
-ANIME_SEASON_ART     = _flag(_env("ANIME_SEASON_ART", "true", group='Anime sources', show_if=('ANIME_ID_MAP_ENABLED', 'true'), kind='bool', label='Season art for later seasons', help="In landscape, give an anime's later seasons and cours their own art instead of the show's single TMDB backdrop: Kitsu's cover image for that season when it is big enough and carries no title, else TMDB's still of the season's first episode. Requests by AniList id borrow Kitsu's cover through the id mapping. Season 1 and anything with an operator's Artwork pick are unchanged. On by default."), True)
+ANIME_SEASON_ART     = _flag(_env("ANIME_SEASON_ART", "true", group='Anime sources', show_if=('ANIME_ID_MAP_ENABLED', 'true'), kind='bool', label='Season art for later seasons', help="Use per-season art in landscape for later anime seasons/cours (clean Kitsu cover via ID mapping, else TMDB first-episode still) instead of the show backdrop. Leaves Season 1 and Artwork overrides unchanged."), True)
 # Capped per provider, because their limits differ by an order of magnitude.
 # AniList advertises 90 req/min per IP but has served a degraded 30 for a long
 # while (check the x-ratelimit-limit header), so it stays tight. Kitsu publishes
@@ -238,13 +238,13 @@ ANILIST_CONCURRENCY   = max(1, int(_env('ANILIST_CONCURRENCY', "3", group='Anime
 KITSU_CONCURRENCY     = max(1, int(_env('KITSU_CONCURRENCY', "8", group='Anime sources', kind='int', label='Kitsu concurrency', help='Maximum concurrent Kitsu requests.', min=1, max=64, advanced=True)))
 ANILIST_API_URL       = _env('ANILIST_API_URL', "https://graphql.anilist.co", group='Anime sources', kind='url', label='AniList API URL', help='Override only if you proxy AniList.', advanced=True).strip()
 KITSU_API_BASE        = _env('KITSU_API_BASE', "https://kitsu.io/api/edge", group='Anime sources', kind='url', label='Kitsu API base', help='Override only if you proxy Kitsu.', advanced=True).strip().rstrip("/")
-JIKAN_API_URL         = _env('JIKAN_API_URL', "https://jikan.slokker.cc/v4", group='Anime sources', kind='url', label='Jikan API URL', help="Jikan v4 instance (a MyAnimeList API, no key needed) that gives a later anime season its own MyAnimeList score; MDBList only has the first season's. The public api.jikan.moe shut down on 1 October 2026, so the default is a community instance; point it at your own Jikan if you run one, or leave it empty to keep the first season's score.", advanced=True).strip().rstrip("/")
+JIKAN_API_URL         = _env('JIKAN_API_URL', "https://jikan.slokker.cc/v4", group='Anime sources', kind='url', label='Jikan API URL', help="Jikan v4 URL (no key) for per-season MAL scores on later anime seasons (MDBList only has S1). Defaults to a community mirror (api.jikan.moe shut down Oct 2026); blank keeps S1's score.", advanced=True).strip().rstrip("/")
 
 # Ordered list of all configured server-side MDBList keys (primary first).
 # Used by the key-rotation logic in main.py to fall back when a key is exhausted.
 SERVER_MDBLIST_KEYS: list[str] = [k for k in [SERVER_MDBLIST_KEY, SERVER_MDBLIST_KEY_2] if k]
 
-LOG_VIEWER_MAX_MB     = max(0, int(_env('LOG_VIEWER_MAX_MB', "20", group='Caching', kind='int', label='Dashboard log size (MB)', help="Disk kept for the dashboard's Logs view, a searchable copy of the container log in the cache volume. The oldest lines go once it is full; 20 MB holds roughly 100,000 lines. 0 turns the Logs view off. docker logs is unaffected either way.", min=0, max=1000, advanced=True) or "0"))
+LOG_VIEWER_MAX_MB     = max(0, int(_env('LOG_VIEWER_MAX_MB', "20", group='Caching', kind='int', label='Dashboard log size (MB)', help="Disk cap for the dashboard's searchable Logs view in the cache volume (~100k lines per 20 MB; drops oldest when full). 0 disables Logs (docker logs unaffected).", min=0, max=1000, advanced=True) or "0"))
 
 # Uvicorn worker processes.  Read by entrypoint.sh (from the settings file,
 # then the environment) before Python starts; declared here so the dashboard
@@ -256,7 +256,7 @@ WORKERS               = max(1, int(_env("WORKERS", "1", group='Performance', kin
 # lifetime as Cache-Control: public, max-age, so a caching client or CDN holds
 # a trending poster for a day and a settled title for the full composite TTL.
 # A number caps max-age at that many seconds; 0 sends no Cache-Control.
-_CDN_CACHE_TTL_RAW    = _env('CDN_CACHE_TTL', "auto", group='Access & serving', kind='text', label='CDN cache TTL', help="Cache-Control: public, max-age=N on poster responses, capped at the composite's remaining life so a cached copy never outlives the trending rank or release status baked into it. auto (the default) advertises that remaining life with no fixed ceiling: a trending poster expires in a day, a settled title lasts the full composite TTL. A number caps it; 0 sends no Cache-Control.", placeholder='0, 3600 or auto').strip().lower()
+_CDN_CACHE_TTL_RAW    = _env('CDN_CACHE_TTL', "auto", group='Access & serving', kind='text', label='CDN cache TTL', help="Sets Cache-Control: public, max-age=N on posters, never exceeding the composite's remaining life. auto advertises full remaining TTL (1 day for trending, composite TTL for settled); a number caps it; 0 omits the header.", placeholder='0, 3600 or auto').strip().lower()
 CDN_CACHE_TTL_AUTO    = _CDN_CACHE_TTL_RAW == "auto"
 try:
     CDN_CACHE_TTL     = 0 if CDN_CACHE_TTL_AUTO else int(_CDN_CACHE_TTL_RAW or "0")
@@ -321,7 +321,7 @@ LOGO_MAX_W_RATIO  = 0.75   # target/max width of logo — the span every logo no
 LOGO_MAX_H_RATIO  = 0.25   # max height of logo (paired with LOGO_ABS_MAX_H px cap)
 LOGO_BOTTOM_RATIO = 0.28   # distance of logo from the bottom
 DEFAULT_LOGO_LANGUAGE = _env("DEFAULT_LOGO_LANGUAGE", os.environ.get("TMDB_LANGUAGE", "en"),  # TMDB_LANGUAGE: legacy alias
-                             group='Output', kind='text', label='Default logo language', help='ISO language or locale code for title logos and poster language preference when a request names none. Region-qualified locales (fr-fr, es-es, es-mx, pt-br) select artwork tagged for that region only, falling back to English rather than to the bare language. TMDB_LANGUAGE is accepted as a legacy alias in the environment.', placeholder='en')
+                             group='Output', kind='text', label='Default logo language', help='Default ISO language/locale for logos and posters. Regional locales (fr-fr, es-es, es-mx, pt-br) match that region only and fall back to English, not the bare language. Legacy env alias: TMDB_LANGUAGE.', placeholder='en')
 
 # Quality Badge Defaults
 
@@ -361,7 +361,7 @@ DAYS_CONSIDERED_NEW          = 14
 NEW_CACHE_DURATION           = 1
 OLD_CACHE_DURATION           = 14
 TRENDING_CACHE_DURATION      = 1
-TRENDING_FETCH_TIME          = _env('TRENDING_FETCH_TIME', "", group='Trending', kind='text', label='Trending fetch time', help='Local time of day (e.g. 04:00) to refresh the trending list used by the Trending sashes. Every poster showing a rank is cached until then, so the ranks all change at once. Blank refreshes 24 hours after the previous refresh instead.', placeholder='04:00').strip()
+TRENDING_FETCH_TIME          = _env('TRENDING_FETCH_TIME', "", group='Trending', kind='text', label='Trending fetch time', help='Daily local time (e.g. 04:00) to refresh trending lists so ranked posters expire and update together. Blank refreshes every 24h from the last run.', placeholder='04:00').strip()
 TRENDING_FETCH_TIMEZONE      = _env('TRENDING_FETCH_TIMEZONE', "UTC", group='Trending', kind='text', label='Trending fetch timezone', help='IANA timezone for the fetch time, e.g. America/New_York.', placeholder='UTC').strip()
 TRENDING_FETCH_COUNT         = int(_env('TRENDING_FETCH_COUNT', "40", group='Trending', kind='int', label='Trending count', help='Ranks 1 to this number get the Trending sash.', min=1, max=500))
 TRENDING_BROAD_FETCH_COUNT   = int(_env('TRENDING_BROAD_FETCH_COUNT', "100", group='Trending', kind='int', label='Broad trending count', help='Lower-ranked trending titles, from the trending count up to this rank, qualify for the lower-priority Trending (Broad) sash.', min=1, max=1000))
@@ -371,7 +371,7 @@ TRENDING_BROAD_FETCH_COUNT   = int(_env('TRENDING_BROAD_FETCH_COUNT', "100", gro
 # than against a flat figure keeps Jaws in and a mid-table 2020s sequel out; the
 # floor stops a thinly-recorded early year from crowning a $2M film.
 BLOCKBUSTER_TOP_N            = int(_env('BLOCKBUSTER_TOP_N', "10", group='Sashes', kind='int', label='Blockbuster: top N of its year', help="A film gets the Blockbuster sash when it is among this many highest-grossing films of its release year (TMDB worldwide revenue).", min=1, max=20))
-BLOCKBUSTER_MIN_REVENUE      = int(_env('BLOCKBUSTER_MIN_REVENUE', "100000000", group='Sashes', kind='int', label='Blockbuster: minimum gross (USD)', help="A film must also have grossed at least this much in today's dollars (adjusted for US inflation to its release year: $100M is about $17M for 1975), so an early year TMDB has little box-office data for doesn't hand the sash to a small film. 0 turns the floor off.", min=0, max=10000000000))
+BLOCKBUSTER_MIN_REVENUE      = int(_env('BLOCKBUSTER_MIN_REVENUE', "100000000", group='Sashes', kind='int', label='Blockbuster: minimum gross (USD)', help="Minimum inflation-adjusted gross in today's USD (e.g. $100M ≈ $17M in 1975) so sparse early TMDB data doesn't award small films. 0 disables.", min=0, max=10000000000))
 
 # Where "trending" comes from.  Unset (the default) means TMDB's own global
 # trending endpoint, which is US-weighted and not configurable.  Point these at a
@@ -402,23 +402,23 @@ BLOCKBUSTER_MIN_REVENUE      = int(_env('BLOCKBUSTER_MIN_REVENUE', "100000000", 
 # the error is logged and NO trending data is served for that media type on that
 # refresh, so the trending sash disappears rather than silently reverting to
 # TMDB's list and looking like it worked.
-TRENDING_SOURCE_MOVIE        = _env('TRENDING_SOURCE_MOVIE', "", group='Trending', kind='url', label='Movie trending source', help="An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces TMDB's global movie trending list. Blank keeps TMDB's list.", placeholder='https://mdblist.com/lists/snoak/trending-movies').strip()
-TRENDING_SOURCE_TV           = _env('TRENDING_SOURCE_TV', "", group='Trending', kind='url', label='TV trending source', help="An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces TMDB's global TV trending list for both sashes and cache warming. Blank keeps TMDB's list.", placeholder='https://mdblist.com/lists/snoak/trakt-s-trending-shows').strip()
+TRENDING_SOURCE_MOVIE        = _env('TRENDING_SOURCE_MOVIE', "", group='Trending', kind='url', label='Movie trending source', help="MDBList page or TMDB-shaped JSON endpoint replacing TMDB's movie trending list. Blank uses TMDB.", placeholder='https://mdblist.com/lists/snoak/trending-movies').strip()
+TRENDING_SOURCE_TV           = _env('TRENDING_SOURCE_TV', "", group='Trending', kind='url', label='TV trending source', help="MDBList page or TMDB-shaped JSON endpoint replacing TMDB's TV trending list (for sashes and cache warming). Blank uses TMDB.", placeholder='https://mdblist.com/lists/snoak/trakt-s-trending-shows').strip()
 # Anime ranks on their own lists while the trending catalogs addon is on (and
 # leaves the movie and TV lists above): AniList's trending series and films
 # unless one of these replaces it.  Same shapes as the sources above; their
 # rows are TMDB ids, so a poster is ranked by the TMDB id it carries.
-TRENDING_SOURCE_ANIME        = _env('TRENDING_SOURCE_ANIME', "", group='Trending', kind='url', label='Anime trending source', help="An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces AniList's trending anime series, for the Trending Anime catalog and the rank on every anime series poster. Blank keeps AniList's list. Only used while the trending catalogs addon is on.", placeholder='https://mdblist.com/lists/<user>/<anime-list>').strip()
-TRENDING_SOURCE_ANIME_MOVIE  = _env('TRENDING_SOURCE_ANIME_MOVIE', "", group='Trending', kind='url', label='Anime film trending source', help="An MDBList list page or any TMDB-shaped JSON endpoint whose order replaces AniList's trending anime films, for the Trending Anime Movies catalog and the rank on every anime film poster. Blank keeps AniList's list. Only used while the trending catalogs addon is on.", placeholder='https://mdblist.com/lists/<user>/<anime-film-list>').strip()
+TRENDING_SOURCE_ANIME        = _env('TRENDING_SOURCE_ANIME', "", group='Trending', kind='url', label='Anime trending source', help="MDBList page or TMDB-shaped JSON endpoint replacing AniList's trending anime series (catalog and poster ranks). Blank uses AniList. Requires the trending catalogs addon.", placeholder='https://mdblist.com/lists/<user>/<anime-list>').strip()
+TRENDING_SOURCE_ANIME_MOVIE  = _env('TRENDING_SOURCE_ANIME_MOVIE', "", group='Trending', kind='url', label='Anime film trending source', help="MDBList page or TMDB-shaped JSON endpoint replacing AniList's trending anime films (catalog and poster ranks). Blank uses AniList. Requires the trending catalogs addon.", placeholder='https://mdblist.com/lists/<user>/<anime-film-list>').strip()
 # A small Stremio addon serving the trending lists behind the sashes as three
 # catalogs (movies, series, anime), for metadata addons such as AIOMetadata to
 # import.  Row order and the "#N Today" labels then come from the same snapshot,
 # so the numbers line up with the row.  Also switches posters requested with an
 # AniList id to the AniList trending rank, the ranking the anime catalog uses.
-TRENDING_CATALOGS_ENABLED    = _env('TRENDING_CATALOGS_ENABLED', "true", group='Trending', kind='bool', label='Trending catalogs addon', help='Serve the trending lists behind the Trending sashes as a Stremio addon with Trending Movies, Series, Anime and Anime Movies catalogs, at /trending/manifest.json (/trending/<access key>/manifest.json when an access key is set). Import it into your metadata addon and the "#N Today" labels match the row order. Anime then ranks on its own lists (from AniList, unless an anime trending source is set) and leaves the movie and TV lists, so every anime poster, whatever id it is requested by, carries its rank in the anime catalogs. On by default; turn off to serve no addon.').strip().lower() == "true"
+TRENDING_CATALOGS_ENABLED    = _env('TRENDING_CATALOGS_ENABLED', "true", group='Trending', kind='bool', label='Trending catalogs addon', help='Serve Trending Movies, Series, Anime and Anime Movies as a Stremio addon at /trending/manifest.json (or /trending/<access key>/manifest.json) so "#N Today" ranks match catalog order. Anime moves to its own AniList (or custom) lists across all ID types.').strip().lower() == "true"
 # Leave out what can't be watched at home yet before ranks are numbered, so a
 # trending row (and the ranks on its posters) holds only what can be played.
-TRENDING_HIDE_UNRELEASED     = _env('TRENDING_HIDE_UNRELEASED', "false", group='Trending', kind='bool', label='Hide unreleased from trending', help='Leave titles that are not out at home yet off the trending lists: films still in cinemas or not released at all, series whose first episode has not aired, anime series AniList lists as not yet airing, and anime films not out at home by their TMDB dates. The remaining titles are ranked 1, 2, 3 without gaps, so the catalogs and the rank on every poster still agree. Takes effect at the next trending refresh. Off by default.').strip().lower() == "true"
+TRENDING_HIDE_UNRELEASED     = _env('TRENDING_HIDE_UNRELEASED', "false", group='Trending', kind='bool', label='Hide unreleased from trending', help='Exclude titles not yet out at home (unreleased/cinema-only films, unaired series, not-yet-airing AniList anime, anime films without home TMDB dates). Remaining titles re-rank without gaps at the next refresh.').strip().lower() == "true"
 # The genre names TRENDING_HIDE_GENRES offers: GENRE_MAP's (below), once each.
 _TRENDING_GENRE_CHOICES = (
     "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama",
@@ -437,26 +437,26 @@ def _trending_genres(raw: str) -> list[str]:
 # Genres left off the trending lists for the whole instance, before ranks are
 # numbered, so every poster's rank and its catalog row still agree.  Names are
 # GENRE_MAP's; TV's merged genres count as both halves (genre_names).
-TRENDING_HIDE_GENRES = _trending_genres(_env('TRENDING_HIDE_GENRES', "", group='Trending', kind='multi', label='Hide genres from trending', help="Leave titles of these genres off the trending lists, the trending sashes' ranks and the trending catalogs alike. The remaining titles are ranked 1, 2, 3 without gaps, so catalog rows and the rank on every poster still agree. TV's merged genres count as both halves: Sci-Fi & Fantasy is Sci-Fi and Fantasy, Action & Adventure is Action and Adventure. Takes effect at the next trending refresh.", choices=_TRENDING_GENRE_CHOICES))
-TRENDING_HIDE_MIXED_GENRES = _env('TRENDING_HIDE_MIXED_GENRES', "true", group='Trending', kind='bool', label='Hide titles that are partly a hidden genre', help='On: any title with a hidden genre is left off, so hiding Romance also hides a Comedy + Romance film. Off: only titles whose genres are all hidden ones are, so that film stays. Hiding Rom-Com covers titles that are both Comedy and Romance.').strip().lower() == "true"
+TRENDING_HIDE_GENRES = _trending_genres(_env('TRENDING_HIDE_GENRES', "", group='Trending', kind='multi', label='Hide genres from trending', help="Exclude selected genres from trending lists, sashes and catalogs (re-ranked without gaps at the next refresh). Merged TV genres match both halves (e.g. Sci-Fi & Fantasy counts as Sci-Fi and Fantasy).", choices=_TRENDING_GENRE_CHOICES))
+TRENDING_HIDE_MIXED_GENRES = _env('TRENDING_HIDE_MIXED_GENRES', "true", group='Trending', kind='bool', label='Hide titles that are partly a hidden genre', help='On: hide titles with any hidden genre (hiding Romance hides Comedy + Romance). Off: hide only if all genres are hidden. Rom-Com matches Comedy + Romance.').strip().lower() == "true"
 # Korean dramas left off the TV trending list for the whole instance: a title
 # whose original language is Korean and that TMDB files as Drama or Soap.
-TRENDING_HIDE_KDRAMAS = _env('TRENDING_HIDE_KDRAMAS', "false", group='Trending', kind='bool', label='Hide Korean dramas from trending', help="Leave Korean dramas off the TV trending list, its ranks and the Trending Series catalogs: series whose original language is Korean and that TMDB files as Drama or Soap. Korean variety, reality and animated series stay. The remaining titles are ranked 1, 2, 3 without gaps. Takes effect at the next trending refresh. Off by default.").strip().lower() == "true"
+TRENDING_HIDE_KDRAMAS = _env('TRENDING_HIDE_KDRAMAS', "false", group='Trending', kind='bool', label='Hide Korean dramas from trending', help="Exclude Korean Drama/Soap series from TV trending lists, sashes and catalogs (keeps Korean variety, reality and animation). Re-ranks without gaps at the next refresh.").strip().lower() == "true"
 # Visitors choose their own trending lists (trending_list=, the configurator's
 # the trending Configure dialog): each list's source from a fixed menu, and whether titles not
 # out at home are left off.  The menu is TMDB's day and week lists, AniList for
 # anime, the sources above and TRENDING_SOURCE_CHOICES; nothing else can be
 # asked for, so the lists built stay bounded by the menu, not by visitors.
 # Visitors who choose alike share one list, built when first asked for.
-TRENDING_LIST_CHOICE         = _env('TRENDING_LIST_CHOICE', "true", group='Trending', kind='bool', label='Visitors choose trending lists', help="Let each visitor pick their trending lists in the configurator: any number of sources per type from TMDB's today and this week lists, AniList, the public lists below, the sources set here and the extra choices, each one a catalog of its own, and whether titles not out at home yet are left off. Their posters rank on the one list they mark per type. Each different pick is its own list, built when first asked for and refreshed when it is due; visitors who pick alike share one. Off: everyone gets the lists set here.").strip().lower() == "true"
+TRENDING_LIST_CHOICE         = _env('TRENDING_LIST_CHOICE', "true", group='Trending', kind='bool', label='Visitors choose trending lists', help="Let visitors choose their own trending catalogs in the configurator (from TMDB, AniList, public lists, and custom sources), toggle hiding unreleased titles, and pick one list per type for poster ranks. Identical picks share cached lists. Off: everyone uses server lists.").strip().lower() == "true"
 # The most catalogs a visitor may pick for one list type.  Each pick is a list
 # fetched, kept warm and rendered for, and Streaming Top 10 alone offers
 # hundreds, so one install URL can't ask for all of them.
-TRENDING_MAX_PICKS           = int(_env('TRENDING_MAX_PICKS', "8", group='Trending', show_if=('TRENDING_LIST_CHOICE', 'true'), kind='int', label='Catalogs per list type', help="The most catalogs a visitor may pick for each of Movies, Series, Anime and Anime Movies. Every list picked is fetched, refreshed while it is in use and has its posters rendered, and Streaming Top 10 offers a chart for each service in each country, so this keeps one install from asking for hundreds. Picks past the limit in an existing install URL are dropped from the end.", min=1, max=30))
+TRENDING_MAX_PICKS           = int(_env('TRENDING_MAX_PICKS', "8", group='Trending', show_if=('TRENDING_LIST_CHOICE', 'true'), kind='int', label='Catalogs per list type', help="Max catalogs a visitor can pick per type (Movies, Series, Anime, Anime Movies), capping background fetches and renders (especially with Streaming Top 10 charts). Excess picks in existing URLs are dropped from the end.", min=1, max=30))
 # The public lists the trending Configure dialog offers besides TMDB's and AniList's own (see
 # trending_lists): each one is fetched only once a visitor picks it.
-TRENDING_LIST_SOURCES        = _env('TRENDING_LIST_SOURCES', "imdb,trakt,simkl,justwatch,rottentomatoes,tvstats,top10,shudder,flixpatrol", group='Trending', show_if=('TRENDING_LIST_CHOICE', 'true'), kind='multi', label='Public lists to offer', help="Which public trending lists visitors may pick in the Trending Catalogs Addon's Configure dialog, besides TMDB's and AniList's own. IMDb, Trakt, JustWatch, Rotten Tomatoes, Television Stats and the streaming services' US Top 10s are read from the MDBList user snoak's daily mirrors of them, SIMKL from its own hourly lists; none needs a key. Shudder's (popular, and new in the last two years) are read from TMDB with the server's key. Streaming Top 10 adds every streaming service's daily Top 10 in each of 119 countries (FlixPatrol's charts, as fp-crawler publishes them; see TRENDING_TOP10_URL). A list is fetched only once someone picks it.", choices=("imdb", "trakt", "simkl", "justwatch", "rottentomatoes", "tvstats", "top10", "shudder", "flixpatrol"), labels={"imdb": "IMDb", "trakt": "Trakt", "simkl": "SIMKL", "justwatch": "JustWatch", "rottentomatoes": "Rotten Tomatoes", "tvstats": "Television Stats", "top10": "Streaming Top 10s (US)", "shudder": "Shudder (US)", "flixpatrol": "Streaming Top 10 (by country)"})
-TRENDING_SOURCE_CHOICES      = _env('TRENDING_SOURCE_CHOICES', "", group='Trending', show_if=('TRENDING_LIST_CHOICE', 'true'), kind='list', label='Extra trending sources', help='More lists visitors may pick from, comma-separated as type|Name|URL, where type is movie, tv, anime or anime_movie and the URL is an MDBList list page or TMDB-shaped JSON like the sources above. E.g. movie|Trakt Trending|https://mdblist.com/lists/<user>/<list>', advanced=True)
+TRENDING_LIST_SOURCES        = _env('TRENDING_LIST_SOURCES', "imdb,trakt,simkl,justwatch,rottentomatoes,tvstats,top10,shudder,flixpatrol", group='Trending', show_if=('TRENDING_LIST_CHOICE', 'true'), kind='multi', label='Public lists to offer', help="Extra public lists visitors can pick alongside TMDB and AniList (fetched only when picked). IMDb, Trakt, JustWatch, RT, TV Stats and US Top 10s use snoak's daily MDBList mirrors and SIMKL uses its hourly lists (no key); Shudder uses the server TMDB key; Streaming Top 10 adds FlixPatrol charts across 119 countries (see TRENDING_TOP10_URL).", choices=("imdb", "trakt", "simkl", "justwatch", "rottentomatoes", "tvstats", "top10", "shudder", "flixpatrol"), labels={"imdb": "IMDb", "trakt": "Trakt", "simkl": "SIMKL", "justwatch": "JustWatch", "rottentomatoes": "Rotten Tomatoes", "tvstats": "Television Stats", "top10": "Streaming Top 10s (US)", "shudder": "Shudder (US)", "flixpatrol": "Streaming Top 10 (by country)"})
+TRENDING_SOURCE_CHOICES      = _env('TRENDING_SOURCE_CHOICES', "", group='Trending', show_if=('TRENDING_LIST_CHOICE', 'true'), kind='list', label='Extra trending sources', help='Extra selectable lists as type|Name|URL (type: movie, tv, anime, anime_movie; MDBList page or TMDB-shaped JSON), e.g. movie|Trakt Trending|https://mdblist.com/lists/<user>/<list>.', advanced=True)
 # Where Streaming Top 10's charts are read: fp-crawler's daily copies of
 # FlixPatrol's, the ones AIOMetadata's Top 10 catalogs read.  A mirror of the
 # same files (availability.json and <country>.json) can stand in for it.
@@ -486,27 +486,27 @@ TRENDING_SOURCE_MAX_ITEMS    = max(1, int(_env('TRENDING_SOURCE_MAX_ITEMS', "500
 # Unset (the default) disables the feature entirely: no fetch, no sash.
 # -----------------------------------------------------------------------
 APP_VERSION                  = "1.2.0"
-WATCHLIST_SOURCE             = _env('WATCHLIST_SOURCE', "", group='Watchlist', kind='text', label='Watchlist source', help="Self-hosted only: marks every title in one user's watchlist with a Watchlist sash. mdblist (the watchlist of the MDBList key's account, or of MDBLIST_WATCHLIST_API_KEY's when set; also the free route for Trakt, which MDBList mirrors), simkl, trakt, pmdb (a PublicMetaDB watchlist), or any MDBList list page URL. Blank disables the feature.", placeholder='mdblist, simkl, trakt, pmdb or a list URL').strip()
+WATCHLIST_SOURCE             = _env('WATCHLIST_SOURCE', "", group='Watchlist', kind='text', label='Watchlist source', help="Self-hosted only: marks watchlist titles with a sash. Accepts mdblist (uses MDBLIST_WATCHLIST_API_KEY or MDBLIST_API_KEY; also mirrors Trakt for free), simkl, trakt, pmdb, or any MDBList list URL. Blank disables.", placeholder='mdblist, simkl, trakt, pmdb or a list URL').strip()
 # How often the source is re-checked.  Every cycle is one cheap call (MDBList:
 # one page per 500 items; SIMKL: /sync/activities, the list itself only when
 # it changed; Trakt: two list calls; PMDB: the list lookup plus one page per
 # 500 items), so this is safe well below the default.
-WATCHLIST_REFRESH_MINUTES    = max(1, int(_env('WATCHLIST_REFRESH_MINUTES', "30", group='Watchlist', show_if=('WATCHLIST_SOURCE', '*'), kind='int', label='Refresh interval (minutes)', help="How often the watchlist source is re-checked. Each check is one cheap call (one MDBList page per 500 titles; SIMKL's activities timestamp, with the list only re-read when it changed; two Trakt calls; one PMDB list lookup plus one page per 500 titles, well inside PMDB's free-tier hourly limit at the default interval).", min=1, max=1440)))
+WATCHLIST_REFRESH_MINUTES    = max(1, int(_env('WATCHLIST_REFRESH_MINUTES', "30", group='Watchlist', show_if=('WATCHLIST_SOURCE', '*'), kind='int', label='Refresh interval (minutes)', help="Minutes between watchlist checks (lightweight: 1 page/500 titles on MDBList/PMDB, timestamp check on SIMKL, 2 calls on Trakt).", min=1, max=1440)))
 # SIMKL: which of the account's lists count as "the watchlist".  Any of
 # plantowatch, watching, hold (the last two exist for TV/anime only).
 WATCHLIST_SIMKL_STATUSES     = [
     s.strip().lower()
-    for s in _env('WATCHLIST_SIMKL_STATUSES', "plantowatch", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'simkl'), kind='list', label='SIMKL statuses', help='Which SIMKL lists count as the watchlist: plantowatch, watching, hold (comma-separated).', advanced=True, placeholder='plantowatch').split(",")
+    for s in _env('WATCHLIST_SIMKL_STATUSES', "plantowatch", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'simkl'), kind='list', label='SIMKL statuses', help='SIMKL lists counted as watchlist: plantowatch, watching, hold.', advanced=True, placeholder='plantowatch').split(",")
     if s.strip()
 ]
 # A key used only for WATCHLIST_SOURCE=mdblist, so the watchlist can come from
 # a personal MDBList account while the server key (ratings, warming) belongs
 # to another.  Blank falls back to MDBLIST_API_KEY.
-MDBLIST_WATCHLIST_KEY        = _env('MDBLIST_WATCHLIST_API_KEY', "", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'mdblist'), kind='secret', label='MDBList watchlist key', help="Reads the watchlist of this key's MDBList account instead of MDBLIST_API_KEY's, so a personal account's watchlist can be used without that key also spending its quota on ratings and cache warming. Blank uses MDBLIST_API_KEY.").strip()
-SIMKL_CLIENT_ID              = _env('SIMKL_CLIENT_ID', "", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'simkl'), kind='secret', label='SIMKL client id', help='From a free app at simkl.com/settings/developer. Register it as "TV, devices & command line": PostersPlus links by code (the device/PIN flow), so that type needs no secret and no redirect URL. The account is then linked once from the admin dashboard\'s Watchlist group.').strip()
+MDBLIST_WATCHLIST_KEY        = _env('MDBLIST_WATCHLIST_API_KEY', "", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'mdblist'), kind='secret', label='MDBList watchlist key', help="Optional separate MDBList key for reading a personal watchlist without spending its quota on ratings/warming. Blank uses MDBLIST_API_KEY.").strip()
+SIMKL_CLIENT_ID              = _env('SIMKL_CLIENT_ID', "", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'simkl'), kind='secret', label='SIMKL client id', help='From simkl.com/settings/developer registered as "TV, devices & command line" (device/PIN flow; needs no secret or redirect URL). Link the account here once saved.').strip()
 # Only for a SIMKL app registered as "Server apps & services"; the other two
 # app types mint no secret and need none.
-SIMKL_CLIENT_SECRET          = _env('SIMKL_CLIENT_SECRET', "", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'simkl'), kind='secret', label='SIMKL client secret', help='Only if the SIMKL app was registered as "Server apps & services", the one type that mints a secret and then requires it. Not needed for the recommended "TV, devices & command line" type.', advanced=True).strip()
+SIMKL_CLIENT_SECRET          = _env('SIMKL_CLIENT_SECRET', "", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'simkl'), kind='secret', label='SIMKL client secret', help='Only needed if the SIMKL app uses "Server apps & services" instead of the recommended "TV, devices & command line" type.', advanced=True).strip()
 # Skips the device flow entirely when set — for a token obtained elsewhere.
 # Never refreshed, so a V2 token here goes stale after 7 days.
 SIMKL_ACCESS_TOKEN           = _env('SIMKL_ACCESS_TOKEN', "", group='Watchlist', show_if=('WATCHLIST_SOURCE', 'simkl'), kind='secret', label='SIMKL access token', help='Skips the device flow and uses this token as-is; never refreshed.', advanced=True).strip()
@@ -544,7 +544,7 @@ MDBLIST_CONCURRENCY          = int(_env('MDBLIST_CONCURRENCY', "3", group='Perfo
 # Retry-After: 10 for every key on the address.  MDBLIST_CONCURRENCY alone let
 # a cold catalog warm reach ~10 calls/s (3 in flight at ~300 ms each), which
 # tripped it; 0.2 s holds the process to 5/s.  0 disables the pacing.
-MDBLIST_MIN_INTERVAL         = max(0.0, float(_env('MDBLIST_MIN_INTERVAL', "0.2", group='Performance', kind='float', label='MDBList request spacing (s)', help='Minimum seconds between the start of one outbound MDBList request and the next, across live renders and cache warming. MDBList has a short per-IP burst limit on top of the daily quota, and 3 unpaced concurrent calls can reach it during a cold catalog warm; 0.2 holds the server to 5 calls per second. 0 turns the pacing off.', min=0, max=5)))
+MDBLIST_MIN_INTERVAL         = max(0.0, float(_env('MDBLIST_MIN_INTERVAL', "0.2", group='Performance', kind='float', label='MDBList request spacing (s)', help='Min seconds between outbound MDBList calls (live + warming) to avoid per-IP burst limits (0.2 = 5/s). 0 disables pacing.', min=0, max=5)))
 
 # Max uncached poster renders in flight per worker.  Composite cache hits and
 # requests coalesced onto an in-flight render are never held back — this only
@@ -558,7 +558,7 @@ MDBLIST_MIN_INTERVAL         = max(0.0, float(_env('MDBLIST_MIN_INTERVAL', "0.2"
 # turn.  The per-source caps above (MDBLIST_CONCURRENCY etc.) limit one
 # upstream each; nothing limited the number of renders competing for the pool.
 # 8 renders x ~4 calls fits inside the pool with headroom for background work.
-POSTER_RENDER_CONCURRENCY    = max(1, int(_env('POSTER_RENDER_CONCURRENCY', "8", group='Performance', kind='int', label='Render concurrency', help='Maximum uncached poster renders in flight per worker. Cache hits are never held back; a burst of fresh renders (a cold catalog grid) queues past this rather than exhausting the upstream connection pool. Raise on a machine with headroom, lower on a small VPS.', min=1, max=64)))
+POSTER_RENDER_CONCURRENCY    = max(1, int(_env('POSTER_RENDER_CONCURRENCY', "8", group='Performance', kind='int', label='Render concurrency', help='Max concurrent uncached renders per worker (cache hits bypass this); excess bursts queue instead of exhausting upstream connections.', min=1, max=64)))
 
 # -----------------------------------------------------------------------
 # IMDb local ratings dataset — an MDBList-free way to source the "imdb"
@@ -571,7 +571,7 @@ POSTER_RENDER_CONCURRENCY    = max(1, int(_env('POSTER_RENDER_CONCURRENCY', "8",
 # imdb_dataset.py. Selected per-request/per-instance via the "imdb" weight's
 # source setting (imdb_rating_source=dataset), independent of MDBList.
 # -----------------------------------------------------------------------
-IMDB_DATASET_ENABLED         = _env('IMDB_DATASET_ENABLED', "false", group='Ratings', kind='bool', label='IMDb dataset', help="Download IMDb's free, no-key, daily-refreshed ratings dataset into a local table so the imdb rating weight can be served without MDBList. Selected per request or instance with imdb_rating_source=dataset.").strip().lower() in ("1", "true", "yes")
+IMDB_DATASET_ENABLED         = _env('IMDB_DATASET_ENABLED', "false", group='Ratings', kind='bool', label='IMDb dataset', help="Download IMDb's free daily ratings dataset locally (no key) to serve IMDb scores without MDBList when imdb_rating_source=dataset.").strip().lower() in ("1", "true", "yes")
 IMDB_DATASET_PATH            = _env('IMDB_DATASET_PATH', "/app/cache/imdb_ratings.db", group='Ratings', show_if=('IMDB_DATASET_ENABLED', 'true'), kind='text', label='IMDb dataset path', help="Where the dataset's SQLite table is kept.").strip()
 IMDB_DATASET_REFRESH_HOURS   = max(1, int(_env('IMDB_DATASET_REFRESH_HOURS', "24", group='Ratings', show_if=('IMDB_DATASET_ENABLED', 'true'), kind='int', label='IMDb dataset refresh (hours)', help='How often the dataset is re-downloaded.', min=1, max=720)))
 # IMDb's own dataset already includes titles with a single vote; this filters
@@ -585,15 +585,15 @@ IMDB_DATASET_MIN_VOTES       = max(0, int(_env('IMDB_DATASET_MIN_VOTES', "10", g
 # understood. Each budget is a ceiling on actual API calls (cache hits don't
 # count), so steady-state runs after the first one are typically far cheaper
 # than the configured budgets.
-CACHE_WARM_ENABLED           = _env('CACHE_WARM_ENABLED', "false", group='Cache warming', kind='bool', label='Cache warming', help="Pre-populate the TMDB and MDBList caches for trending, popular and catalog titles in the background. Off by default; enable once the server keys' quotas are understood.").strip().lower() == "true"
-CACHE_WARM_TMDB_BUDGET       = int(_env('CACHE_WARM_TMDB_BUDGET', "2000", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='int', label='TMDB budget per cycle', help='Ceiling on actual TMDB API calls per warm cycle; cache hits do not count. Also sets how many trending, popular and top-rated titles a cycle walks, so it decides how many titles the MDBList bulk requests can rate.', min=0, max=100000))
-CACHE_WARM_MDBLIST_BUDGET    = int(_env('CACHE_WARM_MDBLIST_BUDGET', "500", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='int', label='MDBList budget per cycle', help='Ceiling on MDBList requests per warm cycle. Stale ratings are fetched in bulk, up to 200 titles to a request that counts once; only when bulk is unavailable does each title cost its own request.', min=0, max=100000))
+CACHE_WARM_ENABLED           = _env('CACHE_WARM_ENABLED', "false", group='Cache warming', kind='bool', label='Cache warming', help="Pre-warm TMDB and MDBList caches in the background for trending, popular and catalog titles. Enable once API quotas are understood.").strip().lower() == "true"
+CACHE_WARM_TMDB_BUDGET       = int(_env('CACHE_WARM_TMDB_BUDGET', "2000", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='int', label='TMDB budget per cycle', help='Max uncached TMDB API calls per cycle; also caps how many trending/popular/top-rated titles are walked for MDBList bulk rating.', min=0, max=100000))
+CACHE_WARM_MDBLIST_BUDGET    = int(_env('CACHE_WARM_MDBLIST_BUDGET', "500", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='int', label='MDBList budget per cycle', help='Max MDBList requests per cycle (stale ratings batch up to 200 titles per call when bulk is available).', min=0, max=100000))
 # MDBList's limit is a per-key daily quota (1000/day free) shared with live
 # poster requests, and every response reports what's left. The warmer stops
 # spending a key once its remaining daily requests fall to this floor, so a
 # cycle can't leave the rest of the day rendering without ratings. 0 disables
 # the floor (budget only).
-CACHE_WARM_MDBLIST_RESERVE   = max(0, int(_env('CACHE_WARM_MDBLIST_RESERVE', "300", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='int', label='MDBList daily reserve', help="MDBList's limit is a per-key daily quota (1,000/day on a free key) shared with live poster requests. The warmer stops spending a key once its remaining daily requests, reported by MDBList on every response, fall to this floor, so a cycle cannot leave the rest of the day without ratings. 0 disables the floor.", min=0, max=100000)))
+CACHE_WARM_MDBLIST_RESERVE   = max(0, int(_env('CACHE_WARM_MDBLIST_RESERVE', "300", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='int', label='MDBList daily reserve', help="Stop warming a key once its remaining MDBList daily quota (1,000/day free) drops to this reserve, preserving quota for live renders. 0 disables.", min=0, max=100000)))
 CACHE_WARM_INTERVAL_HOURS    = float(_env('CACHE_WARM_INTERVAL_HOURS', "24", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='float', label='Warm interval (hours)', help='Hours between the end of one warm cycle and the start of the next. Ignored after the first cycle once a warm hour is set.', min=1, max=720))
 
 # Optionally align steady-state cache-warm cycles to a fixed local hour of day
@@ -606,7 +606,7 @@ CACHE_WARM_INTERVAL_HOURS    = float(_env('CACHE_WARM_INTERVAL_HOURS', "24", gro
 # CACHE_WARM_STARTUP_GRACE_SECS regardless, so a fresh install pre-warms
 # immediately.
 CACHE_WARM_AT_HOUR: float | None = None
-_cache_warm_at_raw = _env('CACHE_WARM_AT_HOUR', "", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='text', label='Warm at local hour', help="Optional fixed local hour (e.g. 4 or 4:30) to align steady-state cycles to, instead of the interval. Useful for scheduling the OCR-heavy cycle off-peak. Uses the container's TZ (UTC if unset); the first cycle after startup always runs shortly after boot.", advanced=True, placeholder='4:30').strip()
+_cache_warm_at_raw = _env('CACHE_WARM_AT_HOUR', "", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='text', label='Warm at local hour', help="Optional local time (e.g. 4 or 4:30, container TZ/UTC) to run steady-state warm cycles off-peak instead of on an interval. First cycle still runs after boot.", advanced=True, placeholder='4:30').strip()
 if _cache_warm_at_raw:
     try:
         if ":" in _cache_warm_at_raw:
@@ -626,7 +626,7 @@ if _cache_warm_at_raw:
 # addon (rather than your own self-hosted instance), this volume of traffic
 # in a short period can get your server's IP rate-limited or blocked by that
 # addon. Only enable this if you understand and accept that risk.
-CACHE_WARM_QUALITY_ENABLED   = _env('CACHE_WARM_QUALITY_ENABLED', "false", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='bool', label='Warm quality badges', help="Also pre-fetch quality-badge data (resolution, source, HDR tokens) for every warmed title via the configured quality source. Against a public Stremio scraper addon this volume of traffic can get your server's IP rate-limited or blocked; only enable against your own AIOStreams or scraper instance.", advanced=True).strip().lower() == "true"
+CACHE_WARM_QUALITY_ENABLED   = _env('CACHE_WARM_QUALITY_ENABLED', "false", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='bool', label='Warm quality badges', help="Pre-fetch stream quality badges (resolution, source, HDR) during warming. Only enable against your own AIOStreams/scraper; public scrapers may rate-limit or block your IP.", advanced=True).strip().lower() == "true"
 
 # Optionally pre-warm specific Stremio catalogs in addition to TMDB
 # trending/popular — useful when a user has a particular addon catalog
@@ -636,7 +636,7 @@ CACHE_WARM_QUALITY_ENABLED   = _env('CACHE_WARM_QUALITY_ENABLED', "false", group
 # items are resolved to TMDB ids and warmed first, ahead of trending/popular,
 # within the same TMDB/MDBList budgets above.
 CACHE_WARM_CATALOG_URLS = [
-    u.strip() for u in _env('CACHE_WARM_CATALOG_URLS', "", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='list', label='Catalog manifest URLs', help='Comma-separated Stremio addon manifest URLs (the install links you would paste into Stremio). Each catalog the manifest exposes is fetched and warmed first, ahead of trending and popular, within the budgets above.', advanced=True).split(",") if u.strip()
+    u.strip() for u in _env('CACHE_WARM_CATALOG_URLS', "", group='Cache warming', show_if=('CACHE_WARM_ENABLED', 'true'), kind='list', label='Catalog manifest URLs', help='Stremio addon manifest URLs whose catalogs are warmed first (ahead of trending/popular) within the budgets above.', advanced=True).split(",") if u.strip()
 ]
 # Max items pre-warmed per catalog (across pagination), so a single large
 # catalog can't consume the entire warm budget.
@@ -651,7 +651,7 @@ DIGITAL_RELEASE_MAX_AGE_DAYS = 30   # expire entries older than this from the ca
 # Each unique combination of title + rendering parameters gets its own entry,
 # so changing settings immediately produces a fresh render on next request.
 # Override with COMPOSITE_CACHE_TTL=X in your .env file.
-COMPOSITE_CACHE_TTL        = int(_env('COMPOSITE_CACHE_TTL', "604800", group='Caching', kind='int', label='Composite cache TTL (s)', help='How long a fully rendered poster is kept before it is re-rendered. Default 604800 (7 days).', min=60, max=31536000))   # 7 days
+COMPOSITE_CACHE_TTL        = int(_env('COMPOSITE_CACHE_TTL', "604800", group='Caching', kind='int', label='Composite cache TTL (s)', help='Seconds to keep a rendered poster before re-rendering (604800 = 7 days).', min=60, max=31536000))   # 7 days
 # +/- half this many seconds of deterministic per-key jitter applied to
 # COMPOSITE_CACHE_TTL, so a large batch of composites rendered around the
 # same time don't all expire (and get re-rendered) at once. Default 2 days ->
@@ -663,28 +663,28 @@ COMPOSITE_CACHE_TTL_JITTER = int(_env('COMPOSITE_CACHE_TTL_JITTER', "172800", gr
 # keeping them at all turned a long upstream outage into a full render on
 # every view, just when the instance was already degraded; a short life still
 # lets the finished poster replace it soon.  Never sent with an ETag.
-PROVISIONAL_CACHE_TTL      = int(_env('PROVISIONAL_CACHE_TTL', "300", group='Caching', kind='int', label='Provisional render TTL (s)', help='How long a poster rendered with a piece missing (quality still loading, a rating source down, text detection queued) is kept and may be cached by clients. 0 never keeps them, so each view renders again until the poster is complete.', min=0, max=86400, advanced=True))
+PROVISIONAL_CACHE_TTL      = int(_env('PROVISIONAL_CACHE_TTL', "300", group='Caching', kind='int', label='Provisional render TTL (s)', help='Seconds to cache incomplete renders (pending quality, missing rating, queued OCR) locally and on clients. 0 re-renders until complete.', min=0, max=86400, advanced=True))
 # Maximum number of composite cache entries. When exceeded the oldest entries are
 # evicted on each insert to keep the table at this size. 0 = no cap (rely on TTL
 # alone), which let any client that can request posters fill the disk with
 # distinct render settings.
-COMPOSITE_MAX_ENTRIES      = int(_env('COMPOSITE_MAX_ENTRIES', "500000", group='Caching', kind='int', label='Composite cache max entries', help='Oldest entries are evicted past this many. A composite is roughly 50-150 KB, so the default 500000 holds about 50 GB. 0 relies on the TTL alone, which lets requests with ever-new settings grow the cache without bound.', min=0, max=10000000))
+COMPOSITE_MAX_ENTRIES      = int(_env('COMPOSITE_MAX_ENTRIES', "500000", group='Caching', kind='int', label='Composite cache max entries', help='Max cached composites before evicting oldest (~50–150 KB each; 500000 ≈ 50 GB). 0 relies on TTL only (unbounded growth).', min=0, max=10000000))
 # The same cap by size.  A count can't bound the disk on its own: a composite
 # is ~65 KB at 500 px, ~100 KB landscape and ~570 KB at 2000 px.  Past it the
 # oldest composites go until the cache is back under 95% of it.  0 = no size
 # cap, only the count above.
-COMPOSITE_MAX_GB           = float(_env('COMPOSITE_MAX_GB', "0", group='Caching', kind='float', label='Composite cache max size (GB)', help='Oldest rendered posters are evicted once the composite cache holds more than this many GB, down to 95% of it. Works alongside the entry cap; whichever is reached first applies. 0 turns the size cap off.', min=0, max=100000))
+COMPOSITE_MAX_GB           = float(_env('COMPOSITE_MAX_GB', "0", group='Caching', kind='float', label='Composite cache max size (GB)', help='Composite cache size cap in GB; evicts oldest down to 95% when exceeded (works alongside the entry cap). 0 disables.', min=0, max=100000))
 # Below this much free space on the cache volume, rendered posters and source
 # images are still served but no longer stored, so a full disk can't take the
 # SQLite cache (and every other write on the volume) down with it.
-CACHE_MIN_FREE_GB          = float(_env('CACHE_MIN_FREE_GB', "1", group='Caching', kind='float', label='Minimum free disk (GB)', help='When the cache volume has less free space than this, posters are still rendered and served but not written to the cache until space is freed. 0 turns the check off.', min=0, max=100000))
+CACHE_MIN_FREE_GB          = float(_env('CACHE_MIN_FREE_GB', "1", group='Caching', kind='float', label='Minimum free disk (GB)', help='Stop writing to cache (still rendering/serving) if volume free space drops below this GB floor. 0 disables.', min=0, max=100000))
 # Number of fully-rendered composites kept in each worker's in-memory LRU (L1).
 # Off by default: an L1 hit only saves a SQLite point read (~0.7 ms cold,
 # ~0.04 ms once the OS page cache has it, against ~4 ms for the whole hit),
 # while every worker holds its own copy — ~400 KB per entry measured on a live
 # instance, so 500 entries cost ~200 MB per worker.  Configurator previews are
 # a new composite per change, so they churn it rather than hit it.
-COMPOSITE_MEM_ENTRIES      = int(_env('COMPOSITE_MEM_ENTRIES', "0", group='Caching', kind='int', label='In-memory composites', help="Rendered posters kept in each worker's in-memory LRU, served without a SQLite read. Off (0) by default: the SQLite read it saves is under a millisecond, while each entry costs roughly 100-600 KB per worker.", min=0, max=100000, advanced=True))
+COMPOSITE_MEM_ENTRIES      = int(_env('COMPOSITE_MEM_ENTRIES', "0", group='Caching', kind='int', label='In-memory composites', help="Per-worker in-memory LRU for rendered posters (~100–600 KB each). Off (0) by default since SQLite reads take <1 ms.", min=0, max=100000, advanced=True))
 # Set to any truthy value (1, true, yes) to skip composite cache reads and writes
 # entirely. Every request re-renders from scratch. Useful during development when
 # iterating on rendering changes and you don't want stale renders served.
@@ -699,13 +699,13 @@ DISABLE_COMPOSITE_CACHE    = _env('DISABLE_COMPOSITE_CACHE', "false", group='Cac
 # CINEMA_POPULAR_DIGITAL_DAYS instead.  Neither is consulted while a future
 # digital date is published: that date is the answer.  CINEMA_MAX_AGE_YEARS is
 # the outer backstop for when the day windows are switched off.
-CINEMA_ASSUMED_DIGITAL_DAYS = max(0, int(_env('CINEMA_ASSUMED_DIGITAL_DAYS', "60", group='Rendering', kind='int', label='Assumed digital window (days)', help="A movie whose only known release is theatrical, with no digital date published, is treated as Streaming rather than Cinema once its theatrical date is older than this many days. Applies with or without a TMDB key; films with at least CINEMA_POPULAR_VOTES TMDB votes use CINEMA_POPULAR_DIGITAL_DAYS instead. Typical studio windows are 17-45 days, the largest releases about 60. 0 disables the assumption (Cinema until a date is known, up to CINEMA_MAX_AGE_YEARS).", min=0, max=365, advanced=True)))
-CINEMA_POPULAR_VOTES        = max(0, int(_env('CINEMA_POPULAR_VOTES', "1000", group='Rendering', kind='int', label='Popular film votes', help="TMDB vote count at which a movie counts as popular enough that TMDB will publish its digital date on time, so it may stay Cinema for CINEMA_POPULAR_DIGITAL_DAYS rather than CINEMA_ASSUMED_DIGITAL_DAYS. A movie with no known vote count uses the shorter window. 0 treats every movie alike (the shorter window).", min=0, max=1000000, advanced=True)))
-CINEMA_POPULAR_DIGITAL_DAYS = max(0, int(_env('CINEMA_POPULAR_DIGITAL_DAYS', "180", group='Rendering', kind='int', label='Popular film cinema window (days)', help="Like CINEMA_ASSUMED_DIGITAL_DAYS, for movies with at least CINEMA_POPULAR_VOTES TMDB votes: past this many days in cinemas with no digital date published, they are treated as Streaming. Long enough for the longest runs (about 120 days). 0 disables it (Cinema until a date is known, up to CINEMA_MAX_AGE_YEARS).", min=0, max=3650, advanced=True)))
+CINEMA_ASSUMED_DIGITAL_DAYS = max(0, int(_env('CINEMA_ASSUMED_DIGITAL_DAYS', "60", group='Rendering', kind='int', label='Assumed digital window (days)', help="Days after a theatrical release with no digital date before assuming Streaming (typical: 17–60; films ≥ CINEMA_POPULAR_VOTES use CINEMA_POPULAR_DIGITAL_DAYS). 0 disables (stays Cinema up to CINEMA_MAX_AGE_YEARS).", min=0, max=365, advanced=True)))
+CINEMA_POPULAR_VOTES        = max(0, int(_env('CINEMA_POPULAR_VOTES', "1000", group='Rendering', kind='int', label='Popular film votes', help="TMDB votes needed to use the longer CINEMA_POPULAR_DIGITAL_DAYS window instead of CINEMA_ASSUMED_DIGITAL_DAYS (unknown vote counts use the shorter). 0 disables.", min=0, max=1000000, advanced=True)))
+CINEMA_POPULAR_DIGITAL_DAYS = max(0, int(_env('CINEMA_POPULAR_DIGITAL_DAYS', "180", group='Rendering', kind='int', label='Popular film cinema window (days)', help="Assumed Streaming window (days) for popular films (≥ CINEMA_POPULAR_VOTES) with no digital date (covers ~120-day runs). 0 stays Cinema up to CINEMA_MAX_AGE_YEARS.", min=0, max=3650, advanced=True)))
 # Outer backstop: a theatrical-only movie older than this many years is
 # "Streaming" whatever the windows above say, even with a (stale) future
 # digital date published.  Set to 0 to disable the gate entirely.
-CINEMA_MAX_AGE_YEARS       = max(0, int(_env('CINEMA_MAX_AGE_YEARS', "3", group='Rendering', kind='int', label='Cinema max age (years)', help='Movies whose only known past release is a theatrical date older than this are treated as Streaming rather than Cinema, whatever CINEMA_ASSUMED_DIGITAL_DAYS and CINEMA_POPULAR_DIGITAL_DAYS say — a backstop against stale TMDB data. 0 disables the gate.', min=0, max=50, advanced=True)))
+CINEMA_MAX_AGE_YEARS       = max(0, int(_env('CINEMA_MAX_AGE_YEARS', "3", group='Rendering', kind='int', label='Cinema max age (years)', help='Hard backstop against stale TMDB data: theatrical-only releases older than this many years always count as Streaming. 0 disables.', min=0, max=50, advanced=True)))
 
 def _parse_bool(val: str, default: bool = False) -> bool:
     val = val.strip().lower()
@@ -720,8 +720,8 @@ def _parse_bool(val: str, default: bool = False) -> bool:
 # Lets users pick poster_pick=random: one of the top five posters from their
 # source (TMDB, fanart.tv or TVDB), re-rolled whenever the poster re-renders.  Off by
 # default: each title can end up with five posters in the disk cache.
-RANDOM_POSTERS             = _parse_bool(_env("RANDOM_POSTERS", "false", group='Rendering', kind='bool', label='Allow random posters', help='Let users pick a random one of the top five posters (TMDB, Fanart or TVDB) instead of the top one. Each title can then store up to five posters in the disk cache instead of one; the pick changes when the poster re-renders.'), False)
-LOGO_CONTRAST_RESCUE       = _parse_bool(_env("LOGO_CONTRAST_RESCUE", "false", group='Rendering', kind='bool', label='Logo contrast rescue', help='Recolour a flat logo (white, black or accent) when it blends into the poster background; multi-colour and outline logos are never touched. Experimental and off by default while tested.', advanced=True), False)
+RANDOM_POSTERS             = _parse_bool(_env("RANDOM_POSTERS", "false", group='Rendering', kind='bool', label='Allow random posters', help='Let users pick randomly from the top 5 posters (TMDB/Fanart/TVDB), changing on re-render. Stores up to 5 posters per title in disk cache.'), False)
+LOGO_CONTRAST_RESCUE       = _parse_bool(_env("LOGO_CONTRAST_RESCUE", "false", group='Rendering', kind='bool', label='Logo contrast rescue', help='Experimental: recolour flat logos (white/black/accent) that blend into the background. Multi-colour and outline logos are untouched.', advanced=True), False)
 # Emit per-logo sizing telemetry (source dims, aspect, final dims) at INFO level.
 # Off by default — handy when tuning the logo size caps.
 DEBUG_LOGO_SIZING          = _parse_bool(_env("DEBUG_LOGO_SIZING", "false", group='Rendering', kind='bool', label='Log logo sizing', help='Emit per-logo sizing telemetry at INFO level.', advanced=True), False)
@@ -729,13 +729,13 @@ DEBUG_LOGO_SIZING          = _parse_bool(_env("DEBUG_LOGO_SIZING", "false", grou
 # Paths other modules used to read from the environment themselves; declared
 # here so the dashboard lists them and a saved value applies.
 YUNET_MODEL_PATH           = _env("YUNET_MODEL_PATH", "", group='Rendering', kind='text', label='Face model path',
-    help='Where the YuNet face-detection model is read from; blank uses the bundled copy. Face detection soft-disables if it is missing, falling back to the saliency crop.',
+    help='Path to the YuNet face-detection model (blank uses bundled copy). Missing model soft-disables to saliency crop.',
     placeholder='auto', advanced=True).strip()
 DISCOVERY_OVERRIDES_PATH   = _env("DISCOVERY_OVERRIDES_PATH", "/app/cache/discovery_overrides.json", group='Rendering', kind='text',
-    label='Discovery overrides path', help='JSON file holding the notable studio, director and cast lists behind those sashes. The dashboard\'s Sash lists view writes it; see discovery_overrides.example.json to write it by hand.',
+    label='Discovery overrides path', help='JSON file for Studio, Director and Cast sash lists (edited via Sash lists, or manually per discovery_overrides.example.json).',
     advanced=True).strip() or "/app/cache/discovery_overrides.json"
 SASH_LABELS_PATH           = _env("SASH_LABELS_PATH", "/app/cache/sash_labels.json", group='Rendering', kind='text',
-    label='Sash labels path', help='JSON file holding the operator\'s wording for sash labels ("New Season", "#{rank} Today"), per language, on top of the bundled translations. The dashboard\'s Sash labels view writes it.',
+    label='Sash labels path', help='JSON file for custom per-language sash label overrides ("New Season", "#{rank} Today"), managed via Sash labels.',
     advanced=True).strip() or "/app/cache/sash_labels.json"
 
 # Prefer textless posters with enough votes to be meaningful, but never allow
@@ -764,7 +764,7 @@ LOGO_STRETCH_FACTOR        = max(1.0, float(_env('LOGO_STRETCH_FACTOR', "1.2", g
 # Raise it for maximum foreground accuracy or lower it for faster stale-cache bursts.
 # Changing it invalidates cached composites.
 TEXTLESS_TEXT_DETECTION    = _parse_bool(_env("TEXTLESS_TEXT_DETECTION", "true", group='Text detection', kind='bool', label='Burned-in text detection', help='Detect title text on posters TMDB mislabelled as textless and skip compositing a logo over them. Uses the PP-OCRv5 Mobile detector.'), True)
-TEXTLESS_DETECTION_MAX_VOTES = max(0, int(_env('TEXTLESS_DETECTION_MAX_VOTES', "3000", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='int', label='Foreground scan vote gate', help='Foreground OCR vote limit. Titles with more TMDB votes render without waiting, skip composite caching, and enter the idle background scan queue. Raise for foreground accuracy; lower for faster stale-cache bursts. Changing it invalidates cached composites.', min=0, max=1000000)))
+TEXTLESS_DETECTION_MAX_VOTES = max(0, int(_env('TEXTLESS_DETECTION_MAX_VOTES', "3000", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='int', label='Foreground scan vote gate', help='Foreground OCR vote ceiling: titles above this render immediately (uncached) and queue for background OCR. Raise for accuracy, lower for faster bursts; changes invalidate cache.', min=0, max=1000000)))
 # Instead of serving a detected fake textless poster as-is, swap in a portrait
 # crop of the title's language-neutral backdrop with our logo on top.  Only
 # when a logo resolves (or the request wants no overlay at all) and the crop
@@ -772,7 +772,7 @@ TEXTLESS_DETECTION_MAX_VOTES = max(0, int(_env('TEXTLESS_DETECTION_MAX_VOTES', "
 # (backdrop download, text-aware crop, one more scan); later renders reuse the
 # cached crop and scan result.  On by default; turning it off invalidates
 # cached composites.
-TEXTLESS_BACKDROP_FALLBACK = _parse_bool(_env("TEXTLESS_BACKDROP_FALLBACK", "true", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='bool', label='Backdrop for fake textless posters', help='When a poster TMDB tags as textless turns out to have its title burned in, use the runner-up textless poster (titles with 6+ of them) or a crop of the backdrop with a logo instead. Adds about half a second to the first render of those titles. Changing it invalidates cached composites.'), True)
+TEXTLESS_BACKDROP_FALLBACK = _parse_bool(_env("TEXTLESS_BACKDROP_FALLBACK", "true", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='bool', label='Backdrop for fake textless posters', help='When a "textless" poster has burned-in text, use a runner-up textless poster (if 6+ exist) or a cropped backdrop + logo (~0.5s on first render). Changes invalidate cache.'), True)
 # Keep a small, deduplicated list of TMDB posters rejected by OCR so operators
 # can review and correct upstream metadata manually.
 TEXTLESS_FAKE_REPORT       = _parse_bool(_env("TEXTLESS_FAKE_REPORT", "true", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='bool', label='Report fake textless posters', help='Keep a deduplicated list of TMDB posters rejected by OCR, for correcting upstream metadata.', advanced=True), True)
@@ -819,7 +819,7 @@ PPOCR_WIDE_MIN_AREA        = max(0.0, min(1.0, float(_env("PPOCR_WIDE_MIN_AREA",
 PPOCR_WIDE_MIN_Y           = max(0.0, min(1.0, float(_env("PPOCR_WIDE_MIN_Y", "0.55", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='float',
     label='Wide-box minimum centre', help='Minimum vertical centre (0 top, 1 bottom) for the poster-only geometric fallback used when OCR cannot read a centred, title-shaped box.', min=0, max=1, advanced=True) or "0.55")))
 TEXTLESS_SCAN_TOP          = max(0.0, min(0.9, float(_env("TEXTLESS_SCAN_TOP", "0.08", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='float',
-    label='Scan top margin', help='Fraction of poster height skipped from the top before counting title text, so studio and network bugs at the very edge are ignored. 0 scans the entire poster.', min=0, max=0.9, advanced=True) or "0.08")))
+    label='Scan top margin', help='Top fraction of poster height skipped during OCR to ignore edge studio/network logos. 0 scans full height.', min=0, max=0.9, advanced=True) or "0.08")))
 PPOCR_MODEL_URL            = _env("PPOCR_MODEL_URL", "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.8.0/onnx/PP-OCRv5/det/ch_PP-OCRv5_det_mobile.onnx",
     group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='url', label='OCR model URL', help='Where the PP-OCRv5 detection model is downloaded from when it is not already present. Change together with the checksum.', advanced=True).strip()
 PPOCR_MODEL_SHA256         = _env("PPOCR_MODEL_SHA256", "4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae",
@@ -832,7 +832,7 @@ PPOCR_SKIP_MODEL_HASH      = _parse_bool(_env("PPOCR_SKIP_MODEL_HASH", "false", 
 
 TEXTLESS_DETECTION_CONCURRENCY = max(1, min(
     EFFECTIVE_CPUS,
-    int(_env('TEXTLESS_DETECTION_CONCURRENCY', "1", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='int', label='OCR sessions', help="Independent PP-OCR sessions in a dedicated executor. Sessions split the ONNX thread budget rather than adding to it, so raising this makes each scan slower and only pays off during a cold-cache sweep; each extra session costs roughly 50 MB. Capped at the container's real CPU budget.", min=1, max=16, advanced=True)),
+    int(_env('TEXTLESS_DETECTION_CONCURRENCY', "1", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='int', label='OCR sessions', help="Parallel PP-OCR sessions (~50 MB each, capped at CPU budget). Splits ONNX threads (slower per scan; mainly helps cold-cache sweeps).", min=1, max=16, advanced=True)),
 ))
 
 # Rating Score Weight Defaults
@@ -1071,21 +1071,15 @@ def _genre_order(key: str, default: tuple[int, ...], label: str, help: str) -> l
 
 GENRE_PRIORITY = _genre_order(
     'GENRE_PRIORITY', _DEFAULT_GENRE_PRIORITY, 'Genre priority',
-    "The order a title's genres are tried in; the first one it has names it on "
-    "the poster and picks the fallback background and title font. TMDB files TV "
-    "under merged genres (Action & Adventure, War & Politics), listed here "
-    "apart from the film genres they print as. Sci-Fi & Fantasy is split into "
-    "Sci-Fi or Fantasy from the show's keywords; the merged entry covers the "
-    "shows nothing decides, and prints Sci-Fi.  TMDB has no Horror for TV, so a "
-    "show is given it from MDBList's genres, else its keywords.  Rom-Com is "
-    "any title with both Comedy and Romance: rank it below them to turn it off.",
+    "First matching genre sets the poster label, fallback background and title font. "
+    "TV merged genres (Action & Adventure, War & Politics) rank separately from film ones; "
+    "Sci-Fi & Fantasy splits via keywords (fallback prints Sci-Fi). TV Horror comes from "
+    "MDBList/keywords. Rank Rom-Com below Comedy and Romance to disable it.",
 )
 ANIME_GENRE_PRIORITY = _genre_order(
     'ANIME_GENRE_PRIORITY', _DEFAULT_ANIME_GENRE_PRIORITY, 'Anime genre priority',
-    "The same for titles requested by an AniList or Kitsu id. Action, Adventure "
-    "and Fantasy describe anime better than the Mystery or Supernatural tags "
-    "the providers add liberally, so they rank higher here than in the main "
-    "order. Animation stays last as the label when nothing else matches.",
+    "Same priority order for AniList/Kitsu requests, favouring Action, Adventure and "
+    "Fantasy over common Mystery/Supernatural tags, with Animation last as fallback.",
 )
 
 # Text based fallback, not important if everything is working properly
