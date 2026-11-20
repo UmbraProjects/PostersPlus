@@ -19,7 +19,7 @@ import top10_charts
 import tvdb
 
 logger = logging.getLogger(__name__)
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageChops, ImageEnhance, ImageFilter
 
 # SVG title-logo support — TMDB serves many of its highest-voted logos as SVG.
 # Soft import so the service still runs (PNG-only) if cairosvg is unavailable.
@@ -4311,7 +4311,9 @@ def composite_logo(
     shadow: str = "off",
     punch: float = 0.0,
     fit: str = "box",
-) -> None:
+):
+    """Draw *logo* onto *image*; returns the box it visibly covers (shadow
+    left out), or None when nothing was drawn."""
     width, height = image.size
 
     max_w = int(width  * max_w_ratio)
@@ -4473,7 +4475,20 @@ def composite_logo(
     if punch > 0:
         logo = punch_logo(logo, punch)
     logo_drop_shadow(image, logo, logo_x, logo_y, shadow)
-    image.paste(logo, (logo_x, logo_y), logo)
+    return paste_measured(image, logo, logo_x, logo_y)
+
+
+def paste_measured(image: Image.Image, layer: Image.Image, x: int, y: int):
+    """Paste *layer* at (x, y); return the box (canvas coordinates) of what
+    the paste visibly changed, or None.  Measured from
+    the paste alone, after any shadow, so a shadow doesn't widen the box that
+    logo-anchored badges are placed against."""
+    region = (x, y, x + layer.width, y + layer.height)
+    before = image.crop(region).convert("RGB")
+    image.paste(layer, (x, y), layer)
+    changed = ImageChops.difference(before, image.crop(region).convert("RGB")).convert("L")
+    box = changed.point(lambda v: 255 if v > 12 else 0).getbbox()
+    return (box[0] + x, box[1] + y, box[2] + x, box[3] + y) if box else None
 
 
 # logo_fit=optical: size and place a logo by what you see rather than by its box.

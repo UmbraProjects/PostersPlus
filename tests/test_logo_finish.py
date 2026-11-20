@@ -160,6 +160,16 @@ class WideShadowTests(unittest.TestCase):
         self.assertEqual(art.getchannel("A").getextrema(), (255, 255))
         self.assertLess(art.getpixel((250, 2))[0], 180)
 
+    def test_logo_box_leaves_the_shadow_out(self):
+        # Logo-anchored badge groups sit against this box: a halo mustn't push them off.
+        logo = Image.new("RGBA", (300, 90), (230, 230, 230, 255))
+        boxes = {}
+        for level in ("off", "soft", "strong", "wide"):
+            art = Image.new("RGB", (500, 750), (180, 180, 180))
+            boxes[level] = tmdb.composite_logo(art, logo.copy(), shadow=level)
+        self.assertIsNotNone(boxes["off"])
+        self.assertEqual(set(boxes.values()), {boxes["off"]})
+
 
 class ConfiguratorTests(unittest.TestCase):
     @classmethod
