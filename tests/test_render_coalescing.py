@@ -112,11 +112,28 @@ class RideTimeoutTests(unittest.IsolatedAsyncioTestCase):
         main._render_inflight.clear()
 
     async def test_an_unresolved_render_times_out_instead_of_hanging(self):
+        # Turned away, not rendered again: a separate render would only queue
+        # a duplicate behind whatever holds the first one up.
         fut = asyncio.get_running_loop().create_future()
         main._render_inflight["k"] = fut
         with mock.patch.object(main, "_RENDER_COALESCE_TIMEOUT", 0.01):
-            self.assertIsNone(await main._ride_inflight_render(None, "k"))
+            resp = await main._ride_inflight_render(None, "k")
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(resp.headers["cache-control"], "no-store")
         self.assertFalse(fut.done())   # shielded: the timeout did not cancel it
+
+    async def test_a_render_turned_away_turns_its_riders_away(self):
+        fut = asyncio.get_running_loop().create_future()
+        main._render_inflight["k"] = fut
+        fut.set_exception(main._RenderBusy("k"))
+        resp = await main._ride_inflight_render(None, "k")
+        self.assertEqual(resp.status_code, 503)
+
+    async def test_an_abandoned_render_lets_its_riders_render(self):
+        fut = asyncio.get_running_loop().create_future()
+        main._render_inflight["k"] = fut
+        fut.set_exception(main._RenderAbandoned("k"))
+        self.assertIsNone(await main._ride_inflight_render(None, "k"))
 
     async def test_unpublish_only_removes_its_own_future(self):
         loop = asyncio.get_running_loop()

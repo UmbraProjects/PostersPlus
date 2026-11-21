@@ -187,10 +187,11 @@ async def _coalesced_fetch_poster_metadata(
         _metadata_inflight.pop(inflight_key, None)
 
 
-# How long a request coalesced onto another's render waits before rendering the
-# poster itself.  Generous: the render it rides may be queued for admission
-# behind a cold catalog grid.  It exists so a render that never resolves its
-# future costs its riders a delay rather than hanging them for good.
+# How long a request coalesced onto another's render waits before giving up on
+# it with a 503.  Longer than POSTER_RENDER_QUEUE_TIMEOUT, so a render still
+# queued resolves its riders (turned away with it) before this runs out.  It
+# exists so a render that never resolves its future costs its riders a delay
+# rather than hanging them for good.
 _RENDER_COALESCE_TIMEOUT = 120.0
 
 
@@ -199,9 +200,61 @@ class _RenderAbandoned(Exception):
     requests riding it fall through and render for themselves."""
 
 
+class _RenderBusy(Exception):
+    """Set on a render future whose owner was turned away at admission
+    (POSTER_RENDER_QUEUE_TIMEOUT): its riders are turned away with it rather
+    than each queueing a render of the same poster behind the same backlog."""
+
+
+# Turned-away renders are logged as a count at most this often: in the burst
+# that needs them they come by the thousand.
+_RENDER_BUSY_LOG_EVERY = 60.0
+_render_busy_count = 0
+_render_busy_logged_at = 0.0
+
+
+def _render_busy_response() -> "Response":
+    """503 for a render the queue couldn't take in time.  Never cached: the
+    poster renders fine once the burst has passed."""
+    global _render_busy_count, _render_busy_logged_at
+    _render_busy_count += 1
+    now = time.monotonic()
+    if now - _render_busy_logged_at >= _RENDER_BUSY_LOG_EVERY:
+        logger.warning(
+            f"Render queue: turned away {_render_busy_count} poster request(s) that waited "
+            f"over POSTER_RENDER_QUEUE_TIMEOUT={_cfg.POSTER_RENDER_QUEUE_TIMEOUT:g}s for one of "
+            f"{_cfg.POSTER_RENDER_CONCURRENCY} render slots ({_renders_queued} still queued)"
+        )
+        _render_busy_count = 0
+        _render_busy_logged_at = now
+    return Response(
+        content=b"Render queue is full; try again shortly",
+        status_code=503, media_type="text/plain",
+        headers={"Retry-After": "30", "Cache-Control": "no-store"},
+    )
+
+
+async def _acquire_render_slot(sem: "asyncio.Semaphore") -> bool:
+    """Take a render slot, waiting at most POSTER_RENDER_QUEUE_TIMEOUT.
+    False when the wait ran out."""
+    timeout = _cfg.POSTER_RENDER_QUEUE_TIMEOUT
+    if timeout <= 0:
+        await sem.acquire()
+        return True
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout)
+    except TimeoutError:
+        return False
+    return True
+
+
 async def _ride_inflight_render(request: "Request", final_cache_key: str) -> "Response | None":
     """The response of another request's in-flight render of this poster, or
     None when there is none or it failed, in which case the caller renders.
+    A 503 when that render was turned away at admission, or is still
+    unresolved after _RENDER_COALESCE_TIMEOUT: rendering it separately then
+    only queues a duplicate behind whatever is holding the first one up, which
+    is how a backlog fed itself into a 12k-deep queue.
 
     Shielded: cancelling a rider must not cancel the render it rides, which
     the owner would then find already done when it goes to set its result.
@@ -220,9 +273,11 @@ async def _ride_inflight_render(request: "Request", final_cache_key: str) -> "Re
     except asyncio.TimeoutError:
         logger.warning(
             f"Coalesced render of {final_cache_key} still unresolved after "
-            f"{_RENDER_COALESCE_TIMEOUT:.0f}s; rendering it separately"
+            f"{_RENDER_COALESCE_TIMEOUT:.0f}s; turning this request away"
         )
-        return None
+        return _render_busy_response()
+    except _RenderBusy:
+        return _render_busy_response()
     except Exception:
         return None
     return _poster_response(request, _bytes, final_cache_key, _provisional, _expires_at)
@@ -11338,7 +11393,14 @@ async def get_poster(
         )
     _renders_queued += 1
     try:
-        await _render_sem.acquire()
+        _admitted = await _acquire_render_slot(_render_sem)
+        if _admitted and await request.is_disconnected():
+            # The client gave up while this waited its turn: rendering now
+            # would only push the next poster further back.  Riders, if any,
+            # render for themselves (they are still connected, or they would
+            # not be waiting).
+            _render_sem.release()
+            _admitted = None
     except BaseException:
         # Cancelled while queued (shutdown, mostly). Nothing has been touched
         # yet, but the coalescing future was already published and anyone
@@ -11350,6 +11412,18 @@ async def get_poster(
         raise
     finally:
         _renders_queued -= 1
+    if not _admitted:
+        # Turned away (or the client left): nothing touched yet beyond the
+        # published future and the claimed rating fetch.
+        if _admitted is False and _render_fut is not None and not _render_fut.done():
+            _render_fut.set_exception(_RenderBusy(final_cache_key))
+        _unpublish_render(final_cache_key, _render_fut)
+        if _rating_event_to_set is not None:
+            _rating_event_to_set.set()
+            _rating_fetch_inflight.pop(canonical_id, None)
+        if _admitted is False:
+            return _render_busy_response()
+        return Response(status_code=499, headers={"Cache-Control": "no-store"})
     _active_poster_renders += 1
     # The IMDb id Metahub art was probed under, if any: a 404 on that art
     # forgets the probe (see the HTTPStatusError handler below).  It may be

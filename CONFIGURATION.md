@@ -251,6 +251,7 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `MDBLIST_CONCURRENCY` | `3` | Maximum concurrent outbound MDBList requests per worker. MDBList drops requests past roughly 3 per key. |
 | `MDBLIST_MIN_INTERVAL` | `0.2` | Min seconds between outbound MDBList calls (live + warming) to avoid per-IP burst limits (0.2 = 5/s). 0 disables pacing. |
 | `POSTER_RENDER_CONCURRENCY` | `8` | Max concurrent uncached renders per worker (cache hits bypass this); excess bursts queue instead of exhausting upstream connections. |
+| `POSTER_RENDER_QUEUE_TIMEOUT` | `60` | Seconds an uncached render waits for a free render slot before the request gets a 503 (Retry-After) instead. 0 waits indefinitely. |
 
 <!-- settings-reference:end -->
 
@@ -413,6 +414,7 @@ With the addon enabled, anime ranks only on the two anime lists, which are built
 | `MDBLIST_CONCURRENCY` | `3` | Maximum concurrent outbound MDBList requests per worker. MDBList drops requests past roughly 3 per key. |
 | `MDBLIST_MIN_INTERVAL` | `0.2` | Minimum seconds between the start of one outbound MDBList request and the next, across live renders and cache warming. MDBList has a short per-IP burst limit on top of the daily quota, and 3 unpaced concurrent calls can reach it during a cold catalog warm; 0.2 holds the server to 5 calls per second. 0 turns the pacing off. |
 | `POSTER_RENDER_CONCURRENCY` | `8` | Maximum uncached poster renders in flight per worker. Cache hits are never held back; a burst of fresh renders (a cold catalog grid) queues past this rather than exhausting the upstream connection pool. Raise on a machine with headroom, lower on a small VPS. |
+| `POSTER_RENDER_QUEUE_TIMEOUT` | `60` | Seconds a fresh render waits for one of those slots before the request is answered 503 with `Retry-After`. A burst bigger than the host can render otherwise queues without limit, rendering posters for clients that gave up long ago while every new request joins the back. Riders on another request's render of the same poster get the same 503 rather than queueing a duplicate render. `0` waits indefinitely. |
 
 <!-- settings-reference:end -->
 

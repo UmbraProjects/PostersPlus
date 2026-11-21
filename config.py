@@ -559,6 +559,11 @@ MDBLIST_MIN_INTERVAL         = max(0.0, float(_env('MDBLIST_MIN_INTERVAL', "0.2"
 # upstream each; nothing limited the number of renders competing for the pool.
 # 8 renders x ~4 calls fits inside the pool with headroom for background work.
 POSTER_RENDER_CONCURRENCY    = max(1, int(_env('POSTER_RENDER_CONCURRENCY', "8", group='Performance', kind='int', label='Render concurrency', help='Max concurrent uncached renders per worker (cache hits bypass this); excess bursts queue instead of exhausting upstream connections.', min=1, max=64)))
+# How long a fresh render may wait for one of those slots before it is turned
+# away with a 503.  Unbounded, a burst bigger than the host can render queued
+# for good: a public instance sat 12k renders deep, rendering posters for
+# clients that had given up minutes before while every new one joined the back.
+POSTER_RENDER_QUEUE_TIMEOUT  = max(0.0, float(_env('POSTER_RENDER_QUEUE_TIMEOUT', "60", group='Performance', kind='float', label='Render queue timeout (s)', help='Seconds an uncached render waits for a free render slot before the request gets a 503 (Retry-After) instead. 0 waits indefinitely.', min=0, max=600)))
 
 # -----------------------------------------------------------------------
 # IMDb local ratings dataset — an MDBList-free way to source the "imdb"

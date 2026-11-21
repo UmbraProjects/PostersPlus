@@ -14,6 +14,7 @@ once.
 
 import asyncio
 import unittest
+from unittest import mock
 
 import httpx
 
@@ -123,6 +124,57 @@ class RenderAdmissionTests(unittest.IsolatedAsyncioTestCase):
         (active, queued, _), _ = await self._burst(gate, n=4, cap=1)
         self.assertEqual((active, queued), (1, 3))
         self.assertEqual(gate.peak, 1)
+
+
+class RenderQueueTimeoutTests(RenderAdmissionTests):
+    """A render that can't get a slot within POSTER_RENDER_QUEUE_TIMEOUT is
+    answered 503, and so is everyone riding it: unbounded, a burst bigger than
+    the host could render queued for good (12k deep on a public instance)."""
+
+    async def test_burst_past_the_queue_timeout_is_turned_away(self):
+        gate = _Gate()
+        main._cfg.POSTER_RENDER_CONCURRENCY = 2
+        main._coalesced_fetch_poster_metadata = gate
+        main._render_inflight.clear()
+        with mock.patch.object(main._cfg, "POSTER_RENDER_QUEUE_TIMEOUT", 0.05):
+            transport = httpx.ASGITransport(app=main.app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+                held = [asyncio.create_task(client.get("/poster", params={
+                    "tmdb_id": str(910000000 + i), "type": "movie", "cb": "qtimeout"}))
+                    for i in range(2)]
+                for _ in range(50):
+                    await asyncio.sleep(0.01)
+                    if gate.entered == 2:
+                        break
+                # One queued request and a rider on it; both outlast the wait.
+                params = {"tmdb_id": "910000099", "type": "movie", "cb": "qtimeout"}
+                queued = asyncio.create_task(client.get("/poster", params=params))
+                for _ in range(50):
+                    await asyncio.sleep(0.005)
+                    if len(main._render_inflight) == 3:
+                        break
+                rider = asyncio.create_task(client.get("/poster", params=params))
+                queued_resp, rider_resp = await asyncio.wait_for(
+                    asyncio.gather(queued, rider), 5)
+                gate.release.set()
+                held_resps = await asyncio.gather(*held)
+        self.assertEqual((queued_resp.status_code, rider_resp.status_code), (503, 503))
+        self.assertEqual(queued_resp.headers["retry-after"], "30")
+        self.assertEqual(queued_resp.headers["cache-control"], "no-store")
+        self.assertEqual(gate.entered, 2)         # neither rendered
+        self.assertEqual({r.status_code for r in held_resps}, {404})
+        self.assertEqual(main._renders_queued, 0)
+        self.assertFalse(main._get_render_semaphore().locked())
+        self.assertEqual(main._render_inflight, {})
+
+    async def test_zero_waits_indefinitely(self):
+        with mock.patch.object(main._cfg, "POSTER_RENDER_QUEUE_TIMEOUT", 0):
+            sem = asyncio.Semaphore(0)
+            waiter = asyncio.create_task(main._acquire_render_slot(sem))
+            await asyncio.sleep(0.05)
+            self.assertFalse(waiter.done())
+            sem.release()
+            self.assertTrue(await waiter)
 
 
 class HttpPoolSizingTests(unittest.TestCase):
