@@ -237,6 +237,22 @@ class AddonConfigTests(_AddonTest):
         self.assertEqual(lq["tmdb_id"], ["11"])
         self.assertEqual(lq["badge_display_mode"], ["6"])
 
+    def test_trending_only_sets_the_landscape_order_too(self):
+        # An addon installed before the configurator set both orders: a
+        # landscape render reads landscape_sash_priority first, so the
+        # visitor's own order there hid the rank on landscape rows.
+        seg = _cfg_segment("sash_priority=trending,trending_broad&landscape_sash_priority=cult")
+        meta = self._metas(f"/trending/sekrit/{seg}/catalog/movie/pp.trending.movie.json")[0]
+        for url in (meta["poster"], meta["landscapePoster"]):
+            q = _poster_query(url)
+            self.assertEqual(q["landscape_sash_priority"], ["trending,trending_broad"])
+            self.assertEqual(q["sash_priority"], ["trending,trending_broad"])
+
+    def test_other_sash_orders_keep_their_landscape_order(self):
+        seg = _cfg_segment("sash_priority=trending,cult&landscape_sash_priority=cult")
+        meta = self._metas(f"/trending/sekrit/{seg}/catalog/movie/pp.trending.movie.json")[0]
+        self.assertEqual(_poster_query(meta["landscapePoster"])["landscape_sash_priority"], ["cult"])
+
     def test_anime_posters_are_requested_by_anilist_id(self):
         seg = _cfg_segment("badge_display_mode=4")
         metas = self._metas(f"/trending/sekrit/{seg}/catalog/series/pp.trending.anime.json")

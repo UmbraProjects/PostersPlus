@@ -8340,6 +8340,22 @@ async def _trending_catalog_meta(
     return {k: v for k, v in meta.items() if v}
 
 
+# The sash order the configurator's "Trending only" writes into an addon's
+# settings (TRENDING_ONLY_PRIORITY in configurator.html).
+_TRENDING_ONLY_PRIORITY = "trending,trending_broad"
+
+
+def _trending_only_landscape(settings: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Settings whose sash order is "Trending only" with the landscape order
+    made the same.  Addons installed before the configurator set both carry
+    the visitor's own landscape_sash_priority, which a landscape render reads
+    first, so their landscape posters showed some other sash or none."""
+    if dict(settings).get("sash_priority") != _TRENDING_ONLY_PRIORITY:
+        return settings
+    return ([(k, v) for k, v in settings if k != "landscape_sash_priority"]
+            + [("landscape_sash_priority", _TRENDING_ONLY_PRIORITY)])
+
+
 async def _trending_catalog(
     key: str | None, ctype: str, cid: str, extra: str | None,
     poster_cfg: "tuple[str, list, str | None] | None" = None,
@@ -8362,6 +8378,7 @@ async def _trending_catalog(
     if poster_cfg is not None:
         base, settings, poster_key = poster_cfg
         settings = [(k, v) for k, v in settings if k != trending_lists.PARAM]
+        settings = _trending_only_landscape(settings)
         if lists.token():
             settings.append((trending_lists.PARAM, lists.token()))
         poster_cfg = (base, settings, poster_key)

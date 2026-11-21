@@ -6915,6 +6915,10 @@ function syncSecondaryLangVisibility() {
 // then gets its rows drawn by Posters+ with these settings.  A query string
 // would not survive, since clients build page URLs by editing the path's end.
 // See trending_addon in main.py.
+// What "Trending only" writes as the sash order; the server matches it
+// (_TRENDING_ONLY_PRIORITY in main.py) to repair addons installed before the
+// landscape order was set too.
+const TRENDING_ONLY_PRIORITY = 'trending,trending_broad';
 const _ADDON_CFG_IDENTITY = ['tmdb_id', 'imdb_id', 'type', 'stremio_id', 'anilist_id',
                              'kitsu_id', 'access_key', 'shape'];
 function trendingAddonConfigSegment() {
@@ -6934,9 +6938,12 @@ function trendingAddonConfigSegment() {
   for (const [k, v] of [...p]) if (v.includes('{')) p.delete(k);
   if (c('tog-trending-only')) {
     // Only the rank: the catalog lists ranks 1 to the broad count, so both
-    // Trending slots.  A hidden sash would leave nothing to show it on, so
-    // that shape gets the default diagonal sash; a notch stays a notch.
-    p.set('sash_priority', 'trending,trending_broad');
+    // Trending slots, for both shapes: a landscape render reads its own
+    // landscape_sash_priority first.  A hidden sash would leave nothing to
+    // show it on, so that shape gets the default diagonal sash; a notch stays
+    // a notch.
+    p.set('sash_priority', TRENDING_ONLY_PRIORITY);
+    p.set('landscape_sash_priority', TRENDING_ONLY_PRIORITY);
     for (const k of ['sash_mode', 'landscape_sash_mode']) {
       if (p.get(k) === 'hidden') p.set(k, 'sash');
     }
