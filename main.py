@@ -10568,7 +10568,7 @@ def _poster_response(
     return response
 
 
-@app.get("/poster")
+@app.api_route("/poster", methods=["GET", "HEAD"])
 async def get_poster(
     request: Request,
     tmdb_id: str = "",
