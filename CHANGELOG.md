@@ -1,6 +1,12 @@
 # Changelog
 
 ## Unreleased
+### HEAD on /poster
+
+- `/poster` answers HEAD as well as GET: the same status and headers, no
+  body. Clients that probe a poster URL before using it (AIOStreams' poster
+  redirect API does, and treats anything but 2xx as missing) got 405 and fell
+  back to the original art.
 
 ### Mini Series follows TMDB's own Miniseries type
 
