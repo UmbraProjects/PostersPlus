@@ -34,6 +34,7 @@ from config import (
     COMPOSITE_CACHE_TTL_JITTER,
     COMPOSITE_MAX_ENTRIES,
     COMPOSITE_MAX_GB,
+    COMPOSITE_MAX_DISK_PCT,
     CACHE_MIN_FREE_GB,
     COMPOSITE_MEM_ENTRIES,
     QUALITY_OLD_CACHE_DURATION,
@@ -78,6 +79,10 @@ def _apply_conn_pragmas(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA temp_store=MEMORY")        # temp tables/indices stay in RAM
     conn.execute("PRAGMA busy_timeout=15000")       # wait up to 15s if another worker holds the write lock
     conn.execute("PRAGMA wal_autocheckpoint=1000")  # fold WAL back into main DB at 1000 pages (~4 MB)
+    # A WAL is reused, never shrunk, once a checkpoint has folded it back: one
+    # big transaction left a public instance with a 4 GB WAL on a nearly full
+    # disk.  With a limit it's truncated to this after each checkpoint.
+    conn.execute("PRAGMA journal_size_limit=67108864")  # 64 MB
 
 
 def _enable_wal_with_retry(conn: sqlite3.Connection) -> None:
@@ -873,12 +878,17 @@ def set_cached_final_poster(
             while len(_composite_l1) > COMPOSITE_MEM_ENTRIES:
                 _composite_l1.popitem(last=False)
 
-    # L2: persist to SQLite for warm restarts — unless the volume is nearly
-    # full, when the poster is still served, just not kept.
-    if disk_low():
+    # L2: persist to SQLite for warm restarts.  On a nearly full volume only
+    # into space the database already has (see _make_room_for), and when there
+    # is none the poster is still served, just not kept.
+    low = disk_low()
+    if low and _disk_free is not None and _disk_free < _DISK_HARD_FLOOR:
         return expires_at
     try:
         with _db_lock:
+            if low and not _make_room_for(len(jpeg_bytes)):
+                get_db().commit()
+                return expires_at
             get_db().execute(
                 """
                 INSERT OR REPLACE INTO final_poster_cache
@@ -948,8 +958,85 @@ _BYTES_EVICT_PER_WRITE = 500
 _EVICT_CHUNK = 500
 
 
+# The cache volume's total size, for COMPOSITE_MAX_DISK_PCT: looked at once an
+# hour, since it only changes when an operator grows the volume.
+_VOLUME_TOTAL_EVERY = 3600.0
+_volume_total: tuple[float, int] | None = None
+
+
+def _cache_volume() -> str:
+    return os.path.dirname(os.path.abspath(DB_PATH))
+
+
+def _volume_total_bytes() -> int | None:
+    global _volume_total
+    now = time.monotonic()
+    if _volume_total is not None and now - _volume_total[0] < _VOLUME_TOTAL_EVERY:
+        return _volume_total[1]
+    try:
+        total = shutil.disk_usage(_cache_volume()).total
+    except OSError:
+        return _volume_total[1] if _volume_total else None
+    _volume_total = (now, total)
+    return total
+
+
 def _composite_max_bytes() -> int:
-    return int(COMPOSITE_MAX_GB * 1024 ** 3) if COMPOSITE_MAX_GB > 0 else 0
+    """The composite size cap in bytes: the lower of COMPOSITE_MAX_GB and
+    COMPOSITE_MAX_DISK_PCT of the cache volume, 0 when neither is set."""
+    caps = []
+    if COMPOSITE_MAX_GB > 0:
+        caps.append(int(COMPOSITE_MAX_GB * 1024 ** 3))
+    if COMPOSITE_MAX_DISK_PCT > 0:
+        total = _volume_total_bytes()
+        if total:
+            caps.append(int(total * COMPOSITE_MAX_DISK_PCT / 100))
+    return min(caps) if caps else 0
+
+
+def _evict_oldest_composites(nbytes: int, limit: int) -> tuple[int, int]:
+    """Delete the oldest composites until *nbytes* of them have gone or
+    *limit* rows have.  Called with _db_lock held, inside the caller's
+    transaction.  Returns (rows, bytes) evicted."""
+    if nbytes <= 0 or limit <= 0:
+        return 0, 0
+    db = get_db()
+    keys, freed = [], 0
+    for key, size in db.execute(
+        "SELECT cache_key, COALESCE(size, LENGTH(jpeg_bytes)) FROM final_poster_cache "
+        "ORDER BY cached_at ASC LIMIT ?", (limit,),
+    ).fetchall():
+        keys.append(key)
+        freed += size or 0
+        if freed >= nbytes:
+            break
+    for i in range(0, len(keys), _EVICT_CHUNK):
+        chunk = keys[i:i + _EVICT_CHUNK]
+        db.execute(f"DELETE FROM final_poster_cache WHERE cache_key IN ({','.join('?' * len(chunk))})", chunk)
+    return len(keys), freed
+
+
+def _db_spare_bytes(db: sqlite3.Connection) -> tuple[int, int]:
+    """(page size, bytes on the database's freelist): space a write can
+    take without growing the file."""
+    page = db.execute("PRAGMA page_size").fetchone()[0]
+    return page, page * db.execute("PRAGMA freelist_count").fetchone()[0]
+
+
+def _make_room_for(nbytes: int) -> bool:
+    """On a nearly full volume a composite is only stored in space the
+    database already has: its free pages, topped up by evicting the oldest
+    composites, so the cache keeps working without the file growing.  Called
+    with _db_lock held.  False when there's nothing left to take it from."""
+    db = get_db()
+    page, spare = _db_spare_bytes(db)
+    # Twice the image: a blob's overflow pages are whole pages, and the row's
+    # index entries and the freelist's own trunk pages take some too.
+    want = 2 * nbytes + 4 * page
+    if spare >= want:
+        return True
+    _, freed = _evict_oldest_composites(want - spare, _BYTES_EVICT_PER_WRITE)
+    return spare + freed >= want
 
 
 def composite_total_bytes(db: sqlite3.Connection | None = None) -> int | None:
@@ -968,26 +1055,13 @@ def _enforce_composite_bytes_cap(limit: int) -> int:
     is over COMPOSITE_MAX_GB.  Called with _db_lock held, inside the caller's
     transaction.  Returns how many went."""
     cap = _composite_max_bytes()
-    db = get_db()
-    total = composite_total_bytes(db)
+    total = composite_total_bytes(get_db())
     if not cap or total is None or total <= cap:
         return 0
-    excess = total - int(cap * _BYTES_LOW_WATER)
-    keys, freed = [], 0
-    for key, size in db.execute(
-        "SELECT cache_key, COALESCE(size, LENGTH(jpeg_bytes)) FROM final_poster_cache "
-        "ORDER BY cached_at ASC LIMIT ?", (limit,),
-    ).fetchall():
-        keys.append(key)
-        freed += size or 0
-        if freed >= excess:
-            break
-    for i in range(0, len(keys), _EVICT_CHUNK):
-        chunk = keys[i:i + _EVICT_CHUNK]
-        db.execute(f"DELETE FROM final_poster_cache WHERE cache_key IN ({','.join('?' * len(chunk))})", chunk)
-    if keys:
-        logger.info(f"Composite size cap: evicted {len(keys)} oldest entries ({freed / 1e6:.0f} MB)")
-    return len(keys)
+    n, freed = _evict_oldest_composites(total - int(cap * _BYTES_LOW_WATER), limit)
+    if n:
+        logger.info(f"Composite size cap: evicted {n} oldest entries ({freed / 1e6:.0f} MB)")
+    return n
 
 
 # CACHE_MIN_FREE_GB: the free space on the cache volume, looked at no more
@@ -997,13 +1071,17 @@ _DISK_CHECK_EVERY = 10.0
 _DISK_WARN_EVERY = 600.0
 _disk_checked_at: float | None = None
 _disk_is_low = False
+_disk_free: int | None = None
+# Below this much free space even a composite that fits in the database's own
+# free pages isn't stored: its WAL frames need room on the volume too.
+_DISK_HARD_FLOOR = 64 * 1024 ** 2
 _disk_warned_at = 0.0
 
 
 def disk_low() -> bool:
     """Whether the cache volume is below CACHE_MIN_FREE_GB of free space, when
     rendered posters and downloaded images are served without being stored."""
-    global _disk_checked_at, _disk_is_low, _disk_warned_at
+    global _disk_checked_at, _disk_is_low, _disk_warned_at, _disk_free
     if CACHE_MIN_FREE_GB <= 0:
         return False
     now = time.monotonic()
@@ -1011,20 +1089,179 @@ def disk_low() -> bool:
         return _disk_is_low
     _disk_checked_at = now
     try:
-        free = shutil.disk_usage(os.path.dirname(os.path.abspath(DB_PATH))).free
+        free = shutil.disk_usage(_cache_volume()).free
     except OSError:
         return _disk_is_low
+    _disk_free = free
     low = free < CACHE_MIN_FREE_GB * 1024 ** 3
     if low and (not _disk_is_low or now - _disk_warned_at >= _DISK_WARN_EVERY):
         _disk_warned_at = now
         logger.warning(
             f"Cache volume has {free / 1024 ** 3:.2f} GB free, under CACHE_MIN_FREE_GB="
-            f"{CACHE_MIN_FREE_GB:g}: posters are served but not cached until space is freed"
+            f"{CACHE_MIN_FREE_GB:g}: source images aren't stored and the oldest rendered "
+            f"posters are being evicted until {CACHE_MIN_FREE_GB * _DISK_RELIEF_TARGET:g} GB is free"
         )
+    if low:
+        _start_disk_relief(now)
     elif _disk_is_low and not low:
         logger.info(f"Cache volume has {free / 1024 ** 3:.2f} GB free again; caching resumed")
     _disk_is_low = low
     return low
+
+
+# Disk relief: below CACHE_MIN_FREE_GB, the oldest composites are evicted and
+# their pages handed back to the volume until _DISK_RELIEF_TARGET floors are
+# free, in a background thread started from disk_low at most once every
+# _DISK_RELIEF_EVERY seconds per process, and by one process at a time (a
+# non-blocking flock beside the database), so workers don't each evict the
+# same shortfall.
+_DISK_RELIEF_TARGET = 2.0
+_DISK_RELIEF_EVERY = 600.0
+_relief_running = threading.Lock()
+_relief_started_at: float | None = None
+_legacy_vacuum_warned = False
+
+
+def _start_disk_relief(now: float) -> None:
+    global _relief_started_at
+    if not _initialised:
+        return
+    if _relief_started_at is not None and now - _relief_started_at < _DISK_RELIEF_EVERY:
+        return
+    if not _relief_running.acquire(blocking=False):
+        return
+    _relief_started_at = now
+
+    def run() -> None:
+        try:
+            relieve_disk()
+        except Exception as exc:
+            logger.error(f"Disk relief error: {exc}")
+        finally:
+            _relief_running.release()
+
+    threading.Thread(target=run, name="disk-relief", daemon=True).start()
+
+
+def relieve_disk() -> int:
+    """Evict the oldest composites and give their space back to the volume
+    until it has _DISK_RELIEF_TARGET x CACHE_MIN_FREE_GB free.  Returns the
+    bytes of composites evicted.
+
+    The shortfall is measured once, at the start: the file only shrinks when a
+    checkpoint lands, which a long read can hold off, so measuring again after
+    each batch could evict the whole cache waiting for it."""
+    global _legacy_vacuum_warned
+    if CACHE_MIN_FREE_GB <= 0:
+        return 0
+    import fcntl
+    try:
+        lock_fh = open(DB_PATH + ".relief.lock", "a")
+    except OSError:
+        return 0
+    with lock_fh:
+        try:
+            fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return 0    # another worker is already at it
+        try:
+            free = shutil.disk_usage(_cache_volume()).free
+        except OSError:
+            return 0
+        need = int(CACHE_MIN_FREE_GB * _DISK_RELIEF_TARGET * 1024 ** 3) - free
+        if need <= 0:
+            return 0
+        with _db_lock:
+            incremental = get_db().execute("PRAGMA auto_vacuum").fetchone()[0] == 2
+        if not incremental:
+            # Pages can't go back without a full VACUUM; the write path still
+            # keeps the file from growing by reusing evicted composites' pages.
+            if not _legacy_vacuum_warned:
+                _legacy_vacuum_warned = True
+                logger.warning(
+                    f"Cache volume is low on space but {DB_PATH} predates incremental "
+                    f"auto-vacuum, so evicted posters' space can't be handed back while "
+                    f"running. Stop the service and run: "
+                    f"sqlite3 {DB_PATH} 'PRAGMA auto_vacuum=INCREMENTAL; VACUUM;'"
+                )
+            return 0
+        evicted = returned = 0
+        while returned < need:
+            with _db_lock:
+                db = get_db()
+                page, spare = _db_spare_bytes(db)
+                # Never more than the shortfall in all, however the reclaim
+                # goes: a stalled one mustn't make every pass evict again.
+                n, freed = _evict_oldest_composites(
+                    min(need - returned - spare, need - evicted), _PRUNE_BATCH)
+                db.commit()
+            evicted += freed
+            pages = reclaim_free_pages()
+            returned += pages * page
+            if not n and not pages:
+                break
+        if evicted or returned:
+            logger.info(
+                f"Disk relief: evicted {evicted / 1e6:.0f} MB of the oldest rendered posters, "
+                f"returned {returned / 1e6:.0f} MB to the volume"
+            )
+        return evicted
+
+
+# Free pages handed back a chunk at a time, _db_lock released between, so a
+# big eviction's gigabytes don't hold every write in the process for minutes:
+# ~0.6 s a chunk measured on the ARM host (~16 MB/s), which a cold render
+# waiting on the lock can absorb.
+_VACUUM_CHUNK_PAGES = 2500      # ~10 MB at 4 KB pages
+# Each chunk sits in the WAL until a checkpoint copies it back, and a steady
+# stream of overlapping reads can hold the WAL from resetting, so reclaiming
+# gigabytes could grow it by gigabytes on a nearly full disk.  Past this much
+# WAL the pass waits for checkpoints to catch up, and stops if they don't.
+_RECLAIM_WAL_MAX = 256 * 1024 ** 2
+_RECLAIM_WAL_WAITS = 30         # half-second waits before giving up the pass
+
+
+def _wal_bytes(db: sqlite3.Connection, page: int) -> int:
+    """Frames in the WAL after a passive checkpoint, in bytes."""
+    row = db.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+    return max(row[1], 0) * page if row else 0
+
+
+def reclaim_free_pages() -> int:
+    """Shrink the database file by its free pages, on an incremental
+    auto-vacuum database.  Returns how many pages went."""
+    done = 0
+    while True:
+        with _db_lock:
+            db = get_db()
+            if db.execute("PRAGMA auto_vacuum").fetchone()[0] != 2:
+                return done
+            free = db.execute("PRAGMA freelist_count").fetchone()[0]
+            if not free:
+                return done
+            page = db.execute("PRAGMA page_size").fetchone()[0]
+            before = db.execute("PRAGMA page_count").fetchone()[0]
+            # fetchall() steps the pragma to the end: execute() alone runs one
+            # step, which frees one page — all the prune ever reclaimed a pass.
+            db.execute(f"PRAGMA incremental_vacuum({min(free, _VACUUM_CHUNK_PAGES)})").fetchall()
+            db.commit()
+            # page_count, not freelist_count: another worker's deletes can
+            # grow the freelist while this chunk shrinks the file.
+            after = db.execute("PRAGMA page_count").fetchone()[0]
+        if after >= before:
+            return done
+        done += before - after
+        waits = 0
+        while _wal_bytes(db, page) > _RECLAIM_WAL_MAX:
+            waits += 1
+            if waits > _RECLAIM_WAL_WAITS:
+                logger.warning(
+                    "Cache DB: WAL isn't checkpointing past "
+                    f"{_RECLAIM_WAL_MAX // 1024 ** 2} MB; stopping this reclaim pass "
+                    f"after {done} pages")
+                return done
+            time.sleep(0.5)
+        time.sleep(0.01)
 
 
 def delete_cached_final_poster(cache_key: str) -> None:
@@ -1405,19 +1642,19 @@ def prune_caches() -> None:
         _prune_file_cache(TMDB_POSTER_CACHE_DIR, TMDB_POSTER_CACHE_DURATION + TMDB_IMAGE_CACHE_JITTER_DAYS / 2)
         _prune_file_cache(TMDB_LOGO_CACHE_DIR, TMDB_LOGO_CACHE_DURATION + TMDB_IMAGE_CACHE_JITTER_DAYS / 2)
 
+        if disk_low():
+            relieve_disk()
+
         # Reclaim free pages left by the deletes.
         with _db_lock:
-            db = get_db()
-            auto_vac = db.execute("PRAGMA auto_vacuum").fetchone()[0]
-            if auto_vac == 2:   # INCREMENTAL — moves pages, no long lock
-                # Up to ~100 MB (at 4 KB pages) a pass: a fixed 100 pages freed
-                # 400 KB per six hours, so the file never shrank after a big
-                # eviction.  Free pages are reused either way.
-                free = db.execute("PRAGMA freelist_count").fetchone()[0]
-                if free:
-                    db.execute(f"PRAGMA incremental_vacuum({min(int(free), 25000)})")
-                    db.commit()
-            else:
+            auto_vac = get_db().execute("PRAGMA auto_vacuum").fetchone()[0]
+        if auto_vac == 2:   # INCREMENTAL — moves pages, in chunks
+            pages = reclaim_free_pages()
+            if pages:
+                logger.info(f"Cache DB: returned {pages} free pages to the volume")
+        else:
+            with _db_lock:
+                db = get_db()
                 # Legacy DB created before incremental auto-vacuum (auto_vacuum=0):
                 # the incremental pragma is a no-op there, so freed pages (e.g. from
                 # evicted composite JPEGs) never return and the file bloats.  Do a

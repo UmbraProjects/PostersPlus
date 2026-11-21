@@ -1,6 +1,7 @@
-"""COMPOSITE_MAX_GB (the trigger-kept size total and eviction by size) and
-CACHE_MIN_FREE_GB (composites and source images not stored on a nearly full
-volume)."""
+"""COMPOSITE_MAX_GB / COMPOSITE_MAX_DISK_PCT (the trigger-kept size total and
+eviction by size), CACHE_MIN_FREE_GB (source images not stored, composites
+only in space the database already has, and disk relief on a nearly full
+volume) and handing free pages back to the volume."""
 
 import unittest
 from collections import namedtuple
@@ -20,18 +21,23 @@ class _Base(_TempDb):
         self._patches = [
             mock.patch.object(cache, "COMPOSITE_MAX_ENTRIES", 0),
             mock.patch.object(cache, "COMPOSITE_MAX_GB", 0),
+            mock.patch.object(cache, "COMPOSITE_MAX_DISK_PCT", 0),
             mock.patch.object(cache, "CACHE_MIN_FREE_GB", 0),
+            # disk_low's background relief, tested directly below.
+            mock.patch.object(cache, "_start_disk_relief"),
         ]
         for p in self._patches:
             p.start()
         cache._disk_checked_at = None
         cache._disk_is_low = False
+        cache._volume_total = None
 
     def tearDown(self):
         for p in self._patches:
             p.stop()
         cache._disk_checked_at = None
         cache._disk_is_low = False
+        cache._volume_total = None
         super().tearDown()
 
     def _summed(self):
@@ -120,6 +126,37 @@ class CompositeSizeCapTests(_Base):
         self.assertEqual(cache.composite_total_bytes(), self._summed())
 
 
+class DiskShareCapTests(_Base):
+    def _volume(self, total):
+        return mock.patch("cache.shutil.disk_usage", return_value=_Usage(total, 0, total))
+
+    def test_the_share_of_the_volume_caps_the_cache(self):
+        with mock.patch.object(cache, "COMPOSITE_MAX_DISK_PCT", 40), self._volume(100 * _GB):
+            self.assertEqual(cache._composite_max_bytes(), 40 * _GB)
+
+    def test_the_lower_of_the_two_caps_applies(self):
+        with mock.patch.object(cache, "COMPOSITE_MAX_DISK_PCT", 40), self._volume(100 * _GB):
+            with mock.patch.object(cache, "COMPOSITE_MAX_GB", 10):
+                self.assertEqual(cache._composite_max_bytes(), 10 * _GB)
+            with mock.patch.object(cache, "COMPOSITE_MAX_GB", 60):
+                self.assertEqual(cache._composite_max_bytes(), 40 * _GB)
+
+    def test_the_volume_is_looked_at_once_an_hour(self):
+        with mock.patch.object(cache, "COMPOSITE_MAX_DISK_PCT", 40), self._volume(100 * _GB) as usage:
+            for _ in range(5):
+                cache._composite_max_bytes()
+        self.assertEqual(usage.call_count, 1)
+
+    def test_evicts_like_the_gb_cap(self):
+        # 40% of a 2500-byte volume is a 1000-byte cap.
+        with mock.patch.object(cache, "COMPOSITE_MAX_DISK_PCT", 40), self._volume(2500), \
+             mock.patch("cache.time.time", side_effect=range(1000, 2000)):
+            for i in range(11):
+                cache.set_cached_final_poster(f"tt{i}:{i}:movie:a", b"x" * 100)
+        self.assertLessEqual(cache.composite_total_bytes(), 950)
+        self.assertNotIn("tt0:0:movie:a", self._keys())
+
+
 class DiskFloorTests(_Base):
     def _free(self, gb):
         return mock.patch("cache.shutil.disk_usage", return_value=_Usage(100 * _GB, 0, int(gb * _GB)))
@@ -149,6 +186,32 @@ class DiskFloorTests(_Base):
                 cache.set_cached_final_poster(f"tt{i}:{i}:movie:a", b"x")
         self.assertEqual(usage.call_count, 1)
 
+    def test_a_nearly_full_volume_stores_in_older_composites_space(self):
+        with mock.patch("cache.time.time", side_effect=range(1000, 2000)):
+            for i in range(10):
+                cache.set_cached_final_poster(f"tt{i}:{i}:movie:a", b"x" * 20000)
+            pages = cache.get_db().execute("PRAGMA page_count").fetchone()[0]
+            with mock.patch.object(cache, "CACHE_MIN_FREE_GB", 1), self._free(0.5):
+                for i in range(10, 15):
+                    cache.set_cached_final_poster(f"tt{i}:{i}:movie:a", b"x" * 20000)
+        keys = self._keys()
+        self.assertTrue({f"tt{i}:{i}:movie:a" for i in range(10, 15)} <= keys)
+        self.assertNotIn("tt0:0:movie:a", keys)
+        # The new ones took evicted composites' pages: the file didn't grow.
+        self.assertLessEqual(cache.get_db().execute("PRAGMA page_count").fetchone()[0], pages)
+        self.assertEqual(cache.composite_total_bytes(), self._summed())
+
+    def test_an_all_but_full_volume_stores_nothing(self):
+        cache.set_cached_final_poster("tt0:0:movie:a", b"x" * 20000)
+        with mock.patch.object(cache, "CACHE_MIN_FREE_GB", 1), self._free(0.01):
+            cache.set_cached_final_poster("tt1:1:movie:a", b"x" * 100)
+        self.assertEqual(self._keys(), {"tt0:0:movie:a"})
+
+    def test_a_low_volume_starts_relief(self):
+        with mock.patch.object(cache, "CACHE_MIN_FREE_GB", 1), self._free(0.5):
+            cache.disk_low()
+        cache._start_disk_relief.assert_called_once()
+
     def test_caching_resumes_once_space_is_freed(self):
         with mock.patch.object(cache, "CACHE_MIN_FREE_GB", 1):
             with self._free(0.1):
@@ -156,6 +219,98 @@ class DiskFloorTests(_Base):
             cache._disk_checked_at = None    # the interval has passed
             with self._free(3):
                 self.assertFalse(cache.disk_low())
+
+
+class DiskReliefTests(_Base):
+    def _fill(self, n, size=20000):
+        with mock.patch("cache.time.time", side_effect=range(1000, 2000)):
+            for i in range(n):
+                cache.set_cached_final_poster(f"tt{i}:{i}:movie:a", b"x" * size)
+
+    def test_evicts_the_oldest_until_the_shortfall_is_handed_back(self):
+        self._fill(10)
+        before = cache.get_db().execute("PRAGMA page_count").fetchone()[0]
+        # Twice a 100 KB floor wanted, 150 KB free: a 50 KB shortfall.
+        floor = 100_000 / _GB
+        with mock.patch.object(cache, "CACHE_MIN_FREE_GB", floor), \
+             mock.patch("cache.shutil.disk_usage", return_value=_Usage(100 * _GB, 0, 150_000)):
+            evicted = cache.relieve_disk()
+        self.assertGreaterEqual(evicted, 50_000)
+        self.assertLess(evicted, 100_000)
+        keys = self._keys()
+        self.assertNotIn("tt0:0:movie:a", keys)
+        self.assertIn("tt9:9:movie:a", keys)
+        db = cache.get_db()
+        self.assertEqual(db.execute("PRAGMA freelist_count").fetchone()[0], 0)
+        self.assertLess(db.execute("PRAGMA page_count").fetchone()[0], before)
+
+    def test_a_reclaim_that_stalls_evicts_no_more_than_the_shortfall(self):
+        self._fill(10)
+        floor = 100_000 / _GB
+        with mock.patch.object(cache, "CACHE_MIN_FREE_GB", floor), \
+             mock.patch.object(cache, "_PRUNE_BATCH", 1), \
+             mock.patch.object(cache, "reclaim_free_pages", return_value=0), \
+             mock.patch("cache.shutil.disk_usage", return_value=_Usage(100 * _GB, 0, 150_000)):
+            evicted = cache.relieve_disk()
+        self.assertLess(evicted, 80_000)
+        self.assertGreaterEqual(len(self._keys()), 6)
+
+    def test_enough_free_space_evicts_nothing(self):
+        self._fill(3)
+        with mock.patch.object(cache, "CACHE_MIN_FREE_GB", 1), \
+             mock.patch("cache.shutil.disk_usage", return_value=_Usage(100 * _GB, 0, 5 * _GB)):
+            self.assertEqual(cache.relieve_disk(), 0)
+        self.assertEqual(len(self._keys()), 3)
+
+    def test_one_worker_at_a_time(self):
+        import fcntl
+        self._fill(3)
+        with open(cache.DB_PATH + ".relief.lock", "a") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            with mock.patch.object(cache, "CACHE_MIN_FREE_GB", 1), \
+                 mock.patch("cache.shutil.disk_usage", return_value=_Usage(100 * _GB, 0, 0)):
+                self.assertEqual(cache.relieve_disk(), 0)
+        self.assertEqual(len(self._keys()), 3)
+
+
+class ReclaimTests(_Base):
+    def test_every_free_page_goes_back_a_chunk_at_a_time(self):
+        for i in range(10):
+            cache.set_cached_final_poster(f"tt{i}:{i}:movie:a", b"x" * 20000)
+        db = cache.get_db()
+        db.execute("DELETE FROM final_poster_cache")
+        db.commit()
+        free = db.execute("PRAGMA freelist_count").fetchone()[0]
+        self.assertGreater(free, 10)
+        with mock.patch.object(cache, "_VACUUM_CHUNK_PAGES", 3):
+            self.assertEqual(cache.reclaim_free_pages(), free)
+        self.assertEqual(db.execute("PRAGMA freelist_count").fetchone()[0], 0)
+
+    def test_the_prune_hands_back_what_it_evicted(self):
+        for i in range(10):
+            cache.set_cached_final_poster(f"tt{i}:{i}:movie:a", b"x" * 20000)
+        db = cache.get_db()
+        db.execute("UPDATE final_poster_cache SET expires_at = 1")
+        db.commit()
+        cache.prune_caches()
+        self.assertEqual(db.execute("PRAGMA freelist_count").fetchone()[0], 0)
+
+    def test_a_wal_that_wont_checkpoint_stops_the_pass(self):
+        for i in range(10):
+            cache.set_cached_final_poster(f"tt{i}:{i}:movie:a", b"x" * 20000)
+        db = cache.get_db()
+        db.execute("DELETE FROM final_poster_cache")
+        db.commit()
+        free = db.execute("PRAGMA freelist_count").fetchone()[0]
+        with mock.patch.object(cache, "_VACUUM_CHUNK_PAGES", 3), \
+             mock.patch.object(cache, "_RECLAIM_WAL_WAITS", 1), \
+             mock.patch.object(cache, "_wal_bytes", return_value=10 ** 12), \
+             mock.patch("cache.time.sleep"):
+            self.assertEqual(cache.reclaim_free_pages(), 3)
+        self.assertEqual(db.execute("PRAGMA freelist_count").fetchone()[0], free - 3)
+
+    def test_connections_cap_the_wal(self):
+        self.assertEqual(cache.get_db().execute("PRAGMA journal_size_limit").fetchone()[0], 64 * 1024 ** 2)
 
 
 if __name__ == "__main__":

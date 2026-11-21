@@ -175,7 +175,8 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 | `COMPOSITE_CACHE_TTL` | `604800` | Seconds to keep a rendered poster before re-rendering (604800 = 7 days). |
 | `COMPOSITE_MAX_ENTRIES` | `500000` | Max cached composites before evicting oldest (~50–150 KB each; 500000 ≈ 50 GB). 0 relies on TTL only (unbounded growth). |
 | `COMPOSITE_MAX_GB` | `0` | Composite cache size cap in GB; evicts oldest down to 95% when exceeded (works alongside the entry cap). 0 disables. |
-| `CACHE_MIN_FREE_GB` | `1` | Stop writing to cache (still rendering/serving) if volume free space drops below this GB floor. 0 disables. |
+| `COMPOSITE_MAX_DISK_PCT` | `40` | Composite cache size cap as a percentage of the cache volume's total size; the lower of this and Composite cache max size applies. 0 disables. |
+| `CACHE_MIN_FREE_GB` | `1` | Below this much free space on the cache volume, source images are not stored and the oldest rendered posters are evicted until twice this is free again. 0 disables. |
 
 #### Cache warming
 
@@ -564,7 +565,9 @@ PostersPlus uses SQLite (WAL mode) for metadata and rendered-poster caching, plu
 | Quality badges (older) | 90 days |
 | Composite posters | 7 days |
 
-Rendered posters are kept per title and per effective setting, so the composite cache grows with every distinct look clients ask for. Two caps bound it: `COMPOSITE_MAX_ENTRIES` by count and `COMPOSITE_MAX_GB` by size (off by default). Whichever is reached first evicts the oldest composites. A composite is roughly 65 KB at the default 500 px, about 100 KB landscape and up to about 570 KB at 2000 px, so the size cap is the one that matches your disk. Separately, `CACHE_MIN_FREE_GB` (1 GB by default) stops writing composites and downloaded source images while the cache volume has less free space than that. Posters are still rendered and served, and caching resumes on its own once space is freed.
+Rendered posters are kept per title and per effective setting, so the composite cache grows with every distinct look clients ask for. Three caps bound it: `COMPOSITE_MAX_ENTRIES` by count, `COMPOSITE_MAX_GB` by size (off by default) and `COMPOSITE_MAX_DISK_PCT` by share of the cache volume (40% by default). Whichever is reached first evicts the oldest composites. A composite is roughly 65 KB at the default 500 px, about 100 KB landscape and up to about 570 KB at 2000 px, so a size cap is the one that matches your disk. Separately, `CACHE_MIN_FREE_GB` (1 GB by default) is the backstop for a volume that fills up anyway, for example from other services on it. Below that much free space, downloaded source images aren't stored, new rendered posters only reuse space older ones freed, and the oldest are evicted and their space handed back to the volume until twice the floor is free.
+
+Deleting rows doesn't shrink a SQLite file by itself. A database created since June 2026 uses incremental auto-vacuum, and the app hands freed space back to the volume on its own. An older `cache.db` can't do that without a full `VACUUM`, which needs about as much free space as the data left in it. The log says so when this applies. Stop the service, free the space, and run `sqlite3 cache.db 'PRAGMA auto_vacuum=INCREMENTAL; VACUUM;'` once.
 
 ---
 
@@ -574,7 +577,7 @@ Anyone who can reach a public instance can make it render and store posters, and
 
 - **Rate-limit at the reverse proxy.** For example, Traefik's `ratelimit` middleware or Pangolin's rate-limit rules, keyed on the client address. Cached posters are cheap, but a stream of requests with new settings or new title ids renders and stores each one.
 - **Keep `MAX_POSTER_RESOLUTION` at the default 500, or 780 at most.** Larger sizes cost several times the CPU, memory and disk per poster.
-- **Size the cache to the disk.** Set `COMPOSITE_MAX_GB` comfortably below the volume's free space, and leave `CACHE_MIN_FREE_GB` on as the backstop.
+- **Size the cache to the disk.** `COMPOSITE_MAX_DISK_PCT` caps composites at 40% of the volume by default. Set `COMPOSITE_MAX_GB` lower if the volume also holds other services, and leave `CACHE_MIN_FREE_GB` on as the backstop.
 - **Set `PUBLIC_URL`.** Without it, the trending addon builds its poster links from the request's forwarded headers (see [ADVANCED.md](ADVANCED.md#public_url)).
 - **Pass client addresses through.** Set `FORWARDED_ALLOW_IPS` to the proxy's address or network, not `*` unless nothing but the proxy can reach port 8000. Otherwise every visitor shares one address for the admin login lockout and the report limits. With the proxy in place, don't publish port 8000 on a public interface: requests that skip the proxy also skip its rate limits and logins.
 - **Use long keys.** `ADMIN_KEY` needs at least 12 characters. An `ACCESS_KEY` shorter than 12 is throttled per address after wrong guesses.

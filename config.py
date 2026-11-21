@@ -674,10 +674,17 @@ COMPOSITE_MAX_ENTRIES      = int(_env('COMPOSITE_MAX_ENTRIES', "500000", group='
 # oldest composites go until the cache is back under 95% of it.  0 = no size
 # cap, only the count above.
 COMPOSITE_MAX_GB           = float(_env('COMPOSITE_MAX_GB', "0", group='Caching', kind='float', label='Composite cache max size (GB)', help='Composite cache size cap in GB; evicts oldest down to 95% when exceeded (works alongside the entry cap). 0 disables.', min=0, max=100000))
-# Below this much free space on the cache volume, rendered posters and source
-# images are still served but no longer stored, so a full disk can't take the
+# The same cap as a share of the cache volume's total size, so an instance on
+# a small disk isn't sized by COMPOSITE_MAX_ENTRIES' ~50 GB (a public instance
+# filled its volume at ~530k composites that way).  The lower of this and
+# COMPOSITE_MAX_GB applies.  0 = no share cap.
+COMPOSITE_MAX_DISK_PCT     = float(_env('COMPOSITE_MAX_DISK_PCT', "40", group='Caching', kind='float', label='Composite cache max share of disk (%)', help="Composite cache size cap as a percentage of the cache volume's total size; the lower of this and Composite cache max size applies. 0 disables.", min=0, max=100))
+# Below this much free space on the cache volume, source images are no longer
+# stored, each new composite takes the space of older ones (so the database
+# stops growing), and the oldest composites are evicted and their space handed
+# back until there's twice the floor free — so a full disk can't take the
 # SQLite cache (and every other write on the volume) down with it.
-CACHE_MIN_FREE_GB          = float(_env('CACHE_MIN_FREE_GB', "1", group='Caching', kind='float', label='Minimum free disk (GB)', help='Stop writing to cache (still rendering/serving) if volume free space drops below this GB floor. 0 disables.', min=0, max=100000))
+CACHE_MIN_FREE_GB          = float(_env('CACHE_MIN_FREE_GB', "1", group='Caching', kind='float', label='Minimum free disk (GB)', help='Below this much free space on the cache volume, source images are not stored and the oldest rendered posters are evicted until twice this is free again. 0 disables.', min=0, max=100000))
 # Number of fully-rendered composites kept in each worker's in-memory LRU (L1).
 # Off by default: an L1 hit only saves a SQLite point read (~0.7 ms cold,
 # ~0.04 ms once the OS page cache has it, against ~4 ms for the whole hit),
