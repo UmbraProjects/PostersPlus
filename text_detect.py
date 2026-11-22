@@ -20,7 +20,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from config import EFFECTIVE_CPUS, TEXTLESS_DETECTION_CONCURRENCY as _CONCURRENCY
+from config import EFFECTIVE_CPUS, WORKERS, TEXTLESS_DETECTION_CONCURRENCY as _CONCURRENCY
 import config as _cfg
 
 logger = logging.getLogger(__name__)
@@ -108,17 +108,28 @@ _STACK_MIN_AREA = 0.015
 _STACK_MIN_LINES = 3
 _STACK_MAX_GAP = 2.5  # line pitch, in multiples of the taller line's height
 
-# Sizing is driven by the cores this process may actually use, not the host's
-# core count — see config.effective_cpus().  Sessions divide the thread budget
-# between them, and ONNX throughput degrades sharply once the total exceeds the
-# real budget, so the split has to come out of a correct figure.
-_MODEL_SESSIONS = max(1, min(EFFECTIVE_CPUS, _CONCURRENCY))
-# No arbitrary ceiling: scaling was still near-linear at 4 threads on 4 cores
-# (3.2x vs one thread) with no sign of saturation, so a 16-core host should get
-# 16.  The floor of 1 matters more than any cap — oversubscription is far more
-# expensive than undersubscription (on a 2-CPU budget: 135 ms at 2 threads,
-# 299 ms at 6, 409 ms at 8).
-_ORT_THREADS = max(1, EFFECTIVE_CPUS // _MODEL_SESSIONS)
+def _compute_session_budget(
+    effective_cpus: int, workers: int, concurrency: int,
+) -> tuple[int, int]:
+    """Return ``(model_sessions, ort_threads)`` for one worker process.
+
+    Dividing ``effective_cpus`` by ``workers`` prevents multi-worker setups from
+    oversubscribing ONNX intra-op threads across processes (e.g. 2 workers x 4
+    threads on 4 cores).  Sessions split the per-worker thread budget, with a
+    floor of 1 thread each — oversubscription is far more expensive than
+    undersubscription (on a 2-CPU budget: 135 ms at 2 threads, 299 ms at 6,
+    409 ms at 8).  No arbitrary ceiling: scaling was still near-linear at 4
+    threads on 4 cores (3.2x vs one thread), so a 16-core host should get 16.
+    """
+    worker_cpus = max(1, effective_cpus // max(1, workers))
+    sessions = max(1, min(worker_cpus, max(1, concurrency)))
+    ort_threads = max(1, worker_cpus // sessions)
+    return sessions, ort_threads
+
+
+_MODEL_SESSIONS, _ORT_THREADS = _compute_session_budget(
+    EFFECTIVE_CPUS, WORKERS, _CONCURRENCY,
+)
 DETECT_RES_SIG = (
     f"ppocrv5m-r8-cs{int(round(_CASCADE_SCALE * 100))}"
     f"-ca{int(round(_CASCADE_RESCAN_AREA * 10000))}"

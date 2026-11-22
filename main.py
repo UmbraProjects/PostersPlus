@@ -11041,7 +11041,6 @@ def _poster_response(
     return response
 
 
-@app.get("/poster")
 async def get_poster(
     request: Request,
     tmdb_id: str = "",
@@ -14122,3 +14121,54 @@ async def get_poster(
         # Every except above resolves the future; this catches what they do
         # not — a CancelledError, or anything else BaseException.
         _unpublish_render(final_cache_key, _render_fut)
+
+
+# /poster reads its query itself rather than through FastAPI's declared
+# parameters.  get_poster takes ~48 of them, and FastAPI resolving that many
+# per request (annotation checks and a pydantic field each) was about half
+# the CPU of a cache hit and ~2.5 ms of every render, all on the event-loop
+# thread that every request shares.  The parameters stay declared on
+# get_poster, so this reads them from its signature: a str is passed as
+# sent, a missing one takes its default, and the two ints go through
+# pydantic so a bad value still gets FastAPI's own 422.
+def _poster_query_spec() -> list[tuple[str, object, "TypeAdapter | None"]]:
+    import inspect
+    from pydantic import TypeAdapter
+    spec = []
+    for name, param in inspect.signature(get_poster).parameters.items():
+        if name == "request":
+            continue
+        ann = param.annotation
+        adapter = None if ann in (str, str | None, "str", "str | None") else TypeAdapter(ann)
+        spec.append((name, param.default, adapter))
+    return spec
+
+
+from fastapi.exceptions import RequestValidationError as _RequestValidationError
+from pydantic import ValidationError as _ValidationError
+
+_POSTER_QUERY_SPEC = _poster_query_spec()
+
+
+def _poster_query_kwargs(query) -> dict:
+    kwargs, errors = {}, []
+    for name, default, adapter in _POSTER_QUERY_SPEC:
+        value = query.get(name)
+        if value is None:
+            kwargs[name] = default
+        elif adapter is None:
+            kwargs[name] = value
+        else:
+            try:
+                kwargs[name] = adapter.validate_python(value)
+            except _ValidationError as exc:
+                for err in exc.errors(include_url=False):
+                    errors.append({**err, "loc": ("query", name)})
+    if errors:
+        raise _RequestValidationError(errors)
+    return kwargs
+
+
+@app.get("/poster")
+async def poster_route(request: Request):
+    return await get_poster(request, **_poster_query_kwargs(request.query_params))

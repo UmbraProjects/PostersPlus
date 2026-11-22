@@ -800,8 +800,8 @@ PPOCR_BOX_THRESHOLD        = max(0.0, min(
     1.0, float(_env('PPOCR_BOX_THRESHOLD', "0.70", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='float', label='OCR box threshold', help='Minimum PP-OCR box confidence, 0-1. Higher is stricter: fewer false positives, lower recall.', min=0, max=1, advanced=True))
 ))
 # Independent PP-OCR sessions used for parallel cold-cache scans, run in a
-# dedicated executor.  Across worker processes, keep WORKERS x this value at or
-# below EFFECTIVE_CPUS.
+# dedicated executor.  Capped automatically at EFFECTIVE_CPUS // WORKERS per
+# worker so multi-worker deployments don't oversubscribe ONNX threads.
 #
 # Default 1, because raising it is a throughput-for-latency trade that usually
 # loses.  Sessions SPLIT the ONNX thread budget rather than adding to it, so on
@@ -847,8 +847,8 @@ PPOCR_SKIP_MODEL_HASH      = _parse_bool(_env("PPOCR_SKIP_MODEL_HASH", "false", 
     help='Skip checksum verification of the detection model. Only sensible when deliberately supplying your own model.', advanced=True), False)
 
 TEXTLESS_DETECTION_CONCURRENCY = max(1, min(
-    EFFECTIVE_CPUS,
-    int(_env('TEXTLESS_DETECTION_CONCURRENCY', "1", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='int', label='OCR sessions', help="Parallel PP-OCR sessions (~50 MB each, capped at CPU budget). Splits ONNX threads (slower per scan; mainly helps cold-cache sweeps).", min=1, max=16, advanced=True)),
+    max(1, EFFECTIVE_CPUS // WORKERS),
+    int(_env('TEXTLESS_DETECTION_CONCURRENCY', "1", group='Text detection', show_if=('TEXTLESS_TEXT_DETECTION', 'true'), kind='int', label='OCR sessions', help="Parallel PP-OCR sessions (~50 MB each, capped at per-worker CPU budget). Splits ONNX threads (slower per scan; mainly helps cold-cache sweeps).", min=1, max=16, advanced=True)),
 ))
 
 # Rating Score Weight Defaults

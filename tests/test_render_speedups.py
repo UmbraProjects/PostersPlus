@@ -258,5 +258,27 @@ class OverlayCacheAndInPlaceTests(unittest.TestCase):
         np.testing.assert_array_equal(np.asarray(r1), np.asarray(r3))
 
 
+class PosterQueryTests(unittest.TestCase):
+    """/poster reads its query from get_poster's signature, not FastAPI's
+    per-parameter resolution; what reaches get_poster must not change."""
+
+    def test_defaults_strings_and_ints(self):
+        from starlette.datastructures import QueryParams
+        kw = main._poster_query_kwargs(QueryParams("tmdb_id=603&season=2&season=3&top_gradient=low"))
+        self.assertEqual(kw["tmdb_id"], "603")
+        self.assertEqual(kw["season"], 3)            # the last of a repeated key, as before
+        self.assertEqual(kw["episode"], 1)           # signature default
+        self.assertEqual(kw["type"], "movie")
+        self.assertIsNone(kw["shape"])
+        self.assertEqual(set(kw), {n for n in __import__("inspect").signature(main.get_poster).parameters} - {"request"})
+
+    def test_a_bad_int_is_fastapis_own_422(self):
+        from fastapi.testclient import TestClient
+        r = TestClient(main.app).get("/poster?tmdb_id=603&season=x&episode=2.5")
+        self.assertEqual(r.status_code, 422)
+        self.assertEqual([e["loc"] for e in r.json()["detail"]], [["query", "season"], ["query", "episode"]])
+        self.assertEqual(r.json()["detail"][0]["type"], "int_parsing")
+
+
 if __name__ == "__main__":
     unittest.main()

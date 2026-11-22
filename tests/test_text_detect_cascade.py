@@ -199,5 +199,27 @@ class StackedLinesTests(unittest.TestCase):
         self.assertFalse(self._verdict([500, 540, 580], source="backdrop"))
 
 
+class SessionBudgetTests(unittest.TestCase):
+    """Per-worker ONNX session and intra-op thread budgeting."""
+
+    def test_single_worker_uses_full_budget(self):
+        self.assertEqual(text_detect._compute_session_budget(4, 1, 1), (1, 4))
+        self.assertEqual(text_detect._compute_session_budget(4, 1, 2), (2, 2))
+        self.assertEqual(text_detect._compute_session_budget(4, 1, 4), (4, 1))
+        self.assertEqual(text_detect._compute_session_budget(4, 1, 8), (4, 1))
+
+    def test_multi_worker_divides_cpu_budget(self):
+        # 2 workers on 4 cores -> 2 CPUs per worker; total threads stay <= 4.
+        self.assertEqual(text_detect._compute_session_budget(4, 2, 1), (1, 2))
+        self.assertEqual(text_detect._compute_session_budget(4, 2, 2), (2, 1))
+        self.assertEqual(text_detect._compute_session_budget(4, 2, 4), (2, 1))
+        # 4 workers on 4 cores -> 1 CPU per worker; capped at 1 session x 1 thread.
+        self.assertEqual(text_detect._compute_session_budget(4, 4, 1), (1, 1))
+        self.assertEqual(text_detect._compute_session_budget(4, 4, 4), (1, 1))
+
+    def test_more_workers_than_cpus_floors_at_one(self):
+        self.assertEqual(text_detect._compute_session_budget(2, 4, 2), (1, 1))
+
+
 if __name__ == "__main__":
     unittest.main()
