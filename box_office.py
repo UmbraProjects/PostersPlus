@@ -199,3 +199,73 @@ async def is_blockbuster(
     if ids is None:
         return None
     return str(tmdb_id) in ids
+
+
+# Background fill of the per-year lists, so a render never pays a year's
+# /discover + top-N details calls itself.  A search across decades (a horror
+# franchise, a director's films) used to build one year per title, ~11 TMDB
+# calls each, all inside the request and sharing the render's HTTP pool.
+_PREWARM_FIRST_YEAR = 1950
+_PREWARM_PAUSE = 1.0           # between years actually fetched, seconds
+_PREWARM_INTERVAL = 6 * 3600   # re-run, so the current year is refreshed ahead of its 1-day TTL
+
+
+async def prewarm_years(client: httpx.AsyncClient, tmdb_key: str,
+                        first_year: int = _PREWARM_FIRST_YEAR) -> int:
+    """Build every year's list that is missing or would expire before the
+    next run, newest first.  Returns how many years were built.  A list is
+    replaced only by a successful build, so a TMDB outage leaves the stored
+    ones serving; the first failure ends the run and the next one resumes."""
+    if not tmdb_key:
+        return 0
+    built = 0
+    for year in range(date.today().year, first_year - 1, -1):
+        key = _state_key(year)
+        if await _fresh_at(key) > time.time() - (_ttl(year) - _PREWARM_INTERVAL):
+            continue
+        lock = _locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            if await _fresh_at(key) > time.time() - (_ttl(year) - _PREWARM_INTERVAL):
+                continue
+            try:
+                ids = await _fetch_year(client, year, tmdb_key)
+            except Exception as exc:
+                logger.warning(f"Box-office prewarm stopped at {year}: {exc}")
+                break
+            now = time.time()
+            await asyncio.to_thread(set_app_state, key, json.dumps({"at": now, "ids": ids}))
+            _memo[key] = (now, frozenset(ids))
+        built += 1
+        await asyncio.sleep(_PREWARM_PAUSE)
+    return built
+
+
+async def _fresh_at(key: str) -> float:
+    """When *key*'s list was built (memo, else app_state), or 0 if never."""
+    hit = _memo.get(key)
+    if hit:
+        return hit[0]
+    raw = await asyncio.to_thread(get_app_state, key)
+    if raw:
+        try:
+            stored = json.loads(raw)
+            at = float(stored["at"])
+            _memo[key] = (at, frozenset(stored["ids"]))
+            return at
+        except (ValueError, KeyError, TypeError):
+            pass
+    return 0.0
+
+
+async def prewarm_loop(client: httpx.AsyncClient) -> None:
+    """Keep every year's list built (background-jobs worker only)."""
+    await asyncio.sleep(30)    # let startup traffic and the other loops settle
+    while True:
+        if _cfg.SERVER_TMDB_KEY:
+            try:
+                n = await prewarm_years(client, _cfg.SERVER_TMDB_KEY)
+                if n:
+                    logger.info(f"Box-office lists: built {n} year(s) ahead of renders")
+            except Exception as exc:
+                logger.warning(f"Box-office prewarm stopped: {exc}")
+        await asyncio.sleep(_PREWARM_INTERVAL)

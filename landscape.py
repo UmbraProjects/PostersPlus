@@ -273,8 +273,8 @@ def _draw_vignette(image: Image.Image, art: Image.Image, cfg,
     Sash" (top_vignette_sash_only) to drop the top band without one.
     """
     from main import (
-        _fog_pick, _fog_faces, _vignette_tint_band, _vignette_frost_band, _vignette_level_band,
-        _vignette_composite, _vignette_fog_ramp, _VIGNETTE_SAT_FULL, _VIGNETTE_MATCH_MIN_CONF,
+        _apply_tinted_vignette_band, _downsample_rgb_64, _fog_faces, _fog_pick, _fog_profile,
+        _vignette_tint_band, _vignette_fog_ramp, _VIGNETTE_SAT_FULL, _VIGNETTE_MATCH_MIN_CONF,
         _VIGNETTE_SEAM_H,
     )
 
@@ -293,16 +293,12 @@ def _draw_vignette(image: Image.Image, art: Image.Image, cfg,
         # The fog's smoothstep, tinted or not: a straight linear fade has the
         # same kink at its edge _band_ramp exists to avoid.
         top_alpha = _vignette_fog_ramp(top_h, top_level[1], rising=False)
-        top_ramp = Image.fromarray(np.broadcast_to(
-            np.round(top_alpha).astype(np.uint8)[:, np.newaxis], (top_h, width)).copy())
+        top_ramp_1d = np.round(top_alpha).astype(np.uint8)
         top_box = (0, 0, width, top_h)
     if want_bottom:
         band_h = max(1, int(height * bottom_level[0]))
         band_y = height - band_h
         band_alpha = _band_ramp(band_h, bottom_level[1])
-        ramp = Image.fromarray(
-            np.broadcast_to(band_alpha[:, np.newaxis], (band_h, width)).copy(),
-        )
         box = (0, band_y, width, height)
 
     painted = None
@@ -322,8 +318,12 @@ def _draw_vignette(image: Image.Image, art: Image.Image, cfg,
             cover_box = ((0, max(0, band_y - int(height * _VIGNETTE_SEAM_H)), width, height)
                          if bottom_tinted
                          else (0, 0, width, min(height, top_h + int(height * _VIGNETTE_SEAM_H))))
+            rgb64 = _downsample_rgb_64(art)
+            faces = _fog_faces(art, _rgb64=rgb64)
+            whole_prof = _fog_profile(art, faces, _rgb64=rgb64)
             tint, conf, second, cover = _fog_pick(
-                art, cover_box, cfg.vignette_color_local, cfg.vignette_color_ramp, _fog_faces(art),
+                art, cover_box, cfg.vignette_color_local, cfg.vignette_color_ramp, faces,
+                _whole=whole_prof,
             )
     if tint is None:
         top_tinted = bottom_tinted = False
@@ -351,20 +351,23 @@ def _draw_vignette(image: Image.Image, art: Image.Image, cfg,
     # one, under the text, is the one that should end up on top.
     if want_top:
         if top_tinted:
-            _vignette_frost_band(image, top_box, top_ramp, cfg.vignette_color_blur)
-            _vignette_level_band(image, top_box, top_ramp, level)
-            _vignette_composite(image, 0, _tint_field(top_box), top_alpha)
+            _apply_tinted_vignette_band(
+                image, top_box, top_ramp_1d, top_alpha, _tint_field(top_box),
+                cfg.vignette_color_blur, level,
+            )
         else:
+            top_ramp = Image.fromarray(np.broadcast_to(top_ramp_1d[:, np.newaxis], (top_h, width)).copy())
             band = Image.new("RGBA", (width, top_h), (0, 0, 0, 0))
             band.putalpha(top_ramp)
             image.paste(band, (0, 0), mask=band)
     if want_bottom:
         if bottom_tinted:
-            _vignette_frost_band(image, box, ramp, cfg.vignette_color_blur)
-            _vignette_level_band(image, box, ramp, level)
-            # Dithered, like the portrait bands — see _vignette_composite.
-            _vignette_composite(image, band_y, _tint_field(box), band_alpha.astype(np.float32))
+            _apply_tinted_vignette_band(
+                image, box, band_alpha, band_alpha.astype(np.float32), _tint_field(box),
+                cfg.vignette_color_blur, level,
+            )
         else:
+            ramp = Image.fromarray(np.broadcast_to(band_alpha[:, np.newaxis], (band_h, width)).copy())
             band = Image.new("RGBA", (width, band_h), (0, 0, 0, 0))
             band.putalpha(ramp)
             image.paste(band, (0, band_y), mask=band)
@@ -407,10 +410,11 @@ def _drop_shadow(image: Image.Image, mask: Image.Image, x: int, y: int,
     padded canvas and then clipped to the image — alpha_composite refuses a
     negative destination, which a pill in the top-left corner would produce.
     """
+    from awards import _blur_l
     pad = int(radius * 3) + 1
     sheet = Image.new("L", (mask.width + 2 * pad, mask.height + 2 * pad), 0)
     sheet.paste(mask.point(lambda a: a * alpha // 255), (pad, pad))
-    sheet = sheet.filter(ImageFilter.GaussianBlur(radius))
+    sheet = _blur_l(sheet, radius)
     sx, sy = x - pad, y - pad
     left, top = max(0, -sx), max(0, -sy)
     right  = min(sheet.width,  image.width  - sx)
@@ -531,7 +535,7 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
       True    — reference: the poster's true hue and saturation, lifted to a
                 legibility floor.  Light panel, dark ink.
     """
-    from awards import _frost_ink
+    from awards import _blur_region_rgba, _frost_ink
     from ratings import _cairo_pill_mask
 
     x0, y0, x1, y1 = box
@@ -539,9 +543,8 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
     if w <= 0 or h <= 0:
         return (255, 255, 255), None
 
-    blurred = (image.crop(box).convert("RGB")
-               .filter(ImageFilter.GaussianBlur(max(4, int(h * 0.35))))
-               .convert("RGBA"))
+    region = image.crop(box)
+    blurred = _blur_region_rgba(region, max(4, int(h * 0.35)))
 
     if _BORDER:
         tint = _glass_tint(art, cfg, 0.0)
@@ -552,9 +555,9 @@ def _glass_pill(image: Image.Image, box: tuple[int, int, int, int],
         # matters is the panel standing off the pixels it actually covers.
         # dominant_frost_rgb's fallback handles the case where those pixels are
         # too dark or too washed to carry a hue, borrowing the frame's instead.
-        backing = np.asarray(blurred.convert("RGB"), dtype=np.float32)
-        tint = _glass_tint(art, cfg, _luma(backing.reshape(-1, 3).mean(axis=0)),
-                           source=source, region=image.crop(box))
+        backing = np.asarray(blurred)[:, :, :3]
+        tint = _glass_tint(art, cfg, _luma(backing.mean(axis=(0, 1))),
+                           source=source, region=region)
         opacity = getattr(cfg, "landscape_badge_glass_opacity", _LIFT_OPACITY)
 
     # Cairo rasterises at ANTIALIAS_BEST; PIL's rounded_rectangle has no
@@ -731,7 +734,8 @@ def _draw_logo(image: Image.Image, logo: Image.Image, align: str = "left",
     max_h = int(height * (_LOGO_MAX_H if top is None else _LOGO_MAX_H_TOP) * scale)
     fit = min(int(width * _LOGO_MAX_W * scale) / logo.width, max(1, max_h) / logo.height)
     drawn = logo.resize((max(1, round(logo.width * fit)),
-                         max(1, round(logo.height * fit))), Image.Resampling.LANCZOS)
+                         max(1, round(logo.height * fit))),
+                        Image.Resampling.LANCZOS, reducing_gap=2.0)
 
     x = _slot_x(width, drawn.width, align)
     if top is not None:
@@ -740,12 +744,13 @@ def _draw_logo(image: Image.Image, logo: Image.Image, align: str = "left",
         y = (int(height * _BASELINE) if baseline is None else baseline) - drawn.height
 
     # Black ink vanishes into a dark band; lighten it as the portrait does.
-    under = np.asarray(image.crop((max(0, x), max(0, y), min(width, x + drawn.width),
-                                   min(height, y + drawn.height))).convert("RGB"),
-                       dtype=np.float32)
-    if under.size and _luma(under.reshape(-1, 3).mean(axis=0)) / 255.0 < 0.40:
-        from tmdb import ensure_light_logo
-        drawn = ensure_light_logo(drawn)
+    ucrop = image.crop((max(0, x), max(0, y), min(width, x + drawn.width),
+                        min(height, y + drawn.height)))
+    if ucrop.width > 0 and ucrop.height > 0:
+        uarr = np.asarray(ucrop)[:, :, :3] if ucrop.mode in ("RGB", "RGBA") else np.asarray(ucrop.convert("RGB"))
+        if _luma(uarr.mean(axis=(0, 1))) / 255.0 < 0.40:
+            from tmdb import ensure_light_logo
+            drawn = ensure_light_logo(drawn)
 
     # Soft drop shadow so a white wordmark survives a light patch in the band.
     # Built on a padded canvas (see _drop_shadow): blurring the logo's own
@@ -1034,6 +1039,7 @@ def _draw_bar(image: Image.Image, cfg, genre_label: str, release_year: str | Non
         fill_color=bar_fill_color(style, cfg.bar_accent, value, cfg.score_custom_palette),
         tint_rgb=tint,
         center_run=center_run,
+        in_place=True,
     )
     return image, frosted_bar_box(image.size, ratio)
 

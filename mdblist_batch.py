@@ -47,7 +47,7 @@ class RatingBatcher:
         bulk: Callable[..., Awaitable[Any]],
         bulk_available: Callable[[], bool],
         gate: Callable[[], Any],
-        window: float = 0.1,
+        window: "float | Callable[[str], float]" = 0.1,
         max_ids: int = 200,
     ):
         self._single = single
@@ -71,7 +71,10 @@ class RatingBatcher:
         batch = self._batches.get(group)
         if batch is None:
             batch = self._batches[group] = _Batch()
-            batch.timer = loop.call_later(self.window, self._flush, group, client)
+            # A callable window is asked per batch, so it can follow the key
+            # (main._mdblist_batch_window: shorter while its quota is spare).
+            window = self.window(key) if callable(self.window) else self.window
+            batch.timer = loop.call_later(window, self._flush, group, client)
         media_id = str(media_id)
         fut = loop.create_future()
         batch.waiters.setdefault(media_id, []).append(fut)

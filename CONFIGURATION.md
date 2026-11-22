@@ -104,9 +104,10 @@ Grouped as the admin dashboard groups them. Defaults apply when neither the dash
 
 | Variable | Default | Description |
 |---|---|---|
-| `IMAGE_FORMAT` | `webp` | Output format for composited posters. WebP is smaller at the same quality. One of `webp`, `jpeg`. |
+| `IMAGE_FORMAT` | `webp` | Output format for composited posters. WebP is smaller at the same quality; JPEG encodes about 10x faster (~2 ms vs ~21 ms per poster) for files about 40% larger at q85, which helps a render-bound instance. Changing it re-renders every cached poster. One of `webp`, `jpeg`. |
 | `JPEG_QUALITY` | `85` | JPEG output quality (70-95), used when the image format is jpeg. Raise to 92 for higher fidelity; lower to reduce file size. |
 | `WEBP_QUALITY` | `85` | WebP output quality (70-95), used when the image format is webp (the default). Higher is better quality and larger files. |
+| `WEBP_METHOD` | `2` | libwebp effort (0-6), used when the image format is webp. Lower encodes faster for slightly larger files at the same quality: 0 is ~40% faster than the default 2 for ~16% larger posters. Above 2 is slower for little gain. Changing it keeps cached posters. |
 | `DEFAULT_LOGO_LANGUAGE` | `en` | Default ISO language/locale for logos and posters. Regional locales (fr-fr, es-es, es-mx, pt-br) match that region only and fall back to English, not the bare language. Legacy env alias: TMDB_LANGUAGE. |
 
 #### Trending

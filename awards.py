@@ -34,6 +34,52 @@ except (ImportError, OSError):
     _HAS_SKIA = False
 
 
+try:
+    import cv2 as _cv2
+    _HAS_CV2 = True
+except Exception:
+    _cv2 = None
+    _HAS_CV2 = False
+
+
+def _blur_l(mask: Image.Image, radius: float) -> Image.Image:
+    if radius <= 0.0:
+        return mask
+    w, h = mask.size
+    if _HAS_CV2 and radius >= 8.0 and w * h >= 40_000:
+        arr = np.asarray(mask)
+        shrink = max(1, int(radius / 4))
+        if shrink > 2:
+            small = _cv2.resize(arr, (max(1, w // shrink), max(1, h // shrink)),
+                                interpolation=_cv2.INTER_AREA)
+            small = _cv2.GaussianBlur(small, (0, 0), radius / shrink,
+                                      borderType=_cv2.BORDER_REPLICATE)
+            out = _cv2.resize(small, (w, h), interpolation=_cv2.INTER_LINEAR)
+        else:
+            out = _cv2.GaussianBlur(arr, (0, 0), radius, borderType=_cv2.BORDER_REPLICATE)
+        return Image.fromarray(out, "L")
+    return mask.filter(ImageFilter.GaussianBlur(radius))
+
+
+def _blur_region_rgba(region: Image.Image, radius: float) -> Image.Image:
+    """Blur an opaque poster crop in RGB via OpenCV and return an RGBA image."""
+    if _HAS_CV2 and radius > 0.0:
+        arr = np.asarray(region)
+        rgb = arr[:, :, :3] if arr.ndim == 3 and arr.shape[2] >= 3 else np.asarray(region.convert("RGB"))
+        h, w = rgb.shape[:2]
+        shrink = max(1, int(radius / 4))
+        if shrink > 2:
+            small = _cv2.resize(rgb, (max(1, w // shrink), max(1, h // shrink)),
+                                interpolation=_cv2.INTER_AREA)
+            small = _cv2.GaussianBlur(small, (0, 0), radius / shrink,
+                                      borderType=_cv2.BORDER_REPLICATE)
+            out = _cv2.resize(small, (w, h), interpolation=_cv2.INTER_LINEAR)
+        else:
+            out = _cv2.GaussianBlur(rgb, (0, 0), radius, borderType=_cv2.BORDER_REPLICATE)
+        return Image.fromarray(out, "RGB").convert("RGBA")
+    return region.filter(ImageFilter.GaussianBlur(radius=radius)).convert("RGBA")
+
+
 @lru_cache(maxsize=4)
 def _skia_typeface(font_path: str):
     return _skia.Typeface.MakeFromFile(font_path)
@@ -1426,12 +1472,14 @@ def _dominant_cluster(
         return None, 0.0, 0.0, False
     # A modest downsample preserves the real colours; the old heavy-blur + 8x8
     # mean is exactly what smeared them into an invented average.
-    small = region.convert("RGB")
-    if max(small.size) > 64:
+    # Resize BEFORE converting RGBA→RGB so we convert 48×48 instead of the full canvas.
+    if max(region.size) > 64:
         # reducing_gap box-reduces a whole poster most of the way first, so
         # LANCZOS only finishes the last 2x (≤2/255 difference, a fraction of
         # the cost).
-        small = small.resize((48, 48), Image.Resampling.LANCZOS, reducing_gap=2.0)
+        small = region.resize((48, 48), Image.Resampling.LANCZOS, reducing_gap=2.0).convert("RGB")
+    else:
+        small = region.convert("RGB")
     try:
         q = small.quantize(colors=12, method=Image.Quantize.FASTOCTREE)
     except Exception:
@@ -1673,6 +1721,7 @@ def draw_award_badge(
     edge_y: float = 0.5,              # edge notch only: its centre, as a fraction of poster height
     _geom: tuple[int, int] | None = None,   # edge notch: the poster's (width, height), sizes come from it
     _along: float | None = None,            # edge notch: centre along the (turned) top edge, in pixels
+    in_place: bool = False,
 ) -> Image.Image:
     """
     Centred notch badge that emerges from the top edge of the poster.
@@ -1812,6 +1861,7 @@ def draw_award_badge(
             frost_opacity, frost_saturation, frost_reference, tint_rgb,
             style=notch_style, trim_rgb=trim_rgb if notch_style in ("silver", "gold") else None,
             text_color=text_color, body_opacity=body_opacity, offset_x=chip_offset_x,
+            in_place=in_place,
         )
 
     if notch_style == "frosted":
@@ -1824,7 +1874,7 @@ def draw_award_badge(
         # crop (upscaling it 3x and back is a costly identity), the frost is a
         # flat colour, the shape mask is anti-aliased once and cached, and the
         # label is anti-aliased by FreeType.  ~1.4 ms instead of ~7.8 ms.
-        blurred = region.filter(ImageFilter.GaussianBlur(radius=blur_r)).convert("RGBA")
+        blurred = _blur_region_rgba(region, blur_r)
 
         # Dominant colour of the actual poster region (a real cluster, not a
         # muddy mean — see dominant_frost_rgb).  tint_rgb (when supplied) overrides
@@ -1859,7 +1909,7 @@ def draw_award_badge(
             label, font_size_ss, SS, badge_w, badge_h, (*_frost_ink(fr_r, fr_g, fr_b), 245)
         ))
 
-        result = image.copy()
+        result = image if in_place else image.copy()
         result.alpha_composite(badge, (bx, by_composite))
         return result
 
@@ -1883,7 +1933,7 @@ def draw_award_badge(
         td.text((tx, ty), label, font=font, fill=(*_txt_rgb_black, 245))
         badge_ss = Image.alpha_composite(badge_ss, txt_layer)
         badge_final = badge_ss.resize((badge_w, badge_h), Image.Resampling.LANCZOS)
-        result = image.copy()
+        result = image if in_place else image.copy()
         result.alpha_composite(badge_final, (bx, by_composite))
         return result
 
@@ -2001,7 +2051,7 @@ def draw_award_badge(
 
     # ── Downscale → composite ────────────────────────────────────────────────
     badge = badge.resize((badge_w, badge_h), Image.Resampling.LANCZOS)
-    result = image.copy()
+    result = image if in_place else image.copy()
     result.alpha_composite(badge, (bx, by_composite))
     return result
 
@@ -2053,6 +2103,7 @@ def _draw_side_chip(
     text_color: tuple[int, int, int] | None = None,
     body_opacity: float | None = None,
     offset_x: float = 0.0,
+    in_place: bool = False,
 ) -> Image.Image:
     """Chip floating in from a top corner — see draw_award_badge's
     ``position``.
@@ -2083,10 +2134,10 @@ def _draw_side_chip(
     if style != "frosted":
         badge = _dark_chip_body(label, font_size_ss, ss, w, h, radius, border_w,
                                 style, trim_rgb, text_color, body_opacity)
-        return _place_chip(image, badge, mask, x, y, w, h, pad, shadow_dy, shadow_blur)
+        return _place_chip(image, badge, mask, x, y, w, h, pad, shadow_dy, shadow_blur, in_place=in_place)
 
     region = image.crop((x, y, x + w, y + h))
-    blurred = region.filter(ImageFilter.GaussianBlur(radius=blur_r)).convert("RGBA")
+    blurred = _blur_region_rgba(region, blur_r)
     dr, dg, db = tint_rgb if tint_rgb is not None else dominant_frost_rgb(image)
     fr_r, fr_g, fr_b = _frosted_tint(dr, dg, db, frost_saturation, frost_reference)
 
@@ -2096,7 +2147,7 @@ def _draw_side_chip(
     badge = Image.alpha_composite(blurred, frost)
     badge.alpha_composite(_notch_label_layer_1x(label, font_size_ss, ss, w, h,
                                                 (*_frost_ink(fr_r, fr_g, fr_b), 245)))
-    return _place_chip(image, badge, mask, x, y, w, h, pad, shadow_dy, shadow_blur)
+    return _place_chip(image, badge, mask, x, y, w, h, pad, shadow_dy, shadow_blur, in_place=in_place)
 
 
 def _dark_chip_body(label: str, font_size_ss: float, ss: int, w: int, h: int,
@@ -2144,20 +2195,22 @@ def _dark_chip_body(label: str, font_size_ss: float, ss: int, w: int, h: int,
 
 def _place_chip(image: Image.Image, badge: Image.Image, mask: Image.Image,
                 x: int, y: int, w: int, h: int, pad: int, shadow_dy: int,
-                shadow_blur: float) -> Image.Image:
+                shadow_blur: float, in_place: bool = False) -> Image.Image:
     """Lay a side chip on the poster over a soft drop shadow of its shape."""
     # Unlike the notch, nothing anchors the chip to an edge, so a soft shadow
     # lifts it off the art.
-    result = image.copy()
+    result = image if in_place else image.copy()
     sheet = Image.new("L", (w + 2 * pad, h + 2 * pad), 0)
     sheet.paste(mask.point(lambda a: a * _CHIP_SHADOW_A // 255), (pad, pad))
-    sheet = sheet.filter(ImageFilter.GaussianBlur(shadow_blur))
-    shadow = Image.new("RGBA", sheet.size, (0, 0, 0, 0))
-    shadow.putalpha(sheet)
+    sheet = _blur_l(sheet, shadow_blur)
     sx, sy = x - pad, y - pad + shadow_dy
     # alpha_composite refuses negative offsets; crop what falls off-canvas.
     cl, ct = max(0, -sx), max(0, -sy)
-    result.alpha_composite(shadow.crop((cl, ct, shadow.width, shadow.height)), (sx + cl, sy + ct))
+    if cl > 0 or ct > 0:
+        sheet = sheet.crop((cl, ct, sheet.width, sheet.height))
+    shadow = Image.new("RGBA", sheet.size, (0, 0, 0, 0))
+    shadow.putalpha(sheet)
+    result.alpha_composite(shadow, (sx + cl, sy + ct))
     result.alpha_composite(badge, (x, y))
     # The chip's own box, for anything laid out against it: measured by what
     # changed, the shadow would count on bright art and not on dark.
@@ -2311,24 +2364,80 @@ def _sash_skia(
     return Image.fromarray(out)             # (h, w, 4) uint8 → RGBA
 
 
-def draw_award_sash(
-    image: Image.Image,
+# Each entry is the sash plus its shadow, ~0.9 MB at 500 wide and 4x that per
+# doubling, so the cache is kept small and skipped on large canvases.
+_SASH_CACHE_MAX_W = 1000
+
+
+@lru_cache(maxsize=16)
+def _sash_layers_cached(
+    width: int,
+    height: int,
     label: str,
-    sash_type: str = "win",
-    muted: bool = False,
-    length_ratio: float = 1.15,
-    height_ratio: float = 0.12,
-    poster_color: tuple[float, float, float] | None = None,
-    frost_saturation: float = 1.2,
-    frost_reference: bool = False,
-    star: bool = False,
-    text_color: tuple[int, int, int] | None = None,
-    side: str = "right",
+    sash_type: str,
+    muted: bool,
+    length_ratio: float,
+    height_ratio: float,
+    text_color: tuple[int, int, int] | None,
+    side: str,
+    font_path: str,
+    shaped: bool,
+    use_skia: bool,
+    scale: float,
+) -> tuple[Image.Image, Image.Image, int, int, int, int]:
+    return _build_sash_layers(
+        width, height, label, sash_type, muted, length_ratio, height_ratio,
+        None, 1.2, False, text_color, side, use_skia,
+    )
+
+
+@lru_cache(maxsize=8)
+def _sash_shadow_cached(
+    sash_w: int, sash_h: int,
+    centre: tuple[float, float], origin: tuple[int, int],
+    angle: float, strip: tuple[float, float],
+    k: float, muted: bool,
 ) -> Image.Image:
-    if star:
-        label = f"★  {label}"
-    label = visual(label)
-    width, height = image.size
+    """Cached blurred drop shadow for a diagonal sash silhouette.  The sash's
+    shape depends only on its geometry (never on the label or poster colour),
+    so poster-coloured sashes reuse one shadow across every poster."""
+    if _HAS_SKIA:
+        info = _skia.ImageInfo.Make(sash_w, sash_h, _skia.kAlpha_8_ColorType, _skia.kPremul_AlphaType)
+        surf = _skia.Surface.MakeRaster(info)
+        c = surf.getCanvas()
+        c.clear(0)
+        c.translate(centre[0] - origin[0], centre[1] - origin[1])
+        c.rotate(angle)
+        c.translate(-strip[0] / 2, -strip[1] / 2)
+        alpha = int(round(110 * (0.8 if muted else 1.0)))
+        c.drawRect(_skia.Rect(0, 0, strip[0], strip[1]),
+                   _skia.Paint(AntiAlias=True, Color=_skia.Color(0, 0, 0, alpha)))
+        arr = np.empty((sash_h, sash_w), dtype=np.uint8)
+        surf.readPixels(info, arr)
+        mask = Image.fromarray(arr, "L")
+    else:
+        return None  # fallback builds from sash's own alpha
+    mask = _blur_l(mask, 10 * k)
+    shadow = Image.new("RGBA", (sash_w, sash_h), (0, 0, 0, 0))
+    shadow.putalpha(mask)
+    return shadow
+
+
+def _build_sash_layers(
+    width: int,
+    height: int,
+    label: str,
+    sash_type: str,
+    muted: bool,
+    length_ratio: float,
+    height_ratio: float,
+    poster_color: tuple[float, float, float] | None,
+    frost_saturation: float,
+    frost_reference: bool,
+    text_color: tuple[int, int, int] | None,
+    side: str,
+    use_skia: bool,
+) -> tuple[Image.Image, Image.Image, int, int, int, int]:
     left = side == "left"
     k    = width / _BASE_WIDTH   # fixed pixel sizes below are set for a 500-wide canvas
 
@@ -2415,8 +2524,8 @@ def draw_award_sash(
     ey = min(math.ceil(max(p[1] for p in corners)), height + pad)
 
     def _q(u: float, v: float) -> tuple[float, float]:
-        px, py = _to_poster(u, v)
-        return ((px - ox) * SS, (py - oy) * SS)
+        px_, py_ = _to_poster(u, v)
+        return ((px_ - ox) * SS, (py_ - oy) * SS)
 
     def _band(v0: float, v1: float) -> list[tuple[float, float]]:
         return [_q(0, v0), _q(sl, v0), _q(sl, v1), _q(0, v1)]
@@ -2432,11 +2541,13 @@ def draw_award_sash(
         font = ImageFont.load_default()
 
     _txt_rgb = text_color if text_color is not None else (225, 225, 225)
+    centre = _to_poster(sl / 2, sh / 2)
+    angle = -45 if left else 45
     # Skia's drawString neither joins nor orders letters, so a shaped label
     # (fonts.shaping) takes the PIL path, whose text is laid out by raqm.
-    if _HAS_SKIA and not fonts.shaping():
+    if use_skia:
         sash = _sash_skia(
-            (ex - ox, ey - oy), _to_poster(sl / 2, sh / 2), (ox, oy), -45 if left else 45,
+            (ex - ox, ey - oy), centre, (ox, oy), angle,
             (sash_length, sash_height), (edge / SS, margin / SS), (hi, lo, border_colour, dark),
             label, font, SS, _txt_rgb, k,
         )
@@ -2483,15 +2594,55 @@ def draw_award_sash(
         a = a.point(lambda v: int(v * 0.8))
         sash = Image.merge("RGBA", (r, g, b, a))
 
-    shadow   = Image.new("RGBA", sash.size, (0, 0, 0, 0))
-    sd       = ImageDraw.Draw(shadow)
-    sd.bitmap((0, 0), sash.split()[3], fill=(0, 0, 0, 110))
-    shadow   = shadow.filter(ImageFilter.GaussianBlur(10 * k))
+    shadow = (
+        _sash_shadow_cached(sash.width, sash.height, centre, (ox, oy), angle,
+                            (sash_length, sash_height), k, muted)
+        if use_skia else None
+    )
+    if shadow is None:
+        # Blur only the 1-channel L alpha mask instead of 4-channel RGBA.
+        sa = _blur_l(sash.getchannel("A").point(lambda v: v * 110 // 255), 10 * k)
+        shadow = Image.new("RGBA", sash.size, (0, 0, 0, 0))
+        shadow.putalpha(sa)
 
-    result   = image.copy()
     # The shadow falls down and away from the corner.
     shadow_d  = round(6 * k)
     shadow_dx = -shadow_d if left else shadow_d
+    return sash, shadow, ox, oy, shadow_dx, shadow_d
+
+
+def draw_award_sash(
+    image: Image.Image,
+    label: str,
+    sash_type: str = "win",
+    muted: bool = False,
+    length_ratio: float = 1.15,
+    height_ratio: float = 0.12,
+    poster_color: tuple[float, float, float] | None = None,
+    frost_saturation: float = 1.2,
+    frost_reference: bool = False,
+    star: bool = False,
+    text_color: tuple[int, int, int] | None = None,
+    side: str = "right",
+    in_place: bool = False,
+) -> Image.Image:
+    if star:
+        label = f"★  {label}"
+    label = visual(label)
+    width, height = image.size
+    use_skia = bool(_HAS_SKIA and not fonts.shaping())
+    if poster_color is None and width <= _SASH_CACHE_MAX_W:
+        sash, shadow, ox, oy, shadow_dx, shadow_d = _sash_layers_cached(
+            width, height, label, sash_type, muted, length_ratio, height_ratio,
+            text_color, side, fonts.label_path(), fonts.shaping(), use_skia, pxscale.scale(),
+        )
+    else:
+        sash, shadow, ox, oy, shadow_dx, shadow_d = _build_sash_layers(
+            width, height, label, sash_type, muted, length_ratio, height_ratio,
+            poster_color, frost_saturation, frost_reference, text_color, side, use_skia,
+        )
+
+    result = image if in_place else image.copy()
     result.paste(shadow, (ox + shadow_dx, oy + shadow_d), shadow)
     result.paste(sash,   (ox,             oy),     sash)
 

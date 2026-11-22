@@ -167,6 +167,9 @@ def prepare(data: bytes) -> tuple[bytes, str, list[str]]:
 
     try:
         font = TTFont(io.BytesIO(data), lazy=False)
+        # fontTools ≥4.68 opens a bare header with no tables without raising.
+        if "head" not in font or "cmap" not in font:
+            raise ValueError("no head/cmap table")
         cmap = font.getBestCmap() or {}
     except Exception:
         raise ValueError("the font file couldn't be read")

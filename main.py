@@ -11,9 +11,16 @@ import fcntl
 import os
 import random
 import re
+import threading
 import time
 import httpx
 import numpy as np
+try:
+    import cv2 as _cv2
+    _HAS_CV2 = True
+except Exception:
+    _cv2 = None
+    _HAS_CV2 = False
 from datetime import datetime, timedelta, timezone
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -1061,14 +1068,46 @@ import art_overrides
 import award_lists
 from mdblist_batch import RatingBatcher
 
-# Live renders that miss the rating cache within 100 ms of each other, on the
-# same route, type and key, share one bulk request (mdblist_batch.py).
+# Live renders that miss the rating cache within the batch window of each
+# other, on the same route, type and key, share one bulk request
+# (mdblist_batch.py).  The window is what a lone cold poster waits before its
+# rating call goes out, so it follows the key's daily quota: a key spending
+# well under what it has left for the day can afford more, smaller requests
+# and waits less; one that would run short at its current rate (or hasn't
+# been seen yet) keeps the full window, which saves the most requests.
+# Pacing against the per-IP burst limit is the gate's job either way.
+_MDBLIST_BATCH_WINDOW_MAX = 0.1
+_MDBLIST_BATCH_WINDOWS = ((3.0, 0.01), (1.5, 0.04))   # (headroom at least, window)
+
+
+def _mdblist_batch_window(key: str, now: float | None = None) -> float:
+    """Seconds a new batch for *key* waits for company before it is sent."""
+    quota = MDBLIST_QUOTA.get(key)
+    if now is None:
+        now = time.time()
+    if (quota is None or not quota.limit or quota.remaining is None
+            or quota.reset_at is None or not quota.is_current(now)):
+        return _MDBLIST_BATCH_WINDOW_MAX
+    # Headroom: what is left over what today's rate so far would spend by the
+    # reset.  The first hour counts as an hour, so a few early calls don't
+    # project a runaway rate.
+    day_left = min(1.0, max(0.0, quota.reset_at - now) / 86400)
+    elapsed = max(1 / 24, 1.0 - day_left)
+    used = max(0, quota.limit - quota.remaining)
+    projected = used / elapsed * day_left
+    headroom = float("inf") if projected <= 0 else quota.remaining / projected
+    for at_least, window in _MDBLIST_BATCH_WINDOWS:
+        if headroom >= at_least:
+            return window
+    return _MDBLIST_BATCH_WINDOW_MAX
+
+
 _mdblist_batcher = RatingBatcher(
     single=lambda *a, **kw: fetch_rating(*a, **kw),
     bulk=lambda *a, **kw: fetch_ratings_bulk(*a, **kw),
     bulk_available=lambda: mdblist_bulk_available(),
     gate=_mdblist_outbound,
-    window=0.1,
+    window=_mdblist_batch_window,
     max_ids=MDBLIST_BULK_MAX_IDS,
 )
 import reports
@@ -3688,6 +3727,51 @@ async def _resolved(value):
     return value
 
 
+async def _quietly(coro) -> None:
+    """Run *coro* for its side effect (a cache it fills); a failure is left
+    for the real call that follows to meet and report."""
+    try:
+        await coro
+    except Exception:
+        pass
+
+
+def _start_release_prefetch(client, rcfg, media_type: str, tmdb_id, tmdb_data: dict,
+                            has_tmdb_id: bool, tmdb_key) -> "tuple[asyncio.Task | None, asyncio.Task | None]":
+    """Start a movie's release-status and top-grossing-year lookups early.
+
+    Both are cached (the release-info row; box_office's per-year list), so
+    the calls made later in the render read what these fill.  Gated loosely
+    on what could use them: a lookup that turns out unused only warms a cache
+    the next render of the title would fill anyway."""
+    if media_type in ("tv", "series") or not (has_tmdb_id and tmdb_key):
+        return None, None
+    status_task = blockbuster_task = None
+    wants_status = (
+        any(s in rcfg.sash_priority for s in ("release_status", *RELEASE_STATUS_SLOTS))
+        or rcfg.hide_unreleased_rating or rcfg.quality_after_digital
+        or rcfg.cinema_greyscale or rcfg.landscape_greyscale
+        or rcfg.badge_display_mode == 7 or rcfg.landscape_graphic_badges
+    )
+    if wants_status:
+        status_task = asyncio.create_task(_quietly(fetch_release_status(
+            client, tmdb_id, tmdb_key, media_type, tmdb_data.get("tmdb_status"),
+            vote_count=tmdb_data.get("vote_count"),
+        )))
+    year = box_office.release_year(tmdb_data.get("tmdb_release_date"))
+    if year is not None and "blockbuster" in rcfg.sash_priority and rcfg.sash_mode != "hidden":
+        blockbuster_task = asyncio.create_task(_quietly(
+            box_office.top_grossing_ids(client, year, tmdb_key)))
+    return status_task, blockbuster_task
+
+
+async def _settle_prefetch(task: "asyncio.Task | None") -> None:
+    """Wait for an early lookup, so the call after it reads its cache instead
+    of racing it with a second request."""
+    if task is not None:
+        await task
+
+
 async def _with_retry(coro_fn, *args, **kwargs):
     """Call coro_fn(*args, **kwargs) and retry once if FETCH_FAILED is returned."""
     result = await coro_fn(*args, **kwargs)
@@ -4020,10 +4104,23 @@ _FOG_RAMP_MIN_HUE = 30.0
 _FOG_RAMP_MAX_HUE = 110.0
 
 
+# Precomputed 256-entry sRGB→linear LUT (float32) so uint8 inputs skip the
+# expensive per-pixel ** 2.4 pow.
+_SRGB_U8_C = np.arange(256, dtype=np.float32) / 255.0
+_SRGB_TO_LIN_LUT = np.where(
+    _SRGB_U8_C <= 0.04045, _SRGB_U8_C / 12.92, ((_SRGB_U8_C + 0.055) / 1.055) ** 2.4
+).astype(np.float32)
+del _SRGB_U8_C
+
+
 def _srgb_to_oklab(rgb: np.ndarray) -> np.ndarray:
     """sRGB (..., 3) on 0-255 → OKLab (..., 3)."""
-    c = np.clip(np.asarray(rgb, dtype=np.float32), 0.0, 255.0) / 255.0
-    lin = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    arr = np.asarray(rgb)
+    if arr.dtype == np.uint8:
+        lin = _SRGB_TO_LIN_LUT[arr]
+    else:
+        c = np.clip(arr.astype(np.float32, copy=False), 0.0, 255.0) / 255.0
+        lin = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
     return np.cbrt(lin @ _OKLAB_M1.T) @ _OKLAB_M2.T
 
 
@@ -4048,18 +4145,29 @@ def _oklch_to_srgb(L: np.ndarray, C: np.ndarray, h: np.ndarray) -> np.ndarray:
         lin = _oklab_to_linear(np.stack([L, c * ca, c * sa], axis=-1))
         return (lin.min(axis=-1) >= -1e-4) & (lin.max(axis=-1) <= 1.0 + 1e-4)
 
-    lo, hi = np.zeros_like(C), C.copy()
-    ok = _fits(hi)
-    for _ in range(14):                     # bisection on chroma, per cell
-        mid = (lo + hi) / 2
-        fit = _fits(mid)
-        lo, hi = np.where(fit, mid, lo), np.where(fit, hi, mid)
-    C = np.where(ok, C, lo)
+    ok = _fits(C)
+    if not bool(np.all(ok)):
+        lo, hi = np.zeros_like(C), C.copy()
+        for _ in range(14):                     # bisection on chroma, per cell
+            mid = (lo + hi) / 2
+            fit = _fits(mid)
+            lo, hi = np.where(fit, mid, lo), np.where(fit, hi, mid)
+        C = np.where(ok, C, lo)
     return _oklab_to_srgb(np.stack([L, C * ca, C * sa], axis=-1))
+
+
+def _downsample_rgb_64(img: Image.Image) -> np.ndarray:
+    """64x64 uint8 RGB area-average of *img*.  PIL's separable BOX filter on RGB
+    is ~2-6x faster than OpenCV's generic non-integer INTER_AREA loop."""
+    rgb = img if img.mode == "RGB" else img.convert("RGB")
+    if rgb.size == (64, 64):
+        return np.asarray(rgb)
+    return np.asarray(rgb.resize((64, 64), Image.Resampling.BOX))
 
 
 def _fog_profile(
     img: Image.Image, faces: list[tuple[float, float, float, float]] | None = None,
+    _rgb64: np.ndarray | None = None,
 ) -> dict:
     """Per-pixel OKLab, HSV hue and vote weight of a 64x64 reduction, plus the
     per-hue-family support curve (same 36 bins and ±3 family as the old pick).
@@ -4067,8 +4175,8 @@ def _fog_profile(
     ``faces`` are (x, y, w, h) boxes in ``img``'s own pixels; skin-coloured
     pixels inside them (padded, see _FOG_FACE_PAD_*) get no vote.  ``face`` in
     the result marks those pixels, so the fallback cast can skip them too."""
-    a = np.asarray(img.convert("RGB").resize((64, 64), Image.Resampling.BOX),
-                   dtype=np.float32) / 255.0
+    rgb64 = _rgb64 if _rgb64 is not None else _downsample_rgb_64(img)
+    a = rgb64.astype(np.float32) / 255.0
     r, g, b = a[..., 0], a[..., 1], a[..., 2]
     maxc   = a.max(axis=-1)
     chroma = maxc - a.min(axis=-1)
@@ -4100,7 +4208,7 @@ def _fog_profile(
     for offset in range(-_VIGNETTE_HUE_SPAN, _VIGNETTE_HUE_SPAN + 1):
         support += (1.0 - abs(offset) / (_VIGNETTE_HUE_SPAN + 1)) * np.roll(hist, -offset)
     return {
-        "lab": _srgb_to_oklab(a.reshape(-1, 3) * 255.0),
+        "lab": _srgb_to_oklab(rgb64.reshape(-1, 3)),
         "hue": hue.reshape(-1), "w": w.reshape(-1), "support": support,
         "x": np.tile(np.linspace(0.0, 1.0, a.shape[1]), a.shape[0]),
         "face": face.reshape(-1),
@@ -4117,16 +4225,25 @@ def _fog_family(prof: dict, peak: int) -> tuple[np.ndarray, float] | None:
     dh = np.abs(prof["hue"] - centre)
     dh = np.minimum(dh, 1.0 - dh)
     m  = (dh <= (_VIGNETTE_HUE_SPAN + 0.5) / _VIGNETTE_HUE_BINS) * prof["w"]
-    if m.sum() <= 0:
+    m_sum = float(m.sum())
+    if m_sum <= 0:
         return None
     lab = prof["lab"]
-    C   = np.hypot(lab[:, 1], lab[:, 2])
-    order = np.argsort(C)
+    # Chroma & sort order depend only on prof["lab"]; cache once per profile
+    # rather than re-sorting 4096 pixels for every candidate ramp bin.
+    C = prof.get("_C")
+    if C is None:
+        C = np.hypot(lab[:, 1], lab[:, 2])
+        order = np.argsort(C)
+        prof["_C"] = C
+        prof["_order"] = order
+    else:
+        order = prof["_order"]
     cum   = np.cumsum(m[order])
     cut   = C[order][min(len(C) - 1, int(np.searchsorted(cum, 0.5 * cum[-1])))]
     mv    = m * (C >= cut)
     return ((lab * mv[:, None]).sum(axis=0) / mv.sum(),
-            float((prof["x"] * m).sum() / m.sum()))
+            float((prof["x"] * m).sum() / m_sum))
 
 
 def _fog_complement(prof: dict) -> tuple[float, float, float]:
@@ -4146,23 +4263,48 @@ def _fog_complement(prof: dict) -> tuple[float, float, float]:
     return tuple(float(c) for c in rgb)
 
 
-def _fog_faces(poster: Image.Image) -> list[tuple[float, float, float, float]]:
+_FACE_BOX_MEM_MAX = 512
+_FACE_BOX_MEM_LOCK = threading.Lock()
+_FACE_BOX_MEM: OrderedDict[tuple[str, str], list] = OrderedDict()
+
+
+def _fog_faces(poster: Image.Image, _rgb64: np.ndarray | None = None) -> list[tuple[float, float, float, float]]:
     """Face boxes (x, y, w, h) to keep out of the fog's colour vote.  Confident
     detections only: a borderline YuNet hit is as likely to be a cushion (see
     face_detect.detect_faces), and dropping skin-coloured pixels there would take
     a real colour out of the vote.  Empty when detection is unavailable."""
     try:
+        import cache as _cache_mod
         import face_detect
-        # Cached by the pixels themselves: the same art comes back for every
-        # settings variant, rank change and cache bust, and YuNet was a fifth
-        # of a vignette render (serialised across render threads, too).
-        key = f"{face_detect.DETECTOR_SIGNATURE}:{poster.mode}:{poster.width}x{poster.height}:" + \
-            hashlib.blake2b(poster.tobytes(), digest_size=16).hexdigest()
-        boxes = get_cached_face_boxes(key)
+        # Hash a 64x64 area average (12 KB) instead of the full 1.5-3.7 MB raw
+        # RGBA buffer (~25x faster; every pixel still contributes to the digest,
+        # and the same 64x64 sample is reused by _fog_profile).
+        if poster.width * poster.height > 64 * 64:
+            fp = _rgb64 if _rgb64 is not None else _downsample_rgb_64(poster)
+            digest = hashlib.blake2b(fp.data, digest_size=16).hexdigest()
+        else:
+            digest = hashlib.blake2b(poster.tobytes(), digest_size=16).hexdigest()
+        key = f"{face_detect.DETECTOR_SIGNATURE}:{poster.mode}:{poster.width}x{poster.height}:64:{digest}"
+        mem_key = (_cache_mod.DB_PATH, key)
+        with _FACE_BOX_MEM_LOCK:
+            boxes = _FACE_BOX_MEM.get(mem_key)
+            if boxes is not None:
+                _FACE_BOX_MEM.move_to_end(mem_key)
         if boxes is None:
-            boxes = face_detect.detect_face_boxes(poster)
-            if face_detect.available():
-                set_cached_face_boxes(key, boxes)
+            boxes = get_cached_face_boxes(key)
+            if boxes is None:
+                boxes = face_detect.detect_face_boxes(poster)
+                if face_detect.available():
+                    set_cached_face_boxes(key, boxes)
+                    with _FACE_BOX_MEM_LOCK:
+                        _FACE_BOX_MEM[mem_key] = boxes
+                        if len(_FACE_BOX_MEM) > _FACE_BOX_MEM_MAX:
+                            _FACE_BOX_MEM.popitem(last=False)
+            else:
+                with _FACE_BOX_MEM_LOCK:
+                    _FACE_BOX_MEM[mem_key] = boxes
+                    if len(_FACE_BOX_MEM) > _FACE_BOX_MEM_MAX:
+                        _FACE_BOX_MEM.popitem(last=False)
         return [(x, y, w, h) for x, y, w, h, score in boxes
                 if score >= _FOG_FACE_MIN_SCORE]
     except Exception:
@@ -4172,6 +4314,7 @@ def _fog_faces(poster: Image.Image) -> list[tuple[float, float, float, float]]:
 def _fog_pick(
     poster: Image.Image, cover_box: tuple[int, int, int, int], local: bool, want_ramp: bool,
     faces: list[tuple[float, float, float, float]] | None = None,
+    _whole: dict | None = None,
 ) -> tuple[tuple[float, float, float] | None, float, tuple[float, float, float] | None, float]:
     """(primary, confidence, secondary, cover_lightness) for one fog band.
 
@@ -4190,7 +4333,7 @@ def _fog_pick(
     the complement of its cast (see _fog_complement) at full confidence.
     """
     cx0, cy0 = cover_box[0], cover_box[1]
-    whole = _fog_profile(poster, faces)
+    whole = _whole if _whole is not None else _fog_profile(poster, faces)
     cover = _fog_profile(poster.crop(cover_box),
                          [(x - cx0, y - cy0, w, h) for x, y, w, h in faces or ()])
     score = whole["support"] + (_FOG_COVER_BONUS * cover["support"] if local else 0.0)
@@ -4322,14 +4465,15 @@ def _vignette_tint_band(
     describe for a 500px band; a wider canvas passes its own so the local end
     of the blur slider stays as fine as it is on a poster (see landscape.py).
     """
-    band = src.crop(box).convert("RGB")
-    bw, bh = band.size
+    x0, y0, x1, y1 = box
+    bw, bh = x1 - x0, y1 - y0
     if bw <= 0 or bh <= 0:
         return Image.new("RGB", (max(bw, 1), max(bh, 1)), (0, 0, 0))
 
-    # Downsample to a handful of colour cells (BOX = area average, so every pixel
-    # contributes), then let the upscale do the smoothing — far cheaper than a
-    # Gaussian over the full-size band and indistinguishable at this softness.
+    # Downsample to a handful of colour cells (BOX / INTER_AREA = area average,
+    # so every pixel contributes), then let the upscale do the smoothing — far
+    # cheaper than a Gaussian over the full-size band and indistinguishable at
+    # this softness.
     detail = (1.0 - blur) ** _VIGNETTE_BLUR_DETAIL_CURVE
     cols   = max(1, min(bw, int(round(columns * detail))))
     if secondary is not None:
@@ -4337,7 +4481,12 @@ def _vignette_tint_band(
         # at the top of its range — give it back a floor of its own.
         cols = max(1, min(bw, max(cols, ramp_columns)))
     rows   = max(1, min(bh, max(1, cols // 2)))
-    field  = np.asarray(band.resize((cols, rows), Image.Resampling.BOX), dtype=np.float32)
+    band = src.crop(box)
+    rgb_band = band if band.mode == "RGB" else band.convert("RGB")
+    field = np.asarray(
+        rgb_band if (cols, rows) == (bw, bh) else rgb_band.resize((cols, rows), Image.Resampling.BOX),
+        dtype=np.float32,
+    )
     if secondary is None:
         dom = np.asarray(dominant, dtype=np.float32)
     else:
@@ -4372,8 +4521,20 @@ def _vignette_tint_band(
     else:
         tint = _fog_paint(field, cover_lightness, confidence, saturation, lightness)
 
-    small = Image.fromarray(np.clip(tint, 0, 255).astype(np.uint8))
-    return small if (cols, rows) == (bw, bh) else small.resize((bw, bh), Image.Resampling.BICUBIC)
+    tint_u8 = np.clip(tint, 0, 255).astype(np.uint8)
+    if cols == 1 and rows == 1:
+        rgb_t = (int(tint_u8[0, 0, 0]), int(tint_u8[0, 0, 1]), int(tint_u8[0, 0, 2]))
+        out = Image.new("RGB", (bw, bh), rgb_t)
+        out.info["_solid_rgb"] = rgb_t
+        return out
+    if (cols, rows) == (bw, bh):
+        return Image.fromarray(tint_u8, "RGB")
+    if _HAS_CV2:
+        up = _cv2.resize(tint_u8, (bw, bh), interpolation=_cv2.INTER_CUBIC)
+        out = Image.fromarray(up, "RGB")
+        out.info["_rgb_arr"] = up
+        return out
+    return Image.fromarray(tint_u8, "RGB").resize((bw, bh), Image.Resampling.BICUBIC)
 
 
 def _vignette_frost_band(
@@ -4512,9 +4673,26 @@ def _dither_noise(shape: tuple[int, ...]) -> np.ndarray:
     drawn (or cached) per shape."""
     h, w, c = shape
     tile = _dither_tile()
-    rows = np.arange(h) % _DITHER_TILE
-    cols = np.arange(w) % _DITHER_TILE
-    return tile[rows[:, None], cols[None, :], :c]
+    if h <= _DITHER_TILE and w <= _DITHER_TILE:
+        return tile[:h, :w, :c]
+    ry = (h + _DITHER_TILE - 1) // _DITHER_TILE
+    rx = (w + _DITHER_TILE - 1) // _DITHER_TILE
+    return np.tile(tile[:, :, :c], (ry, rx, 1))[:h, :w, :]
+
+
+def _add_dither_inplace(rgb: np.ndarray) -> None:
+    """Add _dither_noise(rgb.shape) to *rgb* in place, tiled directly from the
+    512x512 cached block without allocating a tiled copy."""
+    h, w, c = rgb.shape
+    tile = _dither_tile()
+    if h <= _DITHER_TILE and w <= _DITHER_TILE:
+        rgb += tile[:h, :w, :c]
+        return
+    for y in range(0, h, _DITHER_TILE):
+        yh = min(_DITHER_TILE, h - y)
+        for x in range(0, w, _DITHER_TILE):
+            xw = min(_DITHER_TILE, w - x)
+            rgb[y:y + yh, x:x + xw, :] += tile[:yh, :xw, :c]
 
 
 def _vignette_composite(
@@ -4532,16 +4710,218 @@ def _vignette_composite(
     """
     w, h = tint.size
     band = image.crop((0, y0, w, y0 + h))
-    arr  = np.asarray(band, dtype=np.float32).copy()
-    col  = np.asarray(tint.convert("RGB"), dtype=np.float32)
-    a    = (alpha / 255.0)[..., None]
+    raw  = np.asarray(band)
+    if _HAS_CV2 and band.mode == "RGBA":
+        rgb = _cv2.cvtColor(raw, _cv2.COLOR_RGBA2RGB).astype(np.float32)
+    else:
+        rgb = raw[..., :3].astype(np.float32)
+    solid = tint.info.get("_solid_rgb")
+    if solid is not None:
+        col = np.array(solid, dtype=np.float32).reshape(1, 1, 3)
+    elif "_rgb_arr" in tint.info:
+        col = tint.info["_rgb_arr"].astype(np.float32)
+    else:
+        col = np.asarray(tint if tint.mode == "RGB" else tint.convert("RGB"), dtype=np.float32)
+    a    = (alpha.astype(np.float32, copy=False) / 255.0)[..., None]
     if a.ndim == 2:                                  # a per-row profile
         a = a[:, None, :]
-    rgb = arr[..., :3] * (1.0 - a) + col * a
-    rgb += _dither_noise(rgb.shape)
-    arr[..., :3] = rgb
-    image.paste(Image.fromarray(np.clip(np.round(arr), 0, 255).astype(np.uint8)),
-                (0, y0))
+    rgb *= (1.0 - a)
+    rgb += col * a
+    _add_dither_inplace(rgb)
+    np.rint(rgb, out=rgb)
+    np.clip(rgb, 0.0, 255.0, out=rgb)
+    out_rgb = rgb.astype(np.uint8)
+    if band.mode == "RGBA" and band.getchannel("A").getextrema()[0] < 255:
+        out = raw.copy()
+        out[..., :3] = out_rgb
+        image.paste(Image.fromarray(out, "RGBA"), (0, y0))
+    else:
+        image.paste(Image.fromarray(out_rgb, "RGB"), (0, y0))
+
+
+def _apply_tinted_vignette_band(
+    image: Image.Image,
+    box: tuple[int, int, int, int],
+    ramp_1d: np.ndarray,
+    alpha_1d: np.ndarray,
+    tint: Image.Image,
+    blur: float,
+    level_amount: float,
+) -> None:
+    """Fused frost + luminance-level + dithered tint composite for one band.
+
+    Performs the exact same three stages as _vignette_frost_band →
+    _vignette_level_band → _vignette_composite, but in a single RGB float32
+    pass with OpenCV blur/resize and zero intermediate RGBA PIL round-trips.
+    """
+    x0, y0, x1, y1 = box
+    bw, bh = x1 - x0, y1 - y0
+    if bw <= 0 or bh <= 0:
+        return
+    band = image.crop(box)
+    raw = np.asarray(band)
+    if _HAS_CV2 and band.mode == "RGBA":
+        rgb_u8 = _cv2.cvtColor(raw, _cv2.COLOR_RGBA2RGB)
+    elif band.mode == "RGB":
+        rgb_u8 = raw
+    else:
+        rgb_u8 = np.asarray(band.convert("RGB"))
+    ramp_f = ramp_1d.astype(np.float32, copy=False)
+    peak = float(ramp_f.max()) if ramp_f.size else 0.0
+
+    # 1. Progressive frost blur (contiguous slice accumulation, pyramid downscale)
+    radius = (bw * _VIGNETTE_BLUR_MAX_RATIO * blur) if (blur > 0 and peak > 0) else 0.0
+    if radius >= 0.5:
+        depth = (ramp_f / peak) ** 2
+        n = len(_VIGNETTE_FROST_LEVELS)
+        pos = depth * (n - 1)
+        lo = np.minimum(pos.astype(np.int32), n - 2)
+        frac = (pos - lo)[:, None, None]
+        one_minus_frac = 1.0 - frac
+        rgb = np.zeros((bh, bw, 3), dtype=np.float32)
+        # Keep the last downscaled source so successive 2x levels downscale
+        # from the previous small image rather than the full band each time.
+        pyr_img = rgb_u8
+        pyr_w, pyr_h = bw, bh
+        pil_band = None
+        for k in range(n):
+            as_a = lo == k
+            as_b = lo == k - 1
+            rows = np.flatnonzero(as_a | as_b)
+            if rows.size == 0:
+                continue
+            r0, r1 = int(rows[0]), int(rows[-1]) + 1
+            if k == 0:
+                lvl = rgb_u8[r0:r1].astype(np.float32)
+            else:
+                r = radius * _VIGNETTE_FROST_LEVELS[k]
+                shrink = max(1, int(r / 4))
+                if _HAS_CV2:
+                    if shrink >= 2:
+                        sw, sh = max(1, bw // shrink), max(1, bh // shrink)
+                        src_small = pyr_img if (sw <= pyr_w and sh <= pyr_h) else rgb_u8
+                        if (sw, sh) != (src_small.shape[1], src_small.shape[0]):
+                            small = _cv2.resize(src_small, (sw, sh), interpolation=_cv2.INTER_AREA)
+                        else:
+                            small = src_small
+                        pyr_img, pyr_w, pyr_h = small, sw, sh
+                        blurred = _cv2.GaussianBlur(small, (0, 0), r / shrink,
+                                                    borderType=_cv2.BORDER_REPLICATE)
+                        lvl = _cv2.resize(blurred, (bw, bh), interpolation=_cv2.INTER_LINEAR)[r0:r1].astype(np.float32)
+                    else:
+                        lvl = _cv2.GaussianBlur(rgb_u8, (0, 0), r,
+                                                borderType=_cv2.BORDER_REPLICATE)[r0:r1].astype(np.float32)
+                else:
+                    if pil_band is None:
+                        pil_band = Image.fromarray(rgb_u8, "RGB")
+                    if shrink > 2:
+                        small = pil_band.resize((max(1, bw // shrink), max(1, bh // shrink)),
+                                                Image.Resampling.BOX)
+                        small = small.filter(ImageFilter.GaussianBlur(r / shrink))
+                        sy = small.height / bh
+                        lvl = np.asarray(
+                            small.resize((bw, r1 - r0), Image.Resampling.BILINEAR,
+                                         box=(0, r0 * sy, small.width, r1 * sy)),
+                            dtype=np.float32,
+                        )
+                    else:
+                        lvl = np.asarray(
+                            pil_band.filter(ImageFilter.GaussianBlur(r)).crop((0, r0, bw, r1)),
+                            dtype=np.float32,
+                        )
+            # Monotonic ramps produce one contiguous slice for as_a and one for
+            # as_b; using direct slices avoids fancy boolean-mask copies.
+            a_idx = np.flatnonzero(as_a[r0:r1])
+            b_idx = np.flatnonzero(as_b[r0:r1])
+            if a_idx.size:
+                a0, a1 = int(a_idx[0]), int(a_idx[-1]) + 1
+                if a1 - a0 == a_idx.size:
+                    # Multiply in-place when b_idx won't reuse these rows (disjoint!)
+                    seg = lvl[a0:a1]
+                    seg *= one_minus_frac[r0 + a0:r0 + a1]
+                    rgb[r0 + a0:r0 + a1] += seg
+                else:
+                    ma = as_a[r0:r1]
+                    rgb[r0:r1][ma] += lvl[ma] * one_minus_frac[r0:r1][ma]
+            if b_idx.size:
+                b0, b1 = int(b_idx[0]), int(b_idx[-1]) + 1
+                if b1 - b0 == b_idx.size:
+                    seg = lvl[b0:b1]
+                    seg *= frac[r0 + b0:r0 + b1]
+                    rgb[r0 + b0:r0 + b1] += seg
+                else:
+                    mb = as_b[r0:r1]
+                    rgb[r0:r1][mb] += lvl[mb] * frac[r0:r1][mb]
+    else:
+        rgb = rgb_u8.astype(np.float32)
+
+    # 2 + 3. Combine luminance levelling factor k_fac with (1 - a) on a single
+    # channel so rgb is multiplied ONCE instead of twice, then add tinted fog
+    # and in-place dither.
+    a_1d = alpha_1d.astype(np.float32, copy=False) / 255.0
+    if level_amount > 0 and peak > 0:
+        l_radius = max(1.0, bw * _VIGNETTE_LEVEL_RADIUS)
+        shrink = max(1, int(l_radius / 4))
+        if _HAS_CV2:
+            if shrink > 1:
+                sw, sh = max(1, bw // shrink), max(1, bh // shrink)
+                stride = 2 if shrink >= 6 else 1
+                small_rgb = _cv2.resize(rgb[::stride, ::stride], (sw, sh),
+                                        interpolation=_cv2.INTER_AREA)
+            else:
+                small_rgb = rgb
+            # Rec. 601 luminance — matches PIL .convert("L"); linear so it
+            # commutes with area-average downscaling.
+            luma_s = (0.299 * small_rgb[..., 0]
+                      + 0.587 * small_rgb[..., 1]
+                      + 0.114 * small_rgb[..., 2]).astype(np.float32)
+            luma_s = _cv2.GaussianBlur(luma_s, (0, 0), l_radius / shrink,
+                                       borderType=_cv2.BORDER_REPLICATE)
+            # Compute the smooth darkening curve on the small grid (~100x fewer
+            # pixels), then upscale bilinearly once.
+            bleed_s = (1.0 - peak / 255.0) * np.maximum(luma_s, 1e-3)
+            k_s = np.clip(_VIGNETTE_ART_BLEED / bleed_s, _VIGNETTE_LEVEL_FLOOR, 1.0)
+            k_s = 1.0 - (1.0 - k_s) * min(1.0, level_amount)
+            k_fac = _cv2.resize(k_s, (bw, bh), interpolation=_cv2.INTER_LINEAR) if shrink > 1 else k_s
+        else:
+            luma_img = Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8), "RGB").convert("L")
+            if shrink > 1:
+                luma_img = luma_img.resize((max(1, bw // shrink), max(1, bh // shrink)),
+                                           Image.Resampling.BOX)
+            luma_img = luma_img.filter(ImageFilter.GaussianBlur(l_radius / shrink))
+            luma = np.asarray(luma_img.resize((bw, bh), Image.Resampling.BILINEAR), dtype=np.float32)
+            bleed = (1.0 - peak / 255.0) * np.maximum(luma, 1e-3)
+            k_fac = np.clip(_VIGNETTE_ART_BLEED / bleed, _VIGNETTE_LEVEL_FLOOR, 1.0)
+            k_fac = 1.0 - (1.0 - k_fac) * min(1.0, level_amount)
+        # Apply vertical ramp and fold in (1 - a) in-place on the 1-channel weight.
+        ramp_w = (ramp_f / peak)[:, None]
+        k_fac -= 1.0
+        k_fac *= ramp_w
+        k_fac += 1.0
+        k_fac *= (1.0 - a_1d)[:, None]
+        rgb *= k_fac[:, :, None]
+    else:
+        rgb *= (1.0 - a_1d)[:, None, None]
+
+    a = a_1d[:, None, None]
+    solid = tint.info.get("_solid_rgb")
+    if solid is not None:
+        rgb += np.array(solid, dtype=np.float32).reshape(1, 1, 3) * a
+    else:
+        col = (tint.info["_rgb_arr"].astype(np.float32) if "_rgb_arr" in tint.info
+               else np.asarray(tint if tint.mode == "RGB" else tint.convert("RGB"), dtype=np.float32))
+        col *= a
+        rgb += col
+    _add_dither_inplace(rgb)
+    np.rint(rgb, out=rgb)
+    np.clip(rgb, 0.0, 255.0, out=rgb)
+    out_rgb = rgb.astype(np.uint8)
+    if band.mode == "RGBA" and band.getchannel("A").getextrema()[0] < 255:
+        out = raw.copy()
+        out[..., :3] = out_rgb
+        image.paste(Image.fromarray(out, "RGBA"), (x0, y0))
+    else:
+        image.paste(Image.fromarray(out_rgb, "RGB"), (x0, y0))
 
 
 # Genre-specific tint multipliers (R, G, B) for the fallback canvas.
@@ -4959,12 +5339,6 @@ def _build_poster(
     # too — see the top gradient below.
     _sash_shown = cfg.sash_mode != "hidden" and sash_result is not None
 
-    # Snapshot the artwork *before* the vignette gradients darken it. The frosted
-    # bar/notch/sash sample their tint colour from this, not the graded image —
-    # otherwise the near-black top/bottom the gradients paint on drags the sampled
-    # colour to grey (e.g. a blue sky reads as white behind the notch).
-    _frost_color_src = image.copy()
-
     _slider_amount = min(1.0, max(0.0, cfg.vignette_color_saturation) / _VIGNETTE_SAT_FULL)
     # How hard the band is being asked to wash the art out, for the levelling pass.
     # Both sliders ask for it — colour lays a tint over the art, blur melts it — so
@@ -5014,7 +5388,11 @@ def _build_poster(
     def _band_paint(field: Image.Image, deepest_row: int) -> tuple[float, float, float]:
         """Mean colour along a tint field's peak-alpha edge — what the eye sees
         where the band is strongest, before the art bleeding through lightens it."""
-        row = np.asarray(field.convert("RGB"), dtype=np.float32)[deepest_row]
+        solid = field.info.get("_solid_rgb")
+        if solid is not None:
+            return tuple(float(c) for c in solid)
+        row = np.asarray(field if field.mode == "RGB" else field.convert("RGB"),
+                         dtype=np.float32)[deepest_row]
         return tuple(float(c) for c in row.mean(axis=0))
 
     # --- Band geometry ---
@@ -5043,6 +5421,32 @@ def _build_poster(
     _top_tinted    = _tg_preset is not None and _top_enabled
     _bottom_tinted = _bg_preset is not None and _bottom_enabled
 
+    # Determine early whether frosted elements need the whole-poster dominant
+    # colour so we can sample it *before* gradients darken the image without
+    # copying the entire canvas when no tinted vignette needs a full snapshot.
+    _notch_frosted = _sash_shown and cfg.sash_mode == "notch" and cfg.sash_badge_style == "frosted"
+    _sash_poster   = _sash_shown and cfg.sash_mode == "sash" and cfg.sash_poster_color
+    _bar_style = cfg.bar_style
+    if cfg.hide_rating:
+        _bar_style = {"rating_frosted": "frosted", "rating_black": "pure_black"}.get(_bar_style, _bar_style)
+    _bar_frosted   = cfg.rating_display_mode == 4 and _bar_style in ("frosted", "rating_frosted")
+    _ribbon_frosted = (_rank is not None and cfg.trending_style == "ribbon"
+                       and cfg.trending_ribbon_style == "frosted")
+    _score_bar_frosted = (cfg.rating_display_mode == 1 and not cfg.hide_rating
+                          and cfg.score_color_mode == SCORE_COLOR_FROSTED)
+    _want_frost_tint = (
+        _bar_frosted or _notch_frosted or _sash_poster or _ribbon_frosted or _score_bar_frosted
+        or (cinema_run is not None and graphic_badges.wants_frost(cfg.badge_cinema_style))
+        or (cfg.badge_display_mode == 7 and graphic_badges.chips_want_frost(
+            cfg, bool(quality_tokens) and _score_points(quality_tokens) >= cfg.badge_min_score))
+    )
+    # Sample pre-vignette colour now; only copy the full canvas when a tinted
+    # band actually needs un-graded band pixels (after the other band paints).
+    _frost_color_src = image.copy() if (_top_tinted or _bottom_tinted) else None
+    _pre_frost_tint: tuple[float, float, float] | None = (
+        dominant_frost_rgb(image) if (_want_frost_tint and _frost_color_src is None) else None
+    )
+
     def _band_overlay(alpha: np.ndarray) -> Image.Image:
         return Image.fromarray(
             np.broadcast_to(alpha.astype(np.uint8)[:, np.newaxis], (len(alpha), width)).copy(),
@@ -5053,7 +5457,7 @@ def _build_poster(
         top_height = max(1, int(height * top_height_ratio))
         if _top_tinted:
             top_alpha = _vignette_fog_ramp(top_height, top_max_alpha, rising=False)
-            top_overlay = _band_overlay(np.round(top_alpha))
+            top_ramp_1d = np.round(top_alpha).astype(np.uint8)
         else:
             t_top = np.linspace(0, 1, top_height, dtype=np.float32)
             top_overlay = _band_overlay((1 - t_top) * top_max_alpha)
@@ -5068,7 +5472,7 @@ def _build_poster(
                 bottom_alpha = (1 - (1 - t_bot) ** cfg.bottom_gradient_curve) * bottom_max_alpha
             else:
                 bottom_alpha = _vignette_fog_ramp(bottom_height, bottom_max_alpha, rising=True)
-            bottom_overlay = _band_overlay(np.round(bottom_alpha))
+            bottom_ramp_1d = np.round(bottom_alpha).astype(np.uint8)
         else:
             t_bot = np.linspace(0, 1, bottom_height, dtype=np.float32)
             curve = cfg.bottom_gradient_curve or _BOTTOM_GRADIENT_CURVE
@@ -5083,20 +5487,25 @@ def _build_poster(
     # bottom band: it is the larger, and the one the labels sit on.
     _fog_colour = None
     _fog_picks = []
-    _faces = _fog_faces(_frost_color_src) if (_bottom_tinted or _top_tinted) else []
-    if _bottom_tinted:
-        # The art the bottom band covers, plus the seam above it.
-        _fog_picks.append(_fog_pick(
-            _frost_color_src,
-            (0, max(0, bottom_start - int(height * _VIGNETTE_SEAM_H)), width, height),
-            cfg.vignette_color_local, cfg.vignette_color_ramp, _faces,
-        ))
-    if _top_tinted:
-        _fog_picks.append(_fog_pick(
-            _frost_color_src,
-            (0, 0, width, min(height, top_height + int(height * _VIGNETTE_SEAM_H))),
-            cfg.vignette_color_local, cfg.vignette_color_ramp, _faces,
-        ))
+    if _bottom_tinted or _top_tinted:
+        _rgb64 = _downsample_rgb_64(_frost_color_src)
+        _faces = _fog_faces(_frost_color_src, _rgb64=_rgb64)
+        _whole_prof = _fog_profile(_frost_color_src, _faces, _rgb64=_rgb64)
+        if _bottom_tinted:
+            # The art the bottom band covers, plus the seam above it.
+            _fog_picks.append(_fog_pick(
+                _frost_color_src,
+                (0, max(0, bottom_start - int(height * _VIGNETTE_SEAM_H)), width, height),
+                cfg.vignette_color_local, cfg.vignette_color_ramp, _faces,
+                _whole=_whole_prof,
+            ))
+        if _top_tinted:
+            _fog_picks.append(_fog_pick(
+                _frost_color_src,
+                (0, 0, width, min(height, top_height + int(height * _VIGNETTE_SEAM_H))),
+                cfg.vignette_color_local, cfg.vignette_color_ramp, _faces,
+                _whole=_whole_prof,
+            ))
     _fog_picks = [p for p in _fog_picks if p[0] is not None]
     if _fog_picks:
         _fog_colour = max(_fog_picks, key=lambda p: p[1])
@@ -5111,12 +5520,6 @@ def _build_poster(
         # sampled from the art under this band, over frosted and levelled art.
         if _top_tinted:
             _t_tint, _t_conf, _t_second, _t_cover = _fog_colour
-            _vignette_frost_band(
-                image, (0, 0, width, top_height), top_overlay, cfg.vignette_color_blur,
-            )
-            _vignette_level_band(
-                image, (0, 0, width, top_height), top_overlay, _level_amount
-            )
             top_tinted = _vignette_tint_band(
                 _frost_color_src, (0, 0, width, top_height), _t_tint, _t_conf,
                 cfg.vignette_color_saturation, cfg.vignette_color_blur, _t_second,
@@ -5126,10 +5529,13 @@ def _build_poster(
             if _t_conf >= _VIGNETTE_MATCH_MIN_CONF and _slider_amount > 0:
                 # Top band: strongest at the poster's edge, so row 0.
                 _vignette_shown = _band_paint(top_tinted, 0)
-            _vignette_composite(image, 0, top_tinted, top_alpha)
+            _apply_tinted_vignette_band(
+                image, (0, 0, width, top_height), top_ramp_1d, top_alpha,
+                top_tinted, cfg.vignette_color_blur, _level_amount,
+            )
         else:
             top_tinted = Image.new("RGBA", (width, top_height), (0, 0, 0, 0))
-            top_tinted.putalpha(top_overlay)
+            top_tinted.putalpha(top_overlay if not _top_enabled else _band_overlay(top_ramp_1d))
             image.paste(top_tinted, (0, 0), mask=top_tinted)
 
     # --- BOTTOM GRADIENT (vectorised) ---
@@ -5139,12 +5545,6 @@ def _build_poster(
     if _bg_preset is not None:
         if _bottom_tinted:
             _b_tint, _b_conf, _b_second, _b_cover = _fog_colour
-            _vignette_frost_band(
-                image, (0, bottom_start, width, height), bottom_overlay, cfg.vignette_color_blur,
-            )
-            _vignette_level_band(
-                image, (0, bottom_start, width, height), bottom_overlay, _level_amount
-            )
             bottom_tinted = _vignette_tint_band(
                 _frost_color_src, (0, bottom_start, width, height), _b_tint, _b_conf,
                 cfg.vignette_color_saturation, cfg.vignette_color_blur, _b_second,
@@ -5154,10 +5554,13 @@ def _build_poster(
             if _vignette_shown is None and _b_conf >= _VIGNETTE_MATCH_MIN_CONF and _slider_amount > 0:
                 # Bottom band: strongest at the poster's edge, so the last row.
                 _vignette_shown = _band_paint(bottom_tinted, -1)
-            _vignette_composite(image, bottom_start, bottom_tinted, bottom_alpha)
+            _apply_tinted_vignette_band(
+                image, (0, bottom_start, width, height), bottom_ramp_1d, bottom_alpha,
+                bottom_tinted, cfg.vignette_color_blur, _level_amount,
+            )
         else:
             bottom_tinted = Image.new("RGBA", (width, bottom_height), (0, 0, 0, 0))
-            bottom_tinted.putalpha(bottom_overlay)
+            bottom_tinted.putalpha(bottom_overlay if not _bottom_enabled else _band_overlay(bottom_ramp_1d))
             image.paste(bottom_tinted, (0, bottom_start), mask=bottom_tinted)
 
     # --- Badge / quality overlay ---
@@ -5279,6 +5682,7 @@ def _build_poster(
             shadow=cfg.logo_shadow,
             punch=cfg.logo_punch,
             fit=cfg.logo_fit,
+            measure_box=_logo_groups,
         )
     elif fallback_title:
         # ── Genre-aware font selection ────────────────────────────────────────
@@ -5468,7 +5872,10 @@ def _build_poster(
                 centre_y = logo_centre_y(height, cfg.logo_bottom_ratio)
                 logo_y = int(centre_y - text_layer.height / 2)
             logo_drop_shadow(image, text_layer, logo_x, logo_y, cfg.logo_shadow)
-            _logo_box = paste_measured(image, text_layer, logo_x, logo_y)
+            if _logo_groups:
+                _logo_box = paste_measured(image, text_layer, logo_x, logo_y)
+            else:
+                image.paste(text_layer, (logo_x, logo_y), text_layer)
 
 
     if not _logo_groups:
@@ -5479,42 +5886,16 @@ def _build_poster(
     # from ONE whole-poster colour sample, taken from the un-graded artwork. Since
     # they all draw from the same sample they always match automatically — so the
     # bar simply adopts the notch's colour (and, below, its saturation) whenever a
-    # frosted notch is shown, with no separate "match" toggle needed. A tinted
-    # vignette drew from the same sample above; reuse it rather than re-quantising.
-    _notch_frosted = _sash_shown and cfg.sash_mode == "notch" and cfg.sash_badge_style == "frosted"
-    _sash_poster   = _sash_shown and cfg.sash_mode == "sash" and cfg.sash_poster_color
-    # The two "Rating Bar" styles draw the score as a progress fill, which is a
-    # rating cue like any other — so with the rating hidden each falls back to
-    # the plain body it is built on rather than drawing an empty 0% stripe.
-    _bar_style = cfg.bar_style
-    if cfg.hide_rating:
-        _bar_style = {"rating_frosted": "frosted", "rating_black": "pure_black"}.get(_bar_style, _bar_style)
-    _bar_frosted   = cfg.rating_display_mode == 4 and _bar_style in ("frosted", "rating_frosted")
-    _ribbon_frosted = (_rank is not None and cfg.trending_style == "ribbon"
-                       and cfg.trending_ribbon_style == "frosted")
-    # The Rating Bar on the Frosted palette fills with the same tint.
-    _score_bar_frosted = (cfg.rating_display_mode == 1 and not cfg.hide_rating
-                          and cfg.score_color_mode == SCORE_COLOR_FROSTED)
-    _frost_tint: tuple[float, float, float] | None = (
-        dominant_frost_rgb(_frost_color_src)
-        if (_bar_frosted or _notch_frosted or _sash_poster or _ribbon_frosted or _score_bar_frosted
-            or (cinema_run is not None and graphic_badges.wants_frost(cfg.badge_cinema_style))
-            or (cfg.badge_display_mode == 7 and graphic_badges.chips_want_frost(
-                cfg, bool(quality_tokens) and _score_points(quality_tokens) >= cfg.badge_min_score))) else None
-    )
-    # A tinted vignette and a frosted notch sample the same artwork but answer
-    # different questions — the vignette asks what the band's own stretch of art is
-    # made of, the notch what colour the poster is — so they can land some way
-    # apart, which reads as two elements disagreeing.  This option settles it in
-    # the vignette's favour.  It can only ever adopt a colour the vignette is
-    # actually wearing: a band that came out black has no colour to match, and the
-    # notch keeps its own logic rather than tinting from a hue nothing else on the
-    # poster shows.  The frosted bar follows, as it already follows the notch.
+    # frosted notch is shown, with no separate "match" toggle needed.
     _frost_matched = (
         cfg.notch_vignette_color and _notch_frosted and _vignette_shown is not None
     )
     if _frost_matched:
-        _frost_tint = _vignette_shown
+        _frost_tint: tuple[float, float, float] | None = _vignette_shown
+    elif _want_frost_tint:
+        _frost_tint = _pre_frost_tint if _pre_frost_tint is not None else dominant_frost_rgb(_frost_color_src)
+    else:
+        _frost_tint = None
     # Matching gets its own mode rather than the saturation slider or plain
     # reference.  The slider turns a poster colour into a pastel that is not that
     # colour any more; reference keeps the saturation but lifts the Value to make
@@ -5986,6 +6367,7 @@ def _build_poster(
                 tint_rgb         = _frost_tint,
                 text_color       = cfg.rating_text_color,
                 center_run       = _bar_run,
+                in_place         = True,
             )
 
     if _before_rating is not None:
@@ -6036,7 +6418,8 @@ def _build_poster(
                                      body_opacity=cfg.sash_badge_opacity,
                                      chip_offset=cfg.sash_chip_y,
                                      chip_offset_x=cfg.sash_chip_x,
-                                     edge_y=cfg.sash_edge_y)
+                                     edge_y=cfg.sash_edge_y,
+                                     in_place=True)
         else:  # "sash" — diagonal
             _poster_color = _frost_tint if cfg.sash_poster_color else None
             image = draw_award_sash(image, _label_tr, sash_type=sash_type, muted=cfg.muted,
@@ -6047,7 +6430,8 @@ def _build_poster(
                                     frost_reference=_frost_ref,
                                     star=_is_star,
                                     text_color=cfg.sash_text_color,
-                                    side=cfg.sash_side)
+                                    side=cfg.sash_side,
+                                    in_place=True)
 
     # --- Trending rank mark ---
     # After the sash, so the numeral can shrink to clear a notch beside it.
@@ -6161,7 +6545,8 @@ def _draw_trending_rank(image: Image.Image, cfg: "RequestConfig", rank: int,
                                               frost_saturation=cfg.trending_frost_saturation,
                                               frost_reference=frost[1],
                                               text_color=cfg.sash_text_color,
-                                              top_inset=top_inset), footprint
+                                              top_inset=top_inset,
+                                              in_place=True), footprint
     if _rank_centered(cfg):
         # Under the notch (*notch_box*, what it drew), centred on it a small
         # gap below, or with trending_align=edge lined up with a side chip's
@@ -6181,7 +6566,8 @@ def _draw_trending_rank(image: Image.Image, cfg: "RequestConfig", rank: int,
         footprint = trending_rank.number_footprint(w, rank, scale=cfg.trending_scale,
                                                    top=top, center_x=center_x, align=align)
         return trending_rank.draw_rank_number(image, rank, scale=cfg.trending_scale,
-                                              top=top, center_x=center_x, align=align), footprint
+                                              top=top, center_x=center_x, align=align,
+                                              in_place=True), footprint
     max_w = None
     if before is not None:
         w = image.width
@@ -6194,7 +6580,7 @@ def _draw_trending_rank(image: Image.Image, cfg: "RequestConfig", rank: int,
     footprint = trending_rank.number_footprint(image.width, rank, right=right, max_w=max_w,
                                                scale=cfg.trending_scale)
     return trending_rank.draw_rank_number(image, rank, right=right, max_w=max_w,
-                                          scale=cfg.trending_scale), footprint
+                                          scale=cfg.trending_scale, in_place=True), footprint
 
 
 def _claim_footprint(before: np.ndarray, pre: np.ndarray, post: np.ndarray,
@@ -6225,12 +6611,22 @@ def _claim_footprint(before: np.ndarray, pre: np.ndarray, post: np.ndarray,
 _OCCUPIED_DELTA = 30
 
 
+def _occupied_mask_rows(now: np.ndarray, before: np.ndarray, y0: int, y1: int) -> np.ndarray:
+    """Boolean (y1 - y0, W) mask of pixels changed beyond _OCCUPIED_DELTA."""
+    if y1 <= y0:
+        return np.zeros((0, now.shape[1]), dtype=bool)
+    if _HAS_CV2:
+        diff = _cv2.absdiff(now[y0:y1, :, :3], before[y0:y1, :, :3])
+        return diff.sum(axis=2, dtype=np.uint16) > _OCCUPIED_DELTA
+    band = now[y0:y1, :, :3].astype(np.int16) - before[y0:y1, :, :3]
+    return np.abs(band).sum(axis=2) > _OCCUPIED_DELTA
+
+
 def _occupied_cols(now: np.ndarray, before: np.ndarray, y0: int, y1: int) -> np.ndarray:
     """Columns of rows y0..y1 the overlays drew on since ``before`` — the
     logo, rating, sash and any group already placed.  Only the rows a group
-    is trying are compared: the whole canvas is ~13 ms, a band ~0.5 ms."""
-    band = now[y0:y1, :, :3].astype(np.int16) - before[y0:y1, :, :3]
-    return (np.abs(band).sum(axis=2) > _OCCUPIED_DELTA).any(axis=0)
+    is trying are compared."""
+    return _occupied_mask_rows(now, before, y0, y1).any(axis=0)
 
 
 def _group_anchor(cfg: "RequestConfig", anchor: str) -> tuple[bool, bool]:
@@ -6422,9 +6818,19 @@ def _draw_graphic_badges(image: Image.Image, cfg: "RequestConfig", tokens: list[
                              margin, clear, g_gap, g_unit, move=cfg.badge_overflow != "hide")
             continue
         half = max(im.height for _, im in items) / 2 + clear / 2
+        _occ_rows = np.zeros((height, width), dtype=bool)
+        _occ_done = np.zeros(height, dtype=bool)
 
         def band_cols(cy: float) -> np.ndarray:
-            return _occupied_cols(now, before, max(0, int(cy - half)), min(height, int(cy + half) + 1))
+            y0, y1 = max(0, int(cy - half)), min(height, int(cy + half) + 1)
+            if y1 <= y0:
+                return np.zeros(width, dtype=bool)
+            missing = np.flatnonzero(~_occ_done[y0:y1])
+            if missing.size:
+                u0, u1 = y0 + int(missing[0]), y0 + int(missing[-1]) + 1
+                _occ_rows[u0:u1] = _occupied_mask_rows(now, before, u0, u1)
+                _occ_done[u0:u1] = True
+            return _occ_rows[y0:y1].any(axis=0)
 
         top, right = _group_anchor(cfg, group.anchor)
         beside_chip = (spread_beside_chip and group.anchor == "chip" and cfg.sash_mode == "notch"
@@ -7764,6 +8170,7 @@ async def _run_background_jobs() -> None:
         asyncio.create_task(_trending_fetch_loop()),
         asyncio.create_task(watchlist.watchlist_refresh_loop(_HTTP_CLIENT, _on_watchlist_change)),
         asyncio.create_task(art_overrides.remote_sync_loop(_HTTP_CLIENT)),
+        asyncio.create_task(box_office.prewarm_loop(_HTTP_CLIENT)),
     ]
     try:
         # A loop that ends (a disabled feature returns at once) or fails
@@ -7814,17 +8221,11 @@ def _text_bbox_in(font_path: str, size: int, text: str, shaped: bool) -> tuple[f
     return _MEASURE_DRAW.textbbox((0, 0), text, font=_load_font_in(font_path, size, shaped))
 
 
-# libwebp's effort level.  Pillow's default (4) spends ~55 ms on a 500x750
-# poster; 2 takes ~23 ms for files about 1.5% larger at the same quality, and
-# encoding was a fifth of all render CPU.  3 is no faster than 4.
-_WEBP_METHOD = 2
-
-
 def _encode_poster(img: Image.Image) -> bytes:
     """Encode a finished composite in the configured output format."""
     buf = io.BytesIO()
     if _cfg.IMAGE_FORMAT == "webp":
-        img.convert("RGB").save(buf, format="WEBP", quality=_cfg.WEBP_QUALITY, method=_WEBP_METHOD)
+        img.convert("RGB").save(buf, format="WEBP", quality=_cfg.WEBP_QUALITY, method=_cfg.WEBP_METHOD)
     else:
         img.convert("RGB").save(buf, format=_cfg.IMAGE_FORMAT.upper(), quality=_cfg.JPEG_QUALITY)
     return buf.getvalue()
@@ -12099,6 +12500,7 @@ async def get_poster(
         # gather completes so it never blocks rating coalescing.
         _backdrop_rescued = False
         _detection_deferred = False
+        _status_prefetch = _blockbuster_prefetch = None
         _vc = tmdb_data.get("vote_count")
         _vote_detection_ok = _detection_vote_ok(_vc)
 
@@ -12562,6 +12964,12 @@ async def get_poster(
 
                 _image_coro = _fetch_image_and_schedule_detection()
 
+        # A movie's release status and its year's top-grossing list need only
+        # the metadata in hand, but are read after the rating, which waits out
+        # the MDBList batch window.  Started now, they run under that wait and
+        # the art fetch; the reads below then come from the cache they fill.
+        _status_prefetch, _blockbuster_prefetch = _start_release_prefetch(
+            client, rcfg, type, tmdb_id, tmdb_data, has_tmdb_id, effective_tmdb_key)
 
         # Anime ranks on the anime lists, whichever id the poster was asked
         # for by (see _anime_trending_keys); everything else on TMDB's.
@@ -12965,6 +13373,7 @@ async def get_poster(
             # with the request; otherwise the slot simply doesn't fire.
             if (type in ("tv", "series")
                     or (has_tmdb_id and effective_tmdb_key)):
+                await _settle_prefetch(_status_prefetch)
                 _release_status = await fetch_release_status(
                     client, tmdb_id, effective_tmdb_key, type,
                     tmdb_data.get("tmdb_status"),
@@ -13140,6 +13549,7 @@ async def get_poster(
         # provisional render when the call fails).
         if (type not in ("tv", "series") and "blockbuster" in rcfg.sash_priority
                 and rcfg.sash_mode != "hidden" and has_tmdb_id and effective_tmdb_key):
+            await _settle_prefetch(_blockbuster_prefetch)
             _is_blockbuster = await box_office.is_blockbuster(
                 client, tmdb_id, tmdb_data.get("tmdb_release_date") or rel, effective_tmdb_key,
             )

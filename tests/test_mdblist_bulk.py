@@ -707,3 +707,41 @@ class MetadataTrueStoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QuotaWindowTests(unittest.TestCase):
+    """The batch window shortens only while the key has quota to spare."""
+
+    def _window(self, limit, remaining, hours_left):
+        import time as _t
+        from ratings import MDBListQuota
+        now = _t.time()
+        with mock.patch.dict(main.MDBLIST_QUOTA, {"k": MDBListQuota(limit, remaining, now + hours_left * 3600, now)}, clear=True):
+            return main._mdblist_batch_window("k", now)
+
+    def test_window_follows_todays_burn_rate(self):
+        # Half the day gone: 100 used projects 100 more against 900 left.
+        self.assertEqual(self._window(1000, 900, 12), 0.01)
+        # 350 used projects 350 more against 650: 1.9x.
+        self.assertEqual(self._window(1000, 650, 12), 0.04)
+        # 550 used projects 550 more against 450: would run short.
+        self.assertEqual(self._window(1000, 450, 12), main._MDBLIST_BATCH_WINDOW_MAX)
+        # Untouched since the reset.
+        self.assertEqual(self._window(1000, 1000, 23.5), 0.01)
+        # A big paid key an hour in, 1000 used: 23000 more against 99000.
+        self.assertEqual(self._window(100000, 99000, 23), 0.01)
+
+    def test_unknown_or_stale_quota_keeps_the_full_window(self):
+        self.assertEqual(main._mdblist_batch_window("never-seen"), main._MDBLIST_BATCH_WINDOW_MAX)
+        self.assertEqual(self._window(1000, 1000, -1), main._MDBLIST_BATCH_WINDOW_MAX)
+
+
+class CallableWindowTests(unittest.IsolatedAsyncioTestCase):
+    _batcher = RatingBatcherTests._batcher
+
+    async def test_a_callable_window_is_asked_per_key(self):
+        b = self._batcher()
+        asked = []
+        b.window = lambda key: asked.append(key) or 0.001
+        await b.fetch(None, "server", [], "movie", media_id="tt1", provider="imdb")
+        self.assertEqual(asked, ["server"])

@@ -310,8 +310,11 @@ class NextEpisodeExpiryTests(unittest.TestCase):
     def test_a_row_tmdb_sent_with_an_aired_next_is_retried_after_hours(self):
         # Slow Horses, fetched the morning after S6E4 with S6E4 still "next".
         from datetime import datetime, timedelta, timezone
+        import time
         yesterday = datetime.now(timezone.utc).date() - timedelta(days=1)
-        self._store("tv_1_en_x", yesterday, cached_ago=60)
+        # Cached since midnight UTC: just after midnight, "60 s ago" was still
+        # the air day, which rightly expires the row.
+        self._store("tv_1_en_x", yesterday, cached_ago=min(60, (time.time() % 86400) / 2))
         self._store("tv_2_en_x", yesterday, cached_ago=self.cache.STALE_NEXT_EPISODE_RETRY + 60)
         self.assertIsNotNone(self.cache.get_cached_tmdb_metadata("tv_1_en_x"))
         self.assertIsNone(self.cache.get_cached_tmdb_metadata("tv_2_en_x"))

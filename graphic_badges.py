@@ -499,18 +499,16 @@ def _glass(image: Image.Image, x: int, y: int, w: int, h: int,
     """The frosted notch's glass for a (w, h) badge at (x, y): the art under
     it blurred beneath the tint at *alpha*, unmasked.  ``tint`` None
     samples one from that art.  Returns (glass, tint), or None off-canvas."""
+    from awards import _blur_region_rgba, _frosted_tint, dominant_frost_rgb
     box = (max(0, x), max(0, y), min(image.width, x + w), min(image.height, y + h))
     if box[2] <= box[0] or box[3] <= box[1]:
         return None
-    under = image.crop(box).convert("RGB")
+    under = image.crop(box)
     if tint is None:
-        from awards import _frosted_tint, dominant_frost_rgb
         tint = tuple(int(round(c)) for c in _frosted_tint(*dominant_frost_rgb(under)))
     glass = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    glass.paste(under.filter(ImageFilter.GaussianBlur(max(2.0, h * 0.35))).convert("RGBA"),
-                (box[0] - x, box[1] - y))
-    frost = Image.new("RGBA", (w, h), (*tint, 0))
-    frost.putalpha(Image.new("L", (w, h), alpha))
+    glass.paste(_blur_region_rgba(under, max(2.0, h * 0.35)), (box[0] - x, box[1] - y))
+    frost = Image.new("RGBA", (w, h), (*tint, alpha))
     return Image.alpha_composite(glass, frost), tint
 
 
@@ -1380,10 +1378,11 @@ def free_run(occupied_cols: np.ndarray, right: bool, margin: int) -> int:
 
 def _shadowed(im: Image.Image) -> tuple[Image.Image, int]:
     """The mark over a soft shadow of itself, for legibility on light art."""
+    from awards import _blur_l
     pad = max(2, im.height // 5)
     sheet = Image.new("L", (im.width + 2 * pad, im.height + 2 * pad), 0)
     sheet.paste(im.getchannel("A").point(lambda v: v * 120 // 255), (pad, pad))
-    sheet = sheet.filter(ImageFilter.GaussianBlur(max(1.0, im.height * 0.07)))
+    sheet = _blur_l(sheet, max(1.0, im.height * 0.07))
     lift = max(1, im.height // 30)
     out = Image.new("RGBA", sheet.size, (0, 0, 0, 0))
     out.putalpha(sheet)

@@ -268,7 +268,7 @@ except ValueError:
     CDN_CACHE_TTL     = 0
     CDN_CACHE_TTL_VALID = False
 # Image format for composited posters (webp or jpeg). webp is recommended.
-IMAGE_FORMAT          = _env('IMAGE_FORMAT', "webp", group='Output', kind='choice', label='Image format', help='Output format for composited posters. WebP is smaller at the same quality.', choices=('webp', 'jpeg')).lower()
+IMAGE_FORMAT          = _env('IMAGE_FORMAT', "webp", group='Output', kind='choice', label='Image format', help='Output format for composited posters. WebP is smaller at the same quality; JPEG encodes about 10x faster (~2 ms vs ~21 ms per poster) for files about 40% larger at q85, which helps a render-bound instance. Changing it re-renders every cached poster.', choices=('webp', 'jpeg')).lower()
 # Normalise the common "jpg" alias to the canonical "jpeg" that PIL's save()
 # registry and the image/* media type both expect — "JPG" is not a valid PIL
 # format string and would crash every render.
@@ -280,6 +280,10 @@ if IMAGE_FORMAT not in ("webp", "jpeg"):
 JPEG_QUALITY          = max(70, min(95, int(_env('JPEG_QUALITY', "85", group='Output', kind='int', label='JPEG quality', help='JPEG output quality (70-95), used when the image format is jpeg. Raise to 92 for higher fidelity; lower to reduce file size.', min=70, max=95))))
 # WebP output quality for composited posters (70-95).
 WEBP_QUALITY          = max(70, min(95, int(_env('WEBP_QUALITY', "85", group='Output', kind='int', label='WebP quality', help='WebP output quality (70-95), used when the image format is webp (the default). Higher is better quality and larger files.', min=70, max=95))))
+# libwebp effort (0-6). Lower encodes faster at the same quality for slightly
+# larger files; on a 500x750 poster 2 takes ~21 ms, 0 ~13 ms (+16% bytes).
+# Not part of the render cache key: cached posters stay valid when it changes.
+WEBP_METHOD           = max(0, min(6, int(_env('WEBP_METHOD', "2", group='Output', kind='int', label='WebP encoder effort', help='libwebp effort (0-6), used when the image format is webp. Lower encodes faster for slightly larger files at the same quality: 0 is ~40% faster than the default 2 for ~16% larger posters. Above 2 is slower for little gain. Changing it keeps cached posters.', min=0, max=6))))
 
 # Feature Defaults 
 

@@ -998,6 +998,7 @@ def draw_frosted_bar(
     tint_rgb: tuple[float, float, float] | None = None,
     text_color: tuple[int, int, int] | None = None,
     center_run=None,
+    in_place: bool = False,
 ) -> Image.Image:
     """Full-width frosted glass or dark-body strip near the bottom of the poster.
 
@@ -1058,10 +1059,11 @@ def draw_frosted_bar(
 
     def _build_frosted_base() -> tuple[Image.Image, float, float, float]:
         """Returns (bar_img, raw_h, raw_s, raw_v) — HSV before lightening."""
+        from awards import _blur_region_rgba
         blur_r = _blur_r
         cy = max(0, bar_y); ch = min(bar_h, height - cy)
         reg = image.crop((0, cy, width, cy + ch))
-        blr = reg.filter(ImageFilter.GaussianBlur(radius=blur_r))
+        blr = _blur_region_rgba(reg, blur_r)
         # Colour comes from tint_rgb (a whole-poster sample the caller takes from
         # the un-graded art); the blurred texture still comes from the image.
         if tint_rgb is not None:
@@ -1070,7 +1072,7 @@ def draw_frosted_bar(
             dr, dg, db = dominant_frost_rgb(image)
         _h2, _s2, _v2 = _cs.rgb_to_hsv(dr/255, dg/255, db/255)
         r, g, b = _frosted_tint(dr, dg, db, frost_saturation, frost_reference)
-        base  = blr.resize((width, bar_h), Image.Resampling.LANCZOS).convert("RGBA")
+        base  = blr if blr.size == (width, bar_h) else blr.resize((width, bar_h), Image.Resampling.LANCZOS)
         frost = Image.new("RGBA", (width, bar_h), (r, g, b, int(frost_opacity*255)))
         return Image.alpha_composite(base, frost), _h2, _s2, _v2
 
@@ -1121,7 +1123,7 @@ def draw_frosted_bar(
     elif style == "rating_frosted":
         stripe = _rating_stripe
         ink = (*_frosted_ink(), 248)
-        bar_img, _, _, _ = _build_frosted_base()
+        bar_img, _h2, _s2, _v2 = _build_frosted_base()
         if fill_color is not None:
             # Explicit colour chosen — use it directly.
             fill_col = fill_color
@@ -1130,8 +1132,6 @@ def draw_frosted_bar(
             # Colour Sample: derive a contrasting fill from the bar's own tint.
             # The frosted tint's effective value ≈ _v2*0.4+0.60; if the bar is
             # light go darker, if dark go brighter — always staying hue-matched.
-            bar_img2, _h2, _s2, _v2 = _build_frosted_base()
-            bar_img = bar_img2  # rebuild with HSV data
             _tint_v = _v2 * 0.4 + 0.60
             if _tint_v > 0.70:  # light bar → dark fill
                 _fv = max(0.15, _v2 * 0.30)
@@ -1185,7 +1185,7 @@ def draw_frosted_bar(
         td.text((width - h_pad - rw, text_y), right_text, font=font, fill=ink)
 
     bar_final = Image.alpha_composite(bar_img, txt_layer)
-    result    = image.copy()
+    result    = image if in_place else image.copy()
     result.alpha_composite(bar_final, (0, bar_y))
     return result
 

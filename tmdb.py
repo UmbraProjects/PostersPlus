@@ -21,6 +21,44 @@ import tvdb
 logger = logging.getLogger(__name__)
 from PIL import Image, ImageChops, ImageEnhance, ImageFilter
 
+try:
+    import cv2 as _cv2
+    _HAS_CV2 = True
+except Exception:
+    _cv2 = None
+    _HAS_CV2 = False
+
+
+def _dilate_mask_l(sheet: Image.Image, ksize: int) -> Image.Image:
+    """Square max-filter of size *ksize* on an 'L' mask (bit-identical to
+    PIL MaxFilter, ~500x faster via OpenCV SIMD dilation)."""
+    if _HAS_CV2 and ksize > 1:
+        arr = np.asarray(sheet)
+        kernel = np.ones((ksize, ksize), dtype=np.uint8)
+        return Image.fromarray(_cv2.dilate(arr, kernel, borderType=_cv2.BORDER_REPLICATE), "L")
+    return sheet.filter(ImageFilter.MaxFilter(ksize))
+
+
+def _blur_mask_l(sheet: Image.Image, radius: float) -> Image.Image:
+    """Gaussian blur on an 'L' mask using OpenCV (with box-shrink + bilinear
+    upscale for wide radii, matching _vignette_frost_band's speed-up)."""
+    if radius <= 0.0:
+        return sheet
+    if _HAS_CV2:
+        arr = np.asarray(sheet)
+        h, w = arr.shape[:2]
+        shrink = max(1, int(radius / 4))
+        if shrink > 2:
+            small = _cv2.resize(arr, (max(1, w // shrink), max(1, h // shrink)),
+                                interpolation=_cv2.INTER_AREA)
+            small = _cv2.GaussianBlur(small, (0, 0), radius / shrink,
+                                      borderType=_cv2.BORDER_REPLICATE)
+            out = _cv2.resize(small, (w, h), interpolation=_cv2.INTER_LINEAR)
+        else:
+            out = _cv2.GaussianBlur(arr, (0, 0), radius, borderType=_cv2.BORDER_REPLICATE)
+        return Image.fromarray(out, "L")
+    return sheet.filter(ImageFilter.GaussianBlur(radius))
+
 # SVG title-logo support — TMDB serves many of its highest-voted logos as SVG.
 # Soft import so the service still runs (PNG-only) if cairosvg is unavailable.
 try:
@@ -141,10 +179,13 @@ def _canvas_suffix(size: tuple[int, int]) -> str:
 def normalise_poster(image: Image.Image, size: tuple[int, int] | None = None) -> Image.Image:
     target_w, target_h = size or poster_canvas()
     src_w, src_h = image.size
+    if (src_w, src_h) == (target_w, target_h):
+        return image
     scale = max(target_w / src_w, target_h / src_h)
     new_w = round(src_w * scale)
     new_h = round(src_h * scale)
-    image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    if (new_w, new_h) != (src_w, src_h):
+        image = image.resize((new_w, new_h), Image.Resampling.LANCZOS, reducing_gap=2.0)
     left = round((new_w - target_w) / 2)
     top  = round((new_h - target_h) / 2)
     return image.crop((left, top, left + target_w, top + target_h))
@@ -185,16 +226,16 @@ def ensure_light_logo(logo: Image.Image) -> Image.Image:
     (alpha >= 128); the recolour covers every visible pixel (alpha > 30) so
     anti-aliased edges lighten with the ink.
     """
-    rgba = np.asarray(logo.convert("RGBA"), dtype=np.float32)
-    alpha = rgba[:, :, 3]
-    solid = alpha >= 128
+    raw = np.asarray(logo if logo.mode == "RGBA" else logo.convert("RGBA"))
+    alpha_u8 = raw[:, :, 3]
+    solid = alpha_u8 >= 128
     n_solid = int(solid.sum())
     if n_solid < 20:
         return logo
 
-    rgb = rgba[:, :, :3]
-    v = rgb.max(axis=2)
-    ink = solid & (v < _INK_V_BLACK)
+    rgb_u8 = raw[:, :, :3]
+    v_u8 = rgb_u8.max(axis=2)
+    ink = solid & (v_u8 < _INK_V_BLACK)
     ink_frac = float(ink.sum()) / n_solid
     if ink_frac < _INK_MIN_FRAC:
         return logo
@@ -207,7 +248,7 @@ def ensure_light_logo(logo: Image.Image) -> Image.Image:
         step[:, 1:] |= grown[:, :-1]
         step[:, :-1] |= grown[:, 1:]
         grown = step
-    touch_other = int((grown & solid & (v >= _INK_V_RAMP)).sum())
+    touch_other = int((grown & solid & (v_u8 >= _INK_V_RAMP)).sum())
     touch_clear = int((grown & ~solid).sum())
     enclose = touch_other / max(1, touch_other + touch_clear)
     if enclose > _INK_MAX_ENCLOSE:
@@ -216,6 +257,11 @@ def ensure_light_logo(logo: Image.Image) -> Image.Image:
             f"content {enclose:.0%}) — outline, card or shadow"
         )
         return logo
+
+    rgba = raw.astype(np.float32)
+    alpha = rgba[:, :, 3]
+    rgb = rgba[:, :, :3]
+    v = v_u8.astype(np.float32)
 
     # HLS lightness flip, per pixel, keeping hue and HLS saturation.
     c = rgb / 255.0
@@ -992,7 +1038,8 @@ def _store_art(cache_key: str, image: Image.Image) -> None:
     """Cache *image* as JPEG q92 RGB (no alpha needed for base art; restoring
     it on load is free).  Blocking: an encode and an fsync'd write."""
     buf = io.BytesIO()
-    image.convert("RGB").save(buf, format="JPEG", quality=92)
+    rgb = image if image.mode == "RGB" else image.convert("RGB")
+    rgb.save(buf, format="JPEG", quality=92)
     set_cached_tmdb_poster(cache_key, buf.getvalue())
 
 
@@ -1071,9 +1118,13 @@ async def fetch_poster_image(
         return image
 
     def _decode_and_store(content: bytes) -> Image.Image:
-        image = normalise_poster(Image.open(io.BytesIO(content)).convert("RGBA"))
+        tw, th = poster_canvas()
+        raw = Image.open(io.BytesIO(content))
+        if raw.format == "JPEG" and raw.width >= tw * 2 and raw.height >= th * 2:
+            raw.draft("RGB", (tw * 2, th * 2))
+        image = normalise_poster(raw.convert("RGB"))
         _store_art(poster_cache_key, image)
-        return image
+        return image.convert("RGBA")
 
     if poster_path.startswith("custom:"):
         # An operator's pasted or uploaded image, already on disk.
@@ -1379,9 +1430,12 @@ def normalise_landscape(image: Image.Image) -> Image.Image:
     """
     target_w, target_h = LANDSCAPE_WIDTH, LANDSCAPE_HEIGHT
     src_w, src_h = image.size
+    if (src_w, src_h) == (target_w, target_h):
+        return image
     scale = max(target_w / src_w, target_h / src_h)
     new_w, new_h = round(src_w * scale), round(src_h * scale)
-    image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    if (new_w, new_h) != (src_w, src_h):
+        image = image.resize((new_w, new_h), Image.Resampling.LANCZOS, reducing_gap=2.0)
     left = round((new_w - target_w) / 2)
     top  = round((new_h - target_h) / 2)
     return image.crop((left, top, left + target_w, top + target_h))
@@ -1411,9 +1465,12 @@ async def fetch_landscape_image(
         return image
 
     def _decode_and_store(content: bytes) -> Image.Image:
-        image = normalise_landscape(Image.open(io.BytesIO(content)).convert("RGBA"))
+        raw = Image.open(io.BytesIO(content))
+        if raw.format == "JPEG" and raw.width >= LANDSCAPE_WIDTH * 2 and raw.height >= LANDSCAPE_HEIGHT * 2:
+            raw.draft("RGB", (LANDSCAPE_WIDTH * 2, LANDSCAPE_HEIGHT * 2))
+        image = normalise_landscape(raw.convert("RGB"))
         _store_art(cache_key, image)
-        return image
+        return image.convert("RGBA")
 
     if backdrop_path.startswith("custom:"):
         # An operator's pasted or uploaded image, already on disk.
@@ -4287,8 +4344,8 @@ def logo_drop_shadow(image: Image.Image, logo: Image.Image, x: int, y: int,
         sheet = Image.new("L", (mask.width + 2 * pad, mask.height + 2 * pad), 0)
         sheet.paste(mask.point(lambda a, _al=alpha: a * _al // 255), (pad, pad))
         if grow > 0:
-            sheet = sheet.filter(ImageFilter.MaxFilter(2 * grow + 1))
-        sheet = sheet.filter(ImageFilter.GaussianBlur(radius))
+            sheet = _dilate_mask_l(sheet, 2 * grow + 1)
+        sheet = _blur_mask_l(sheet, radius)
         sx, sy = x + round(dx * h) - pad, y + round(dy * h) - pad
         left, top = max(0, -sx), max(0, -sy)
         right  = min(sheet.width,  image.width  - sx)
@@ -4315,6 +4372,7 @@ def composite_logo(
     shadow: str = "off",
     punch: float = 0.0,
     fit: str = "box",
+    measure_box: bool = True,
 ):
     """Draw *logo* onto *image*; returns the box it visibly covers (shadow
     left out), or None when nothing was drawn."""
@@ -4344,83 +4402,88 @@ def composite_logo(
         return
     cropped = logo
 
-    # ── Normalise size by AREA, with hard caps on both axes ───────────────────
-    # We target a constant geometric mean of the two caps (one overall size),
-    # then clamp to the caps preserving aspect ratio.  BOTH caps are now hard
-    # ceilings: the configured Width and Height ratios are the true maximums a
-    # logo will ever reach.  Fill stretching may grow a slim logo UP TO a cap,
-    # but never past it — so logos can't sprawl toward the borders.
-    aspect = lw / lh
-
-    # Orientation, kept for the sizing telemetry below: -1 (tall) .. +1 (wide).
-    orient    = float(np.tanh(np.log(aspect / LOGO_ASPECT_PIVOT)))
-    eff_max_w = max_w                       # hard width ceiling
-    eff_max_h = max_h                       # hard height ceiling (already ≤ abs_max_h)
-
-    # Overall size target comes from the BASE caps so the average logo size stays
-    # consistent; the flex only relaxes the clamp for the dominant axis.
-    target = (max_w * max_h) ** 0.5
-    new_w  = target * (aspect ** 0.5)
-    new_h  = target / (aspect ** 0.5)
-
-    if new_w > eff_max_w:
-        new_h *= eff_max_w / new_w
-        new_w  = eff_max_w
-    if new_h > eff_max_h:
-        new_w *= eff_max_h / new_h
-        new_h  = eff_max_h
-
-    # Single-axis fill: after the aspect-preserving clamp, one dimension is
-    # pinned to its cap and the other sits below it.  Stretch that under-cap
-    # dimension toward its cap to give slim logos more presence.
-    #
-    # The HEIGHT stretch only fires for genuinely short logos (below the
-    # trigger fraction of the cap) and its strength scales with HOW short the
-    # logo is: one sitting right at the trigger gets ~1.0× (barely touched),
-    # while a far-shorter logo ramps up toward the full LOGO_FILL_STRETCH.
-    # This avoids over-stretching logos that only just qualify.
-    if not LOGO_STRETCH_DISABLED and LOGO_FILL_STRETCH > 1.0:
-        trigger_h = eff_max_h * LOGO_FILL_HEIGHT_TRIGGER
-        if new_h < trigger_h:
-            t      = (trigger_h - new_h) / trigger_h          # 0 at trigger → 1 near zero
-            factor = 1.0 + t * (LOGO_FILL_STRETCH - 1.0)
-            new_h  = min(eff_max_h, float(abs_max_h), new_h * factor)
-        elif new_w < eff_max_w:
-            new_w = min(eff_max_w, new_w * LOGO_FILL_STRETCH)
-
-    # Logo sizing telemetry — gated behind DEBUG_LOGO_SIZING (off by default).
-    if DEBUG_LOGO_SIZING:
-        logger.info(
-            f"LOGO SIZE: src={lw}x{lh} aspect={aspect:.2f} orient={orient:+.2f} "
-            f"max_h={max_h} eff_max_h={eff_max_h:.0f} → final={int(new_w)}x{int(new_h)}"
-        )
-
-    logo = logo.resize((max(1, int(new_w)), max(1, int(new_h))), Image.Resampling.LANCZOS)
-
-    # ── Position ─────────────────────────────────────────────────────────────
-    # Two anchor modes:
-    #
-    # Centre (default): every logo shares a fixed vertical midline — the
-    # midpoint of the tallest possible logo zone.  Tall logos bottom out at the
-    # intended baseline; shorter logos float up to share the same centre.
-    # Visually consistent for centred designs where logo size varies a lot.
-    #
-    # Bottom anchor (legacy): every logo's bottom edge is pinned to the same
-    # baseline regardless of height, so logos only ever expand upward.  Useful
-    # when the logo is placed low and a centred expansion would spill the top
-    # edge into an overlay sitting above it.
-    logo_x = round((width - logo.width) / 2)
-    if bottom_anchor:
-        baseline = height - int(height * bottom_ratio)
-        logo_y   = baseline - logo.height
+    # Try optical fit first when asked so we don't pay for a box-fit LANCZOS
+    # resize only to discard it.
+    placed = (
+        optical_fit(cropped, width, height, max_w, max_h, bottom_ratio, bottom_anchor)
+        if fit == "optical" else None
+    )
+    if placed is not None:
+        logo, logo_x, logo_y = placed
     else:
-        centre_y = logo_centre_y(height, bottom_ratio)
-        logo_y   = int(centre_y - logo.height / 2)
+        # ── Normalise size by AREA, with hard caps on both axes ──────────────
+        # We target a constant geometric mean of the two caps (one overall size),
+        # then clamp to the caps preserving aspect ratio.  BOTH caps are now hard
+        # ceilings: the configured Width and Height ratios are the true maximums a
+        # logo will ever reach.  Fill stretching may grow a slim logo UP TO a cap,
+        # but never past it — so logos can't sprawl toward the borders.
+        aspect = lw / lh
 
-    if fit == "optical":
-        placed = optical_fit(cropped, width, height, max_w, max_h, bottom_ratio, bottom_anchor)
-        if placed is not None:
-            logo, logo_x, logo_y = placed
+        # Orientation, kept for the sizing telemetry below: -1 (tall) .. +1 (wide).
+        orient    = float(np.tanh(np.log(aspect / LOGO_ASPECT_PIVOT)))
+        eff_max_w = max_w                       # hard width ceiling
+        eff_max_h = max_h                       # hard height ceiling (already ≤ abs_max_h)
+
+        # Overall size target comes from the BASE caps so the average logo size stays
+        # consistent; the flex only relaxes the clamp for the dominant axis.
+        target = (max_w * max_h) ** 0.5
+        new_w  = target * (aspect ** 0.5)
+        new_h  = target / (aspect ** 0.5)
+
+        if new_w > eff_max_w:
+            new_h *= eff_max_w / new_w
+            new_w  = eff_max_w
+        if new_h > eff_max_h:
+            new_w *= eff_max_h / new_h
+            new_h  = eff_max_h
+
+        # Single-axis fill: after the aspect-preserving clamp, one dimension is
+        # pinned to its cap and the other sits below it.  Stretch that under-cap
+        # dimension toward its cap to give slim logos more presence.
+        #
+        # The HEIGHT stretch only fires for genuinely short logos (below the
+        # trigger fraction of the cap) and its strength scales with HOW short the
+        # logo is: one sitting right at the trigger gets ~1.0× (barely touched),
+        # while a far-shorter logo ramps up toward the full LOGO_FILL_STRETCH.
+        # This avoids over-stretching logos that only just qualify.
+        if not LOGO_STRETCH_DISABLED and LOGO_FILL_STRETCH > 1.0:
+            trigger_h = eff_max_h * LOGO_FILL_HEIGHT_TRIGGER
+            if new_h < trigger_h:
+                t      = (trigger_h - new_h) / trigger_h          # 0 at trigger → 1 near zero
+                factor = 1.0 + t * (LOGO_FILL_STRETCH - 1.0)
+                new_h  = min(eff_max_h, float(abs_max_h), new_h * factor)
+            elif new_w < eff_max_w:
+                new_w = min(eff_max_w, new_w * LOGO_FILL_STRETCH)
+
+        # Logo sizing telemetry — gated behind DEBUG_LOGO_SIZING (off by default).
+        if DEBUG_LOGO_SIZING:
+            logger.info(
+                f"LOGO SIZE: src={lw}x{lh} aspect={aspect:.2f} orient={orient:+.2f} "
+                f"max_h={max_h} eff_max_h={eff_max_h:.0f} → final={int(new_w)}x{int(new_h)}"
+            )
+
+        logo = logo.resize((max(1, int(new_w)), max(1, int(new_h))),
+                           Image.Resampling.LANCZOS, reducing_gap=2.0)
+
+        # ── Position ─────────────────────────────────────────────────────────
+        # Two anchor modes:
+        #
+        # Centre (default): every logo shares a fixed vertical midline — the
+        # midpoint of the tallest possible logo zone.  Tall logos bottom out at the
+        # intended baseline; shorter logos float up to share the same centre.
+        # Visually consistent for centred designs where logo size varies a lot.
+        #
+        # Bottom anchor (legacy): every logo's bottom edge is pinned to the same
+        # baseline regardless of height, so logos only ever expand upward.  Useful
+        # when the logo is placed low and a centred expansion would spill the top
+        # edge into an overlay sitting above it.
+        logo_x = round((width - logo.width) / 2)
+        if bottom_anchor:
+            baseline = height - int(height * bottom_ratio)
+            logo_y   = baseline - logo.height
+        else:
+            centre_y = logo_centre_y(height, bottom_ratio)
+            logo_y   = int(centre_y - logo.height / 2)
 
     # ── Background-aware legibility adjustments ──────────────────────────────
     # Sample the poster region the logo will cover (pure poster, sampled before
@@ -4430,11 +4493,12 @@ def composite_logo(
     cx2 = min(width,  logo_x + logo.width)
     cy2 = min(height, logo_y + logo.height)
     if cx2 > cx1 and cy2 > cy1:
-        bg_arr = np.array(image.crop((cx1, cy1, cx2, cy2)).convert("RGB"),
-                          dtype=np.float32)
-        bg_r   = float(bg_arr[:, :, 0].mean())
-        bg_g   = float(bg_arr[:, :, 1].mean())
-        bg_b   = float(bg_arr[:, :, 2].mean())
+        bg_crop = image.crop((cx1, cy1, cx2, cy2))
+        if bg_crop.mode in ("RGB", "RGBA"):
+            bg_mean = np.asarray(bg_crop)[:, :, :3].mean(axis=(0, 1))
+        else:
+            bg_mean = np.asarray(bg_crop.convert("RGB")).mean(axis=(0, 1))
+        bg_r, bg_g, bg_b = float(bg_mean[0]), float(bg_mean[1]), float(bg_mean[2])
         bg_lum = (0.2126 * bg_r + 0.7152 * bg_g + 0.0722 * bg_b) / 255.0
 
         # ── Experimental: contrast rescue ────────────────────────────────────
@@ -4479,6 +4543,9 @@ def composite_logo(
     if punch > 0:
         logo = punch_logo(logo, punch)
     logo_drop_shadow(image, logo, logo_x, logo_y, shadow)
+    if not measure_box:
+        image.paste(logo, (logo_x, logo_y), logo)
+        return None
     return paste_measured(image, logo, logo_x, logo_y)
 
 
@@ -4505,15 +4572,22 @@ LOGO_EDGE_MARGIN    = 0.04   # the ink stays this share of the width clear of ei
 def _ink_geometry(logo: Image.Image):
     """(mass, left, top, right, bottom, cx, cy) of *logo*'s solid ink, or None
     when it has none.  mass is the summed opacity of the ink pixels."""
-    a = np.asarray(logo.getchannel("A"), dtype=np.float32)
-    ink = np.where(a > LOGO_SOLID_ALPHA, a / 255.0, 0.0)
-    mass = float(ink.sum())
-    if mass <= 0:
+    a = np.asarray(logo.getchannel("A"))
+    solid = a > LOGO_SOLID_ALPHA
+    if not solid.any():
         return None
-    ys, xs = np.nonzero(ink)
-    cx = float((ink.sum(axis=0) * np.arange(ink.shape[1])).sum() / mass)
-    cy = float((ink.sum(axis=1) * np.arange(ink.shape[0])).sum() / mass)
-    return mass, int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max()), cx, cy
+    ink = np.where(solid, a, np.uint8(0))
+    col_sum = ink.sum(axis=0, dtype=np.uint64)
+    row_sum = ink.sum(axis=1, dtype=np.uint64)
+    total_u = int(col_sum.sum())
+    if total_u <= 0:
+        return None
+    nz_x = np.flatnonzero(col_sum)
+    nz_y = np.flatnonzero(row_sum)
+    mass = total_u / 255.0
+    cx = float((col_sum.astype(np.float64) * np.arange(len(col_sum))).sum() / total_u)
+    cy = float((row_sum.astype(np.float64) * np.arange(len(row_sum))).sum() / total_u)
+    return mass, int(nz_x[0]), int(nz_y[0]), int(nz_x[-1]), int(nz_y[-1]), cx, cy
 
 
 def optical_fit(logo: Image.Image, width: int, height: int, max_w: int, max_h: int,
@@ -4536,7 +4610,7 @@ def optical_fit(logo: Image.Image, width: int, height: int, max_w: int, max_h: i
     cap_h = max_h * (LOGO_STACKED_HEIGHT if ink_w < 1.2 * ink_h else 1.0)
     scale = min(target / optical, max_w / ink_w, cap_h / ink_h)
     logo = logo.resize((max(1, round(logo.width * scale)), max(1, round(logo.height * scale))),
-                       Image.Resampling.LANCZOS)
+                       Image.Resampling.LANCZOS, reducing_gap=2.0)
     geo = _ink_geometry(logo)
     if geo is None:
         return None
@@ -4571,20 +4645,23 @@ def draw_logo_shadow(image: Image.Image, logo: Image.Image, at: tuple[int, int],
     pad = int(radius * 3)
     mask = Image.new("L", (logo.width + 2 * pad, logo.height + 2 * pad), 0)
     mask.paste(logo.getchannel("A"), (pad, pad))
-    mask = mask.filter(ImageFilter.GaussianBlur(radius))
+    mask = _blur_mask_l(mask, radius)
+    sx, sy = at[0] - pad, at[1] - pad
+    left, top = max(0, -sx), max(0, -sy)
+    right, bottom = min(mask.width, image.width - sx), min(mask.height, image.height - sy)
+    if right <= left or bottom <= top:
+        return
+    if left > 0 or top > 0 or right < mask.width or bottom < mask.height:
+        mask = mask.crop((left, top, right, bottom))
     mask = mask.point(lambda v: min(255, int(v * strength * 1.4)))
     layer = Image.new("RGBA", mask.size, (0, 0, 0, 0))
     layer.putalpha(mask)
-    sx, sy = at[0] - pad, at[1] - pad
     if image.mode == "RGBA":
         # alpha_composite needs the layer inside the canvas; paste would also
         # overwrite the canvas's own alpha with the halo's.
-        left, top = max(0, -sx), max(0, -sy)
-        right, bottom = min(layer.width, image.width - sx), min(layer.height, image.height - sy)
-        if right > left and bottom > top:
-            image.alpha_composite(layer.crop((left, top, right, bottom)), (sx + left, sy + top))
+        image.alpha_composite(layer, (sx + left, sy + top))
     else:
-        image.paste(layer, (sx, sy), layer)
+        image.paste(layer, (sx + left, sy + top), layer)
 
 
 # ---------------------------------------------------------------------------

@@ -16,6 +16,7 @@ import math
 import os
 from functools import lru_cache
 
+import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 import fonts
@@ -74,11 +75,13 @@ def _digit_font(ink_h: float) -> tuple[ImageFont.FreeTypeFont, int]:
 
 
 def _shadow(layer: Image.Image, blur: float, alpha: int) -> Image.Image:
-    """A black copy of *layer*'s alpha, blurred, for a soft drop shadow."""
+    """A black copy of *layer*'s alpha, blurred on a 1-channel L mask."""
+    from awards import _blur_l
     a = layer.getchannel("A").point(lambda v: v * alpha // 255)
+    a = _blur_l(a, blur)
     shadow = Image.new("RGBA", layer.size, (0, 0, 0, 0))
     shadow.putalpha(a)
-    return shadow.filter(ImageFilter.GaussianBlur(blur))
+    return shadow
 
 
 def number_box(width: int, scale: float = 1.0, unit: float | None = None) -> tuple[int, int]:
@@ -128,22 +131,9 @@ def _number_origin(w: int, iw: float, right: bool, top: int | None,
     return (w - inset - iw if right else inset), inset
 
 
-def draw_rank_number(image: Image.Image, rank: int, right: bool = False,
-                     max_w: float | None = None, scale: float = 1.0,
-                     top: int | None = None, center_x: float | None = None,
-                     align: str = "center", unit: float | None = None) -> Image.Image:
-    """The rank as a large silver numeral in the top-left (or top-right) corner.
-
-    *scale* sizes it against its default.  *max_w* caps its width in pixels,
-    for when a notch sits beside it: the digits shrink to fit, down to 60 % of
-    their size and no further.  *top* hangs it there instead, centred on
-    *center_x* (under the notch, wherever that is), or with *align* "left" /
-    "right" with that edge there.  *unit* sizes it for a canvas that is not
-    2:3 (see the module notes).
-    """
-    w = image.width
-    u = unit or w
-    text = str(rank)
+@lru_cache(maxsize=64)
+def _rank_number_layers(text: str, u: float, max_w: float | None, scale: float) -> tuple[Image.Image, Image.Image, float]:
+    """Cached (numeral, shadow, pad1) — depends only on rank text and sizing."""
     font, track, ink_w, ink_h, pad, glyphs, adv = _number_layout(u, text, max_w, scale)
     x0 = min(0, glyphs[0][0])
 
@@ -156,23 +146,48 @@ def draw_rank_number(image: Image.Image, rank: int, right: bool = False,
         x += adv[i] + track
 
     # Vertical silver-to-white gradient over the ink, brightest at the head.
-    grad = Image.new("RGBA", (1, lh))
-    for y in range(lh):
-        t = min(1.0, max(0.0, (y - pad) / max(1, ink_h)))
-        t = t ** 1.4
-        grad.putpixel((0, y), tuple(round(_NUM_TOP[i] * (1 - t) + _NUM_BOTTOM[i] * t) for i in range(3)) + (255,))
-    numeral = grad.resize((lw, lh))
-    numeral.putalpha(mask)
-    numeral = numeral.reduce(_SS)
+    ys = np.arange(lh, dtype=np.float32)
+    t = np.clip((ys - pad) / max(1.0, float(ink_h)), 0.0, 1.0) ** 1.4
+    top = np.array(_NUM_TOP, dtype=np.float32)
+    bot = np.array(_NUM_BOTTOM, dtype=np.float32)
+    col = np.rint(top * (1.0 - t[:, None]) + bot * t[:, None]).astype(np.uint8)
+    arr = np.empty((lh, lw, 4), dtype=np.uint8)
+    arr[:, :, :3] = col[:, None, :]
+    arr[:, :, 3] = np.asarray(mask)
+    numeral = Image.fromarray(arr, "RGBA").reduce(_SS)
 
     shadow = _shadow(numeral, 0.012 * u, 150)
-    pad1 = pad / _SS
+    return numeral, shadow, pad / _SS
+
+
+def draw_rank_number(image: Image.Image, rank: int, right: bool = False,
+                     max_w: float | None = None, scale: float = 1.0,
+                     top: int | None = None, center_x: float | None = None,
+                     align: str = "center", unit: float | None = None,
+                     in_place: bool = False) -> Image.Image:
+    """The rank as a large silver numeral in the top-left (or top-right) corner.
+
+    *scale* sizes it against its default.  *max_w* caps its width in pixels,
+    for when a notch sits beside it: the digits shrink to fit, down to 60 % of
+    their size and no further.  *top* hangs it there instead, centred on
+    *center_x* (under the notch, wherever that is), or with *align* "left" /
+    "right" with that edge there.  *unit* sizes it for a canvas that is not
+    2:3 (see the module notes).
+    """
+    w = image.width
+    u = unit or w
+    numeral, shadow, pad1 = _rank_number_layers(
+        str(rank), float(u), float(max_w) if max_w is not None else None, float(scale),
+    )
     ix, iy = _number_origin(w, numeral.width - 2 * pad1, right, top, center_x, align, u)
     nx = round(ix - pad1)
     ny = round(iy - pad1)
     off = max(1, round(0.004 * u))
 
-    result = image.convert("RGBA") if image.mode != "RGBA" else image.copy()
+    if image.mode != "RGBA":
+        result = image.convert("RGBA")
+    else:
+        result = image if in_place else image.copy()
     _paste(result, shadow, nx, ny + off)
     _paste(result, numeral, nx, ny)
     return result.convert(image.mode) if image.mode != "RGBA" else result
@@ -204,18 +219,24 @@ def _ribbon_body(style: str, size: tuple[int, int], yb: float, region: Image.Ima
         return Image.alpha_composite(body, frost)
     if style == "black":
         return Image.new("RGBA", size, (10, 10, 12, 230))
-    grad = Image.new("RGBA", (1, lh))
-    for y in range(lh):
-        t = min(1.0, y / max(1.0, yb))
-        if style in ("silver", "gold"):
-            # The notch's dark body: near-black, lifting a little mid-way.
-            c = round(4 + 10 * math.sin(t * math.pi))
-            grad.putpixel((0, y), (c, c, min(255, round(c * 1.3)), 235))
-        else:
-            # Charcoal, a shade lighter at the top.
-            c = round(46 * (1 - t) + 20 * t)
-            grad.putpixel((0, y), (c, c, c + 2, 235))
-    return grad.resize(size)
+    t = np.minimum(1.0, np.arange(lh, dtype=np.float32) / max(1.0, float(yb)))
+    arr = np.empty((lh, lw, 4), dtype=np.uint8)
+    if style in ("silver", "gold"):
+        # The notch's dark body: near-black, lifting a little mid-way.
+        c = np.rint(4.0 + 10.0 * np.sin(t * np.pi)).astype(np.uint8)
+        b = np.minimum(255, np.rint(c.astype(np.float32) * 1.3)).astype(np.uint8)
+        arr[:, :, 0] = c[:, None]
+        arr[:, :, 1] = c[:, None]
+        arr[:, :, 2] = b[:, None]
+        arr[:, :, 3] = 235
+    else:
+        # Charcoal, a shade lighter at the top.
+        c = np.rint(46.0 * (1.0 - t) + 20.0 * t).astype(np.uint8)
+        arr[:, :, 0] = c[:, None]
+        arr[:, :, 1] = c[:, None]
+        arr[:, :, 2] = (c + 2)[:, None]
+        arr[:, :, 3] = 235
+    return Image.fromarray(arr, "RGBA")
 
 
 def _ribbon_geometry(w: int, rank: int, right: bool, label: bool, scale: float,
@@ -273,34 +294,23 @@ def number_footprint(w: int, rank: int, right: bool = False, max_w: float | None
     return body, (max(0, x0 - grow), max(0, y0 - grow), min(w, x0 + iw + grow), y0 + ih + grow)
 
 
-def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
-                     label: str | None = None, scale: float = 1.0,
-                     corner: bool = False, style: str = "charcoal",
-                     tint_rgb: tuple[float, float, float] | None = None,
-                     frost_opacity: float = 0.75, frost_saturation: float = 1.2,
-                     frost_reference: bool | str = False,
-                     text_color: tuple[int, int, int] | None = None,
-                     top_inset: int = 0, unit: float | None = None) -> Image.Image:
-    """The rank on a ribbon hanging from the top edge, its foot cut into a
-    notch: just in from the top-left (or top-right) corner, or with *corner*,
-    nested right into it.
+@lru_cache(maxsize=64)
+def _ribbon_layers_cached(
+    w: int, rank: int, right: bool, label: str | None, scale: float,
+    corner: bool, style: str, text_color: tuple[int, int, int] | None,
+    top_inset: int, unit: float | None, font_path: str, shaped: bool,
+) -> tuple[Image.Image, Image.Image, int, int]:
+    return _build_ribbon_layers(
+        w, rank, right, label, scale, corner, style, None, None, 0.75, text_color, top_inset, unit,
+    )
 
-    *label* ("FILM", "SERIES", ...) goes in small letter-spaced capitals under
-    the rank, the ribbon growing to hold it.  *scale* sizes the whole ribbon
-    against its default.  *style* is one of RIBBON_STYLES: its own charcoal,
-    or any of the notch's, drawn as the notch draws it — frosted from the same
-    colour sample (*tint_rgb*) and settings, silver and gold with their trim.
-    *text_color* overrides the label colour except on frosted, which picks
-    dark or light ink for its panel, as the notch does.
-    *top_inset* is the primary client's top-edge inset in pixels, the one
-    the notch takes: a client that crops the poster's top edge would cut into
-    the ribbon, so it grows upwards by that much, and still meets the edge
-    where nothing is cropped.  Negative raises it off the top instead.
-    *unit* sizes it for a canvas that is not 2:3 (see the module notes).
-    """
-    if style not in RIBBON_STYLES:
-        style = "charcoal"
-    w = image.width
+
+def _build_ribbon_layers(
+    w: int, rank: int, right: bool, label: str | None, scale: float,
+    corner: bool, style: str, region: Image.Image | None, tint: tuple[int, int, int] | None,
+    frost_opacity: float, text_color: tuple[int, int, int] | None,
+    top_inset: int, unit: float | None,
+) -> tuple[Image.Image, Image.Image, int, int]:
     text = str(rank)
     u = unit or w
     widen, rib_w, body_h, pad, grow, lift, rx = _ribbon_geometry(
@@ -317,20 +327,11 @@ def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
     yb, yn = top + body_h * S, top + (body_h - notch) * S
     outline = [(x0, 0), (x1, 0), (x1, yb), ((x0 + x1) / 2, yn), (x0, yb)]
 
-    tint = region = None
-    if style == "frosted":
-        from awards import _frosted_tint, dominant_frost_rgb
-        src = image.convert("RGBA")
-        region = src.crop((rx, lift, rx + lw, lift + lh)).filter(
-            ImageFilter.GaussianBlur(max(2.0, 0.12 * rib_w)))
-        tint = _frosted_tint(*(tint_rgb if tint_rgb is not None else dominant_frost_rgb(src)),
-                             saturation=frost_saturation, reference=frost_reference)
-
     mask = Image.new("L", layer.size, 0)
     ImageDraw.Draw(mask).polygon(outline, fill=255)
     body = _ribbon_body(style, layer.size, yb, region, tint, frost_opacity)
     body_a = 255 if style == "frosted" else (230 if style == "black" else 235)
-    body.putalpha(Image.eval(mask, lambda v: v * body_a // 255))
+    body.putalpha(mask if body_a == 255 else mask.point(lambda v: v * body_a // 255))
     layer.alpha_composite(body)
 
     # An edge down the sides and round the notch; none on top, where it meets
@@ -394,8 +395,63 @@ def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
 
     ribbon = layer.reduce(S)
     shadow = _shadow(ribbon, 0.012 * u, 140)
+    return ribbon, shadow, rx, lift
 
-    result = image.convert("RGBA") if image.mode != "RGBA" else image.copy()
+
+def draw_rank_ribbon(image: Image.Image, rank: int, right: bool = False,
+                     label: str | None = None, scale: float = 1.0,
+                     corner: bool = False, style: str = "charcoal",
+                     tint_rgb: tuple[float, float, float] | None = None,
+                     frost_opacity: float = 0.75, frost_saturation: float = 1.2,
+                     frost_reference: bool | str = False,
+                     text_color: tuple[int, int, int] | None = None,
+                     top_inset: int = 0, unit: float | None = None,
+                     in_place: bool = False) -> Image.Image:
+    """The rank on a ribbon hanging from the top edge, its foot cut into a
+    notch: just in from the top-left (or top-right) corner, or with *corner*,
+    nested right into it.
+
+    *label* ("FILM", "SERIES", ...) goes in small letter-spaced capitals under
+    the rank, the ribbon growing to hold it.  *scale* sizes the whole ribbon
+    against its default.  *style* is one of RIBBON_STYLES: its own charcoal,
+    or any of the notch's, drawn as the notch draws it — frosted from the same
+    colour sample (*tint_rgb*) and settings, silver and gold with their trim.
+    *text_color* overrides the label colour except on frosted, which picks
+    dark or light ink for its panel, as the notch does.
+    *top_inset* is the primary client's top-edge inset in pixels, the one
+    the notch takes: a client that crops the poster's top edge would cut into
+    the ribbon, so it grows upwards by that much, and still meets the edge
+    where nothing is cropped.  Negative raises it off the top instead.
+    *unit* sizes it for a canvas that is not 2:3 (see the module notes).
+    """
+    if style not in RIBBON_STYLES:
+        style = "charcoal"
+    w = image.width
+    u = unit or w
+    tc = tuple(text_color) if text_color is not None else None
+    if style == "frosted":
+        from awards import _blur_region_rgba, _frosted_tint, dominant_frost_rgb
+        _, rib_w, body_h, pad, grow, lift, rx = _ribbon_geometry(
+            w, rank, right, bool(label), scale, corner, top_inset, u)
+        lw, lh = round(rib_w + 2 * pad), round(grow + body_h + pad)
+        src = image if image.mode == "RGBA" else image.convert("RGBA")
+        region = _blur_region_rgba(src.crop((rx, lift, rx + lw, lift + lh)), max(2.0, 0.12 * rib_w))
+        tint = _frosted_tint(*(tint_rgb if tint_rgb is not None else dominant_frost_rgb(src)),
+                             saturation=frost_saturation, reference=frost_reference)
+        ribbon, shadow, rx, lift = _build_ribbon_layers(
+            w, rank, right, label, scale, corner, style, region, tint,
+            frost_opacity, tc, top_inset, unit,
+        )
+    else:
+        ribbon, shadow, rx, lift = _ribbon_layers_cached(
+            w, rank, right, label, float(scale), corner, style, tc, top_inset,
+            float(unit) if unit is not None else None, fonts.label_path(), fonts.shaping(),
+        )
+
+    if image.mode != "RGBA":
+        result = image.convert("RGBA")
+    else:
+        result = image if in_place else image.copy()
     _paste(result, shadow, rx + max(1, round(0.004 * u)), lift + max(1, round(0.004 * u)))
     _paste(result, ribbon, rx, lift)
     return result.convert(image.mode) if image.mode != "RGBA" else result
